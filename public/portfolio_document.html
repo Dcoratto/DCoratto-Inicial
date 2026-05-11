@@ -76,13 +76,86 @@
 
       .nav a:hover { color: var(--gold-soft); }
 
-      .document-meta {
-        display: flex;
-        gap: 20px;
-        padding: 24px 72px 0;
+      .cover {
+        display: grid;
+        place-items: center;
+        min-height: calc(100vh - 84px);
+        border-bottom: 1px solid var(--line);
+        padding: 72px 28px;
+        text-align: center;
+      }
+
+      .cover::before {
+        content: "";
+        width: 1px;
+        height: 98px;
+        margin-bottom: 58px;
+        background: linear-gradient(to bottom, transparent, var(--gold), transparent);
+      }
+
+      .cover-kicker {
+        color: var(--gold);
+        font-size: 12px;
+        letter-spacing: .34em;
+        margin-bottom: 38px;
+        text-transform: uppercase;
+      }
+
+      .cover h1 {
+        margin: 0;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: clamp(66px, 8vw, 126px);
+        font-weight: 300;
+        line-height: .9;
+      }
+
+      .cover-address {
+        margin-top: 28px;
+        color: var(--gold);
+        font-size: 12px;
+        letter-spacing: .24em;
+        text-transform: uppercase;
+      }
+
+      .cover-brand {
+        margin-top: 14px;
+        color: rgba(247, 242, 234, .48);
+        font-size: 12px;
+        letter-spacing: .18em;
+      }
+
+      .cover-stats {
+        display: inline-grid;
+        grid-template-columns: repeat(2, minmax(112px, 1fr));
+        gap: 0;
+        margin-top: 68px;
+        border-left: 1px solid var(--line);
+        border-right: 1px solid var(--line);
+      }
+
+      .cover-stat {
+        padding: 10px 48px;
+      }
+
+      .cover-stat + .cover-stat {
+        border-left: 1px solid var(--line);
+      }
+
+      .cover-stat strong {
+        display: block;
+        color: var(--gold-soft);
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 40px;
+        font-weight: 300;
+        line-height: 1;
+      }
+
+      .cover-stat span {
+        display: block;
+        margin-top: 12px;
         color: var(--muted);
         font-size: 10px;
-        letter-spacing: .18em;
+        letter-spacing: .28em;
         text-transform: uppercase;
       }
 
@@ -242,8 +315,10 @@
       .color-dot {
         width: 58px;
         height: 58px;
-        border-radius: 50%;
+        border-radius: 4px;
         border: 1px solid rgba(255, 255, 255, .12);
+        background-size: cover;
+        background-position: center;
       }
 
       .color-name {
@@ -353,7 +428,7 @@
       @media (max-width: 1100px) {
         .topbar { padding: 0 24px; }
         .nav { display: none; }
-        .document-meta { padding-inline: 24px; }
+        .cover { min-height: calc(100vh - 84px); }
         .environment { padding: 30px 24px 58px; }
         .portfolio-layout { grid-template-columns: 1fr; }
         .info-panel { min-height: auto; }
@@ -456,6 +531,8 @@
         ],
       };
 
+      documentData = normalizeDocumentData(documentData);
+
       const nav = document.getElementById('nav');
       const root = document.getElementById('document');
       const lightbox = document.getElementById('lightbox');
@@ -471,20 +548,78 @@
         if (event.key === 'Escape') closeLightbox();
       });
 
+      window.addEventListener('storage', (event) => {
+        if (event.key === storageKey) {
+          documentData = normalizeDocumentData(JSON.parse(event.newValue || 'null'));
+          renderDocument();
+        }
+      });
+
+      function normalizeDocumentData(raw) {
+        const legacySample = raw?.client?.name === 'Marcos Vinicius'
+          && String(raw?.client?.address || '').includes('Eco Park');
+
+        if (!raw || legacySample) {
+          return {
+            projectType: 'Projeto Inicial',
+            year: new Date().getFullYear(),
+            client: { name: 'CLIENTE MODELO', address: '', contractNumber: '', manufacturers: [] },
+            environments: [],
+          };
+        }
+
+        return {
+          projectType: raw.projectType || 'Projeto Inicial',
+          year: raw.year || new Date().getFullYear(),
+          client: {
+            name: raw.client?.name || 'CLIENTE MODELO',
+            address: raw.client?.address || '',
+            contractNumber: raw.client?.contractNumber || '',
+            manufacturers: raw.client?.manufacturers || [],
+          },
+          environments: (raw.environments || []).filter(environment => environment && environment.title),
+        };
+      }
+
       function renderDocument() {
         nav.innerHTML = documentData.environments.map((environment) => `
           <a href="#${slug(environment.title)}">${environment.title}</a>
         `).join('');
 
         root.innerHTML = `
-          <div class="document-meta">
-            <span>${escapeHTML(documentData.client.name || '')}</span>
-            <span>${escapeHTML(documentData.client.address || '')}</span>
-          </div>
+          ${renderCover()}
           ${documentData.environments.map(renderEnvironment).join('')}
         `;
 
         bindDocumentEvents();
+      }
+
+      function renderCover() {
+        const environmentsCount = documentData.environments.length;
+        const photosCount = documentData.environments.reduce((total, environment) => {
+          return total + normalizePhotos(environment.photos).length;
+        }, 0);
+
+        return `
+          <section class="cover">
+            <div>
+              <div class="cover-kicker">${escapeHTML(documentData.projectType)} - ${escapeHTML(documentData.year)}</div>
+              <h1>${escapeHTML(documentData.client.name || 'CLIENTE MODELO')}</h1>
+              <div class="cover-address">${escapeHTML(documentData.client.address || '')}</div>
+              <div class="cover-brand">D'Coratto Sob Medida</div>
+              <div class="cover-stats">
+                <div class="cover-stat">
+                  <strong>${String(environmentsCount).padStart(2, '0')}</strong>
+                  <span>Ambientes</span>
+                </div>
+                <div class="cover-stat">
+                  <strong>${String(photosCount).padStart(2, '0')}</strong>
+                  <span>Fotos</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        `;
       }
 
       function bindDocumentEvents() {
@@ -559,8 +694,8 @@
                   <div class="colors">
                     ${(environment.colors || []).map((color) => `
                       <div class="color-item">
-                        <span class="color-dot" style="background:${escapeAttribute(color.hex)}"></span>
-                        <span class="color-name">${escapeHTML(color.name)}</span>
+                        <span class="color-dot" style="background-color:${escapeAttribute(color.hex)};${color.textureUrl ? `background-image:url('${escapeAttribute(color.textureUrl)}')` : ''}"></span>
+                        <span class="color-name">${escapeHTML(color.name)}${color.quality ? ' / '+escapeHTML(color.quality) : ''}</span>
                       </div>
                     `).join('')}
                   </div>

@@ -29,6 +29,7 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .field-group{display:flex;flex-direction:column;gap:6px}
 .field-group label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
 .field-group input, .field-group select{background:var(--panel);border:1px solid var(--border);color:var(--cream);padding:10px 14px;font-family:'Montserrat',sans-serif;font-size:13px;font-weight:300;border-radius:2px;outline:none;transition:border .2s}
+.field-group select.factory-select{height:42px}
 .field-group input:focus, .field-group select:focus{border-color:var(--gold)}
 .field-group input::placeholder{color:var(--muted)}
 
@@ -60,11 +61,12 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 /* COLOR PICKER */
 .color-picker-area{margin-top:4px}
 .color-picker-label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;display:block}
-.color-swatches{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
-.swatch{width:36px;height:36px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .2s;position:relative}
+.color-swatches{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px}
+.swatch{width:52px;height:52px;border-radius:4px;cursor:pointer;border:2px solid transparent;transition:all .2s;position:relative;background-size:cover;background-position:center;box-shadow:0 8px 14px rgba(0,0,0,.25)}
 .swatch:hover{transform:scale(1.15)}
 .swatch.selected{border-color:var(--gold);transform:scale(1.15)}
-.swatch-name{font-size:8px;text-align:center;color:var(--muted);margin-top:2px;width:36px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swatch-name{font-size:8px;text-align:center;color:var(--muted);margin-top:4px;width:62px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swatch-line{font-size:7px;text-align:center;color:var(--gold);margin-top:2px;width:62px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.08em}
 .swatch-wrap{display:flex;flex-direction:column;align-items:center}
 
 .selected-colors{display:flex;flex-wrap:wrap;gap:6px;min-height:28px;margin-top:8px}
@@ -119,7 +121,10 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
     </div>
     <div class="field-group">
       <label>Fabricante / Promob</label>
-      <input type="text" id="fabricante" placeholder="Ex: VITTA ou BOA VISTA" value="">
+      <select id="fabricante" class="factory-select" multiple size="2" onchange="handleFactoryChange()">
+        <option value="VITTA">VITTA</option>
+        <option value="BOA VISTA">BOA VISTA</option>
+      </select>
     </div>
     <div class="field-group" style="grid-column:1/-1">
       <label>Endereço da Obra</label>
@@ -148,25 +153,45 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
   <span>D'coratto Sob Medida · Editor de Projeto Inicial</span>
 </footer>
 
+<script src="/catalog/boa-vista/catalog.js"></script>
 <script>
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
-const COLORS = [
-  {name:"BEGE DUNAS",    hex:"#C8B89A"},
-  {name:"CARVALHO JARI", hex:"#A0784A"},
-  {name:"BRANCO SNOW",   hex:"#F5F3EF"},
-  {name:"CINZA SAGRADO", hex:"#8A8A8A"},
-  {name:"GRAFITE",       hex:"#4A4A4A"},
-  {name:"OFF WHITE",     hex:"#F0EDE6"},
-  {name:"MACADÂMIA",     hex:"#C4A882"},
-  {name:"NUDE",          hex:"#D4B8A0"},
-  {name:"PRETO PIANO",   hex:"#1A1A1A"},
-  {name:"BRANCO POLAR",  hex:"#FAFAF8"},
-  {name:"TERRA",         hex:"#8B6347"},
-  {name:"CIMENTO",       hex:"#A0A09A"},
-  {name:"AREIA",         hex:"#D4C4A8"},
-  {name:"NOGUEIRA",      hex:"#6B4C32"},
+const LEGACY_COLORS = [
+  {name:"BEGE DUNAS", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#C8B89A"},
+  {name:"CARVALHO JARI", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#A0784A"},
+  {name:"BRANCO SNOW", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#F5F3EF"},
+  {name:"CINZA SAGRADO", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#8A8A8A"},
+  {name:"GRAFITE", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#4A4A4A"},
+  {name:"OFF WHITE", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#F0EDE6"},
+  {name:"MACADÂMIA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#C4A882"},
+  {name:"NUDE", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#D4B8A0"},
+  {name:"PRETO PIANO", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#1A1A1A"},
+  {name:"BRANCO POLAR", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#FAFAF8"},
+  {name:"TERRA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#8B6347"},
+  {name:"CIMENTO", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#A0A09A"},
+  {name:"AREIA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#D4C4A8"},
+  {name:"NOGUEIRA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#6B4C32"},
 ];
+
+const BOA_VISTA_COLORS = (window.BOA_VISTA_CATALOG || []).map(color => ({
+  ...color,
+  displayName: `${color.name}${color.quality ? ' / ' + color.quality : ''}`,
+}));
+const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
+
+function selectedFactories() {
+  const selected = Array.from(document.getElementById('fabricante')?.selectedOptions || []).map(o => o.value);
+  return selected.length ? selected : ['VITTA', 'BOA VISTA'];
+}
+
+function availableColors() {
+  const factories = selectedFactories();
+  return [
+    ...(factories.includes('VITTA') ? LEGACY_COLORS : []),
+    ...(factories.includes('BOA VISTA') ? BOA_VISTA_COLORS : []),
+  ];
+}
 
 const PORTAS = ["LISA","CAVA 45°","PASSANTE","FRISO","ROMEU E JULIETA","AMERICANA","ESPELHO"];
 const PUXADORES = ["CAVA 45°","GARD 256mm","PASSANTE","LISA PASSANTE","LISA PASSANTE COM FRISO","EMBUTIDO","PUXADOR J","PUXADOR L"];
@@ -210,14 +235,21 @@ AMBIENTES.forEach(a => {
 // ─── BUILD UI ────────────────────────────────────────────────────────────────
 
 function buildSwatchHTML(ambId, field) {
-  return COLORS.map(c => `
+  const colors = availableColors();
+  if (!colors.length) return '<div class="amb-summary">Selecione um fabricante para ver as cores.</div>';
+  return colors.map(c => {
+    const key = `${c.manufacturer || ''}|${c.line || ''}|${c.name}|${c.quality || ''}`;
+    const selected = state[ambId]?.cores.some(item => item.key === key || (!item.key && item.name === c.name));
+    return `
     <div class="swatch-wrap">
-      <div class="swatch" title="${c.name}"
-        style="background:${c.hex}"
-        onclick="toggleColor('${ambId}','${c.name}','${c.hex}',this)">
+      <div class="swatch ${selected ? 'selected' : ''}" title="${c.manufacturer} Â· ${c.line} Â· ${c.displayName || c.name}"
+        style="${c.textureUrl ? `background-image:url('${c.textureUrl}');background-color:${c.hex}` : `background:${c.hex}`}"
+        onclick="toggleColor('${ambId}','${c.name}','${c.hex}',this,'${c.textureUrl || ''}','${c.manufacturer || ''}','${c.line || ''}','${c.quality || ''}')">
       </div>
-      <div class="swatch-name">${c.name.split(' ')[0]}</div>
-    </div>`).join('');
+      <div class="swatch-name">${c.name}</div>
+      <div class="swatch-line">${c.line || c.manufacturer || ''}</div>
+    </div>`;
+  }).join('');
 }
 
 function buildSelectHTML(options, multiple=false) {
@@ -264,7 +296,7 @@ function renderCard(amb) {
         </div>
         <div class="field-group">
           <label>Obs adicional</label>
-          <input type="text" placeholder="Texto livre..." oninput="state['${amb.id}'].obsExtra=this.value">
+          <input type="text" placeholder="Texto livre..." oninput="state['${amb.id}'].obsExtra=this.value;syncPreviewDocument()">
         </div>
       </div>
 
@@ -284,6 +316,19 @@ function renderCard(amb) {
 
 document.getElementById('ambGrid').innerHTML = AMBIENTES.map(renderCard).join('');
 
+function handleFactoryChange() {
+  const factories = selectedFactories();
+  AMBIENTES.forEach(amb => {
+    state[amb.id].cores = state[amb.id].cores.filter(c => !c.manufacturer || factories.includes(c.manufacturer));
+    const swatches = document.querySelector(`#card-${amb.id} .color-swatches`);
+    if (swatches) swatches.innerHTML = buildSwatchHTML(amb.id);
+    renderSelectedColors(amb.id);
+    updateSummary(amb.id);
+  });
+  updateProgress();
+  syncPreviewDocument();
+}
+
 // ─── INTERACTIONS ─────────────────────────────────────────────────────────────
 
 function toggleCard(id) {
@@ -295,42 +340,48 @@ function toggleCard(id) {
 function updateMulti(ambId, field, sel) {
   state[ambId][field] = Array.from(sel.selectedOptions).map(o => o.value);
   updateSummary(ambId);
+  syncPreviewDocument();
 }
 
-function toggleColor(ambId, name, hex, el) {
+function toggleColor(ambId, name, hex, el, textureUrl='', manufacturer='', line='', quality='') {
   const s = state[ambId].cores;
-  const idx = s.findIndex(c => c.name === name);
+  const key = `${manufacturer}|${line}|${name}|${quality}`;
+  const idx = s.findIndex(c => c.key === key || (!c.key && c.name === name));
   if (idx > -1) {
     s.splice(idx, 1);
     el.classList.remove('selected');
   } else {
-    s.push({name, hex});
+    s.push({key, name, hex, textureUrl, manufacturer, line, quality});
     el.classList.add('selected');
   }
   renderSelectedColors(ambId);
   updateSummary(ambId);
+  syncPreviewDocument();
 }
 
 function renderSelectedColors(ambId) {
   const container = document.getElementById('selcolors-'+ambId);
   container.innerHTML = state[ambId].cores.map(c => `
     <div class="sel-tag">
-      <div style="width:12px;height:12px;border-radius:50%;background:${c.hex};flex-shrink:0"></div>
-      ${c.name}
+      <div style="width:12px;height:12px;border-radius:2px;background:${c.hex};${c.textureUrl ? `background-image:url('${c.textureUrl}');background-size:cover;background-position:center;` : ''}flex-shrink:0"></div>
+      ${c.name}${c.quality ? ' / '+c.quality : ''}
       <span class="rm" onclick="removeColor('${ambId}','${c.name}')">×</span>
     </div>`).join('');
 }
 
-function removeColor(ambId, name) {
+function removeColor(ambId, key) {
   const s = state[ambId].cores;
-  const idx = s.findIndex(c => c.name === name);
+  const idx = s.findIndex(c => (c.key || c.name) === key || c.name === key);
+  const removed = idx > -1 ? s[idx] : null;
   if (idx > -1) s.splice(idx, 1);
   renderSelectedColors(ambId);
   // Deselect swatch
   document.querySelectorAll('#card-'+ambId+' .swatch').forEach((sw,i) => {
-    if (COLORS[i] && COLORS[i].name === name) sw.classList.remove('selected');
+    const color = availableColors()[i];
+    if (removed && color && color.name === removed.name && color.line === removed.line) sw.classList.remove('selected');
   });
   updateSummary(ambId);
+  syncPreviewDocument();
 }
 
 function toggleObs(ambId, idx, btn) {
@@ -339,6 +390,7 @@ function toggleObs(ambId, idx, btn) {
   const i = s.indexOf(val);
   if (i > -1) { s.splice(i,1); btn.classList.remove('selected'); }
   else { s.push(val); btn.classList.add('selected'); }
+  syncPreviewDocument();
 }
 
 function updateSummary(ambId) {
@@ -358,12 +410,63 @@ function updateProgress() {
   document.getElementById('progressFill').style.width = (done/AMBIENTES.length*100)+'%';
 }
 
+function hasEnvironmentData(s) {
+  return s.cores.length || s.porta.length || s.tampon.length || s.puxador.length || s.obs.length || s.obsExtra;
+}
+
+function buildPreviewDocumentData() {
+  const clientName = document.getElementById('clientName').value || 'CLIENTE MODELO';
+  const endereco = document.getElementById('endereco').value || '';
+  const contractNum = document.getElementById('contractNum').value || '';
+  const environments = AMBIENTES
+    .map((amb, index) => {
+      const s = state[amb.id];
+      return {
+        number: String(index + 1).padStart(2, '0'),
+        title: amb.name,
+        specs: {
+          tamponamentos: s.tampon.join(', '),
+          portas: s.porta.join(', '),
+          puxadores: s.puxador.join(', '),
+        },
+        colors: s.cores,
+        notes: [...s.obs, s.obsExtra || ''].filter(Boolean),
+        layout: 'single',
+        photos: [{ title: 'Imagem do ambiente', src: amb.img }],
+        hasData: Boolean(hasEnvironmentData(s)),
+      };
+    })
+    .filter(environment => environment.hasData);
+
+  return {
+    projectType: 'Projeto Inicial',
+    year: new Date().getFullYear(),
+    client: {
+      name: clientName,
+      address: endereco,
+      contractNumber: contractNum,
+      manufacturers: selectedFactories(),
+    },
+    environments: environments.length ? environments : [],
+  };
+}
+
+function syncPreviewDocument() {
+  localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(buildPreviewDocumentData()));
+}
+
+['clientName', 'contractNum', 'endereco'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', syncPreviewDocument);
+});
+syncPreviewDocument();
+
 // ─── GENERATE ─────────────────────────────────────────────────────────────────
 
 function generatePreview() {
+  syncPreviewDocument();
   const clientName = document.getElementById('clientName').value || 'CLIENTE MODELO';
   const contractNum = document.getElementById('contractNum').value || '—';
-  const fabricante = document.getElementById('fabricante').value || '—';
+  const fabricante = selectedFactories().join(' + ') || '—';
   const endereco = document.getElementById('endereco').value || '—';
 
   let html = `
@@ -399,8 +502,8 @@ function generatePreview() {
         <div style="display:flex;flex-wrap:wrap;gap:12px">
           ${s.cores.map(c=>`
           <div style="text-align:center">
-            <div style="width:52px;height:52px;border-radius:50%;background:${c.hex};border:1px solid rgba(0,0,0,.1)"></div>
-            <div style="font-size:10px;margin-top:4px;color:#555;font-family:'Montserrat',sans-serif">${c.name}</div>
+            <div style="width:52px;height:52px;border-radius:4px;background:${c.hex};${c.textureUrl ? `background-image:url('${c.textureUrl}');background-size:cover;background-position:center;` : ''}border:1px solid rgba(0,0,0,.1)"></div>
+            <div style="font-size:10px;margin-top:4px;color:#555;font-family:'Montserrat',sans-serif">${c.name}${c.quality ? ' / '+c.quality : ''}</div>
           </div>`).join('')}
         </div></div>` : ''}
       </div>

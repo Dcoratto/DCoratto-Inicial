@@ -80,6 +80,9 @@ create table if not exists public.catalog_materials (
   name text not null,
   code text,
   brand text,
+  manufacturer text,
+  line_name text,
+  quality text,
   hex text,
   texture_url text,
   sort_order integer not null default 0,
@@ -87,6 +90,11 @@ create table if not exists public.catalog_materials (
   data jsonb not null default '{}'::jsonb,
   unique (group_key, name)
 );
+
+alter table public.catalog_materials
+  add column if not exists manufacturer text,
+  add column if not exists line_name text,
+  add column if not exists quality text;
 
 create table if not exists public.environment_colors (
   id uuid primary key default gen_random_uuid(),
@@ -175,6 +183,7 @@ create index if not exists environment_notes_environment_idx on public.environme
 create index if not exists document_html_versions_project_idx on public.document_html_versions(project_id, created_at desc);
 create index if not exists document_versions_project_idx on public.document_versions(project_id, created_at desc);
 create index if not exists document_projects_updated_idx on public.document_projects(updated_at desc);
+create index if not exists catalog_materials_manufacturer_idx on public.catalog_materials(manufacturer, line_name, sort_order);
 
 create or replace function public.set_updated_at()
 returns trigger
