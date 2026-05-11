@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>D'coratto | Portfolio HTML</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      :root {
+        --bg: #080807;
+        --panel: #11100e;
+        --line: rgba(184, 151, 106, .18);
+        --gold: #b8976a;
+        --gold-soft: #d7c2a7;
+        --muted: #8a8070;
+        --text: #f7f2ea;
+        --danger: #ff6a55;
+      }
+
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Montserrat', sans-serif;
+        font-weight: 300;
+      }
+
+      body.lightbox-open { overflow: hidden; }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 84px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(8, 8, 7, .96);
+        padding: 0 72px;
+        backdrop-filter: blur(12px);
+      }
+
+      .logo {
+        font-size: 33px;
+        font-weight: 300;
+        letter-spacing: -.04em;
+        line-height: .9;
+      }
+
+      .logo small {
+        display: block;
+        margin-left: 69px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: .02em;
+      }
+
+      .nav {
+        display: flex;
+        gap: 30px;
+        align-items: center;
+      }
+
+      .nav a {
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: .22em;
+        text-decoration: none;
+        text-transform: uppercase;
+      }
+
+      .nav a:hover { color: var(--gold-soft); }
+
+      .document-meta {
+        display: flex;
+        gap: 20px;
+        padding: 24px 72px 0;
+        color: var(--muted);
+        font-size: 10px;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+      }
+
+      .environment {
+        min-height: calc(100vh - 84px);
+        padding: 34px 60px 76px;
+      }
+
+      .section-heading {
+        display: grid;
+        grid-template-columns: 32px minmax(240px, auto) 1fr;
+        align-items: center;
+        gap: 28px;
+        margin-bottom: 42px;
+      }
+
+      .section-number {
+        color: var(--gold);
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 15px;
+        letter-spacing: .12em;
+      }
+
+      .section-heading h2 {
+        margin: 0;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 52px;
+        font-weight: 300;
+        line-height: 1;
+      }
+
+      .section-line {
+        height: 1px;
+        background: var(--line);
+      }
+
+      .portfolio-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 274px;
+        gap: 28px;
+        align-items: stretch;
+      }
+
+      .photo-mural {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        grid-auto-rows: 156px;
+        grid-auto-flow: dense;
+        gap: 5px;
+        min-height: 604px;
+      }
+
+      .tile-full { grid-column: span 12; grid-row: span 4; }
+      .tile-half { grid-column: span 6; grid-row: span 4; }
+      .tile-third { grid-column: span 4; grid-row: span 3; }
+      .tile-wide { grid-column: span 8; grid-row: span 3; }
+      .tile-small { grid-column: span 4; grid-row: span 3; }
+      .tile-hero { grid-column: span 8; grid-row: span 4; }
+      .tile-tall { grid-column: span 4; grid-row: span 4; }
+
+      .photo-card {
+        position: relative;
+        min-height: 286px;
+        overflow: hidden;
+        border: 0;
+        background: #15120f;
+        padding: 0;
+        color: inherit;
+        cursor: zoom-in;
+      }
+
+      .photo-card img {
+        width: 100%;
+        height: 100%;
+        min-height: inherit;
+        display: block;
+        object-fit: cover;
+        transform-origin: center;
+        transition: transform .75s cubic-bezier(.2, .7, .2, 1), filter .75s ease;
+      }
+
+      .photo-card:hover img {
+        transform: scale(1.045) translateY(-4px);
+        filter: brightness(.9);
+      }
+
+      .photo-label {
+        position: absolute;
+        left: 24px;
+        bottom: 19px;
+        color: rgba(247, 242, 234, .48);
+        font-size: 10px;
+        letter-spacing: .24em;
+        opacity: .75;
+        transform: translateY(8px);
+        transition: opacity .45s ease, transform .45s ease;
+        text-transform: uppercase;
+      }
+
+      .photo-card:hover .photo-label {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .photo-index {
+        position: absolute;
+        top: 18px;
+        left: 20px;
+        color: var(--gold-soft);
+        font-size: 10px;
+        letter-spacing: .2em;
+      }
+
+      .info-panel {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 604px;
+        background: var(--panel);
+        padding: 42px 30px;
+      }
+
+      .spec-group + .spec-group {
+        margin-top: 20px;
+      }
+
+      .spec-title {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--gold);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: .28em;
+        text-transform: uppercase;
+      }
+
+      .spec-value {
+        color: var(--text);
+        font-size: 15px;
+        line-height: 1.35;
+      }
+
+      .colors {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        margin-top: 14px;
+      }
+
+      .color-item {
+        display: grid;
+        justify-items: center;
+        gap: 8px;
+        width: 62px;
+      }
+
+      .color-dot {
+        width: 58px;
+        height: 58px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, .12);
+      }
+
+      .color-name {
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.15;
+        letter-spacing: .12em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .notes {
+        margin-top: 28px;
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+      }
+
+      .notes p {
+        margin: 0 0 5px;
+        color: var(--danger);
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      .client-footer {
+        margin-top: 18px;
+        color: rgba(138, 128, 112, .75);
+        font-size: 9px;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+      }
+
+      .mural-tools {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin: -22px 0 18px;
+        padding-left: 60px;
+      }
+
+      .layout-suggestions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .layout-suggestions button,
+      .photo-upload {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(17, 16, 14, .8);
+        color: var(--muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: .16em;
+        padding: 8px 11px;
+        text-transform: uppercase;
+      }
+
+      .layout-suggestions button.active,
+      .layout-suggestions button:hover,
+      .photo-upload:hover {
+        border-color: rgba(184, 151, 106, .55);
+        color: var(--gold-soft);
+      }
+
+      .photo-upload input { display: none; }
+
+      .lightbox {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, .88);
+        padding: 36px;
+      }
+
+      .lightbox.active { display: flex; }
+
+      .lightbox img {
+        max-width: 94vw;
+        max-height: 88vh;
+        object-fit: contain;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, .55);
+      }
+
+      .lightbox button {
+        position: absolute;
+        top: 22px;
+        right: 28px;
+        border: 1px solid rgba(255, 255, 255, .25);
+        background: rgba(0, 0, 0, .35);
+        color: var(--text);
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        font-size: 26px;
+        line-height: 1;
+        cursor: pointer;
+      }
+
+      @media (max-width: 1100px) {
+        .topbar { padding: 0 24px; }
+        .nav { display: none; }
+        .document-meta { padding-inline: 24px; }
+        .environment { padding: 30px 24px 58px; }
+        .portfolio-layout { grid-template-columns: 1fr; }
+        .info-panel { min-height: auto; }
+      }
+
+      @media (max-width: 760px) {
+        .section-heading {
+          grid-template-columns: 28px 1fr;
+          gap: 16px;
+        }
+
+        .section-line { grid-column: 1 / -1; }
+        .section-heading h2 { font-size: 42px; }
+        .mural-tools { padding-left: 0; align-items: flex-start; flex-direction: column; }
+        .photo-mural { grid-template-columns: 1fr; grid-auto-rows: auto; }
+        .tile-full, .tile-half, .tile-third, .tile-wide, .tile-small, .tile-hero, .tile-tall {
+          grid-column: auto;
+          grid-row: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="logo">D'coratto<small>sob medida</small></div>
+      <nav class="nav" id="nav"></nav>
+    </header>
+
+    <main id="document"></main>
+
+    <div class="lightbox" id="lightbox" role="dialog" aria-modal="true">
+      <button type="button" aria-label="Fechar imagem expandida">×</button>
+      <img alt="" />
+    </div>
+
+    <script>
+      const fallbackImage = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800">
+          <defs>
+            <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+              <stop offset="0" stop-color="#2b241d"/>
+              <stop offset=".55" stop-color="#5c4630"/>
+              <stop offset="1" stop-color="#14110e"/>
+            </linearGradient>
+          </defs>
+          <rect width="1200" height="800" fill="url(#g)"/>
+          <rect x="120" y="120" width="960" height="560" fill="none" stroke="#b8976a" stroke-opacity=".35"/>
+          <text x="600" y="390" fill="#d7c2a7" font-family="Arial" font-size="34" text-anchor="middle" letter-spacing="8">D'CORATTO</text>
+          <text x="600" y="438" fill="#8a8070" font-family="Arial" font-size="16" text-anchor="middle" letter-spacing="5">IMAGEM DO AMBIENTE</text>
+        </svg>
+      `);
+
+      const storageKey = 'dcoratto.portfolio.document.v1';
+      let documentData = JSON.parse(localStorage.getItem(storageKey) || 'null') || {
+        client: {
+          name: 'Marcos Vinicius',
+          address: 'Condominio Eco Park - Mogi das Cruzes/SP',
+        },
+        environments: [
+          {
+            number: '04',
+            title: 'Escritorio',
+            specs: {
+              tamponamentos: '15 e 25mm',
+              portas: 'LISA',
+              puxadores: 'PASSANTE',
+            },
+            colors: [
+              { name: 'BEGE DUNAS', hex: '#d5c4a2' },
+              { name: 'CARVALHO JARI', hex: '#a9804a' },
+            ],
+            notes: ['Apenas Marcenaria considerado no Projeto', 'Leds nao inclusos'],
+            layout: 'balanced',
+            photos: [
+              { title: 'Vista 1', src: fallbackImage },
+              { title: 'Vista 2', src: fallbackImage },
+              { title: 'Detalhe 1', src: fallbackImage },
+              { title: 'Detalhe 2', src: fallbackImage },
+            ],
+          },
+          {
+            number: '05',
+            title: 'Sala de TV',
+            specs: {
+              tamponamentos: '15mm',
+              portas: 'LISA',
+              puxadores: 'CAVA 45°',
+            },
+            colors: [
+              { name: 'GRAFITE', hex: '#555557' },
+              { name: 'CARVALHO JARI', hex: '#a9804a' },
+            ],
+            notes: ['Apenas Marcenaria considerado no Projeto'],
+            layout: 'balanced',
+            photos: [
+              { title: 'Painel TV', src: fallbackImage },
+              { title: 'Painel Sofa', src: fallbackImage },
+            ],
+          },
+        ],
+      };
+
+      const nav = document.getElementById('nav');
+      const root = document.getElementById('document');
+      const lightbox = document.getElementById('lightbox');
+      const lightboxImage = lightbox.querySelector('img');
+
+      renderDocument();
+
+      lightbox.addEventListener('click', (event) => {
+        if (event.target === lightbox || event.target.tagName === 'BUTTON') closeLightbox();
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeLightbox();
+      });
+
+      function renderDocument() {
+        nav.innerHTML = documentData.environments.map((environment) => `
+          <a href="#${slug(environment.title)}">${environment.title}</a>
+        `).join('');
+
+        root.innerHTML = `
+          <div class="document-meta">
+            <span>${escapeHTML(documentData.client.name || '')}</span>
+            <span>${escapeHTML(documentData.client.address || '')}</span>
+          </div>
+          ${documentData.environments.map(renderEnvironment).join('')}
+        `;
+
+        bindDocumentEvents();
+      }
+
+      function bindDocumentEvents() {
+        document.querySelectorAll('[data-lightbox-src]').forEach((button) => {
+          button.addEventListener('click', () => {
+            lightboxImage.src = button.dataset.lightboxSrc;
+            lightboxImage.alt = button.dataset.lightboxTitle || '';
+            lightbox.classList.add('active');
+            document.body.classList.add('lightbox-open');
+          });
+        });
+
+        document.querySelectorAll('[data-layout]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const environment = documentData.environments[Number(button.dataset.environmentIndex)];
+            environment.layout = button.dataset.layout;
+            persistAndRender();
+          });
+        });
+
+        document.querySelectorAll('[data-photo-input]').forEach((input) => {
+          input.addEventListener('change', async () => {
+            const environment = documentData.environments[Number(input.dataset.environmentIndex)];
+            const files = Array.from(input.files || []);
+            const photos = await Promise.all(files.map((file, offset) => readPhoto(file, environment.photos.length + offset)));
+            environment.photos.push(...photos);
+            environment.layout = suggestDefaultLayout(environment.photos.length);
+            persistAndRender();
+          });
+        });
+      }
+
+      function renderEnvironment(environment, index) {
+        const photos = normalizePhotos(environment.photos);
+        const layout = environment.layout || suggestDefaultLayout(photos.length);
+        return `
+          <section class="environment" id="${slug(environment.title)}">
+            <div class="section-heading">
+              <span class="section-number">${escapeHTML(environment.number || String(index + 1).padStart(2, '0'))}</span>
+              <h2>${escapeHTML(environment.title)}</h2>
+              <span class="section-line"></span>
+            </div>
+            <div class="mural-tools">
+              <div class="layout-suggestions">
+                ${layoutSuggestions(photos.length).map((suggestion) => `
+                  <button type="button" class="${layout === suggestion.key ? 'active' : ''}" data-environment-index="${index}" data-layout="${suggestion.key}">
+                    ${suggestion.label}
+                  </button>
+                `).join('')}
+              </div>
+              <label class="photo-upload">
+                Adicionar fotos
+                <input type="file" accept="image/*" multiple data-photo-input data-environment-index="${index}" />
+              </label>
+            </div>
+            <div class="portfolio-layout">
+              <div class="photo-mural layout-${escapeAttribute(layout)}">
+                ${photos.map((photo, photoIndex) => `
+                  <button class="photo-card ${tileClass(photoIndex, photos.length, layout)}" type="button" data-lightbox-src="${escapeAttribute(photo.src)}" data-lightbox-title="${escapeAttribute(photo.title)}">
+                    <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.title)}" />
+                    <span class="photo-index">${String(photoIndex + 1).padStart(2, '0')}</span>
+                    <span class="photo-label">${escapeHTML(photo.title || `Vista ${photoIndex + 1}`)}</span>
+                  </button>
+                `).join('')}
+              </div>
+              <aside class="info-panel">
+                ${renderSpec('Tamponamentos', environment.specs?.tamponamentos)}
+                ${renderSpec('Portas', environment.specs?.portas)}
+                ${renderSpec('Puxadores', environment.specs?.puxadores)}
+                <div class="spec-group">
+                  <span class="spec-title">Cores</span>
+                  <div class="colors">
+                    ${(environment.colors || []).map((color) => `
+                      <div class="color-item">
+                        <span class="color-dot" style="background:${escapeAttribute(color.hex)}"></span>
+                        <span class="color-name">${escapeHTML(color.name)}</span>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+                <div class="notes">
+                  ${(environment.notes || []).map((note) => `<p>${escapeHTML(note)}</p>`).join('')}
+                </div>
+                <div class="client-footer">${escapeHTML(documentData.client.address || '')}</div>
+              </aside>
+            </div>
+          </section>
+        `;
+      }
+
+      function renderSpec(title, value) {
+        if (!value) return '';
+        return `
+          <div class="spec-group">
+            <span class="spec-title">${title}</span>
+            <div class="spec-value">${escapeHTML(value)}</div>
+          </div>
+        `;
+      }
+
+      function normalizePhotos(photos) {
+        const list = photos && photos.length ? photos : [{ title: 'Vista 1', src: fallbackImage }];
+        return list.map((photo, index) => ({
+          title: photo.title || `Vista ${index + 1}`,
+          src: photo.src || fallbackImage,
+        }));
+      }
+
+      function layoutSuggestions(count) {
+        if (count <= 1) return [{ key: 'single', label: 'Imagem unica' }];
+        if (count === 2) return [
+          { key: 'balanced', label: 'Meio a meio' },
+          { key: 'editorial', label: 'Editorial' },
+        ];
+        if (count === 3) return [
+          { key: 'balanced', label: '1 maior + 2 apoio' },
+          { key: 'top-heavy', label: '3 alinhadas' },
+          { key: 'editorial', label: 'Editorial' },
+        ];
+        if (count === 4) return [
+          { key: 'balanced', label: 'Grade 2x2' },
+          { key: 'editorial', label: 'Imagem destaque' },
+        ];
+        if (count === 5) return [
+          { key: 'top-heavy', label: '3 em cima / 2 embaixo' },
+          { key: 'bottom-heavy', label: '2 em cima / 3 embaixo' },
+          { key: 'editorial', label: 'Editorial' },
+        ];
+        return [
+          { key: 'balanced', label: 'Grade fluida' },
+          { key: 'top-heavy', label: 'Ritmo horizontal' },
+          { key: 'editorial', label: 'Editorial' },
+        ];
+      }
+
+      function suggestDefaultLayout(count) {
+        if (count === 1) return 'single';
+        if (count === 5) return 'top-heavy';
+        return 'balanced';
+      }
+
+      function tileClass(index, count, layout) {
+        if (count === 1 || layout === 'single') return 'tile-full';
+        if (count === 2 && layout !== 'editorial') return 'tile-half';
+
+        if (layout === 'top-heavy') {
+          if (count === 5) return index < 3 ? 'tile-third' : 'tile-half';
+          return 'tile-third';
+        }
+
+        if (layout === 'bottom-heavy') {
+          if (count === 5) return index < 2 ? 'tile-half' : 'tile-third';
+          return index % 5 < 2 ? 'tile-half' : 'tile-third';
+        }
+
+        if (layout === 'editorial') {
+          if (index % 6 === 0) return 'tile-hero';
+          if (index % 6 === 1) return 'tile-tall';
+          if (index % 6 === 2) return 'tile-wide';
+          return 'tile-small';
+        }
+
+        if (count === 3) return index === 0 ? 'tile-hero' : 'tile-small';
+        if (count === 4) return 'tile-half';
+        if (count === 5) return index < 2 ? 'tile-half' : 'tile-third';
+        return index % 5 < 2 ? 'tile-half' : 'tile-third';
+      }
+
+      function readPhoto(file, index) {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({
+            title: `Vista ${index + 1}`,
+            src: reader.result,
+          });
+          reader.readAsDataURL(file);
+        });
+      }
+
+      function persistAndRender() {
+        localStorage.setItem(storageKey, JSON.stringify(documentData));
+        renderDocument();
+      }
+
+      function closeLightbox() {
+        lightbox.classList.remove('active');
+        document.body.classList.remove('lightbox-open');
+        lightboxImage.removeAttribute('src');
+      }
+
+      function slug(value) {
+        return String(value || 'ambiente')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/(^-|-$)/g, '');
+      }
+
+      function escapeHTML(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        }[char]));
+      }
+
+      function escapeAttribute(value) {
+        return escapeHTML(value).replace(/`/g, '&#96;');
+      }
+    </script>
+  </body>
+</html>

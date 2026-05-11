@@ -42,3 +42,23 @@ insert into public.catalog_options (group_key, label, sort_order) values
 on conflict (group_key, label) do update set
   sort_order = excluded.sort_order,
   active = true;
+
+insert into public.catalog_materials (group_key, name, code, brand, hex, sort_order) values
+  ('madeira', 'CARVALHO JARI', 'CARVALHO-JARI', 'Dcoratto', '#a0784a', 10),
+  ('madeira', 'NOGUEIRA', 'NOGUEIRA', 'Dcoratto', '#6b4c32', 20),
+  ('madeira', 'BEGE DUNAS', 'BEGE-DUNAS', 'Dcoratto', '#c8b89a', 30),
+  ('laca', 'GRAFITE', 'GRAFITE', 'Dcoratto', '#4a4a4a', 40),
+  ('laca', 'BRANCO SNOW', 'BRANCO-SNOW', 'Dcoratto', '#f5f3ef', 50),
+  ('laca', 'OFF WHITE', 'OFF-WHITE', 'Dcoratto', '#f0ede6', 60),
+  ('puxador', 'CAVA 45°', 'CAVA-45', 'Dcoratto', null, 70),
+  ('puxador', 'PASSANTE', 'PASSANTE', 'Dcoratto', null, 80),
+  ('porta', 'LISA', 'LISA', 'Dcoratto', null, 90),
+  ('porta', 'FRISO', 'FRISO', 'Dcoratto', null, 100),
+  ('tamponamento', '15mm', '15MM', 'Dcoratto', null, 110),
+  ('tamponamento', '25mm', '25MM', 'Dcoratto', null, 120)
+on conflict (group_key, name) do update set
+  code = excluded.code,
+  brand = excluded.brand,
+  hex = excluded.hex,
+  sort_order = excluded.sort_order,
+  active = true;

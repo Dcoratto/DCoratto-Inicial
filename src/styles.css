@@ -35,6 +35,43 @@ body {
   padding: 0 18px;
 }
 
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.view-switcher {
+  display: inline-flex;
+  gap: 3px;
+  border: 1px solid rgba(184, 151, 106, .24);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .22);
+  padding: 3px;
+}
+
+.view-switcher button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #8a8070;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  padding: 8px 12px;
+  text-transform: uppercase;
+}
+
+.view-switcher button.active {
+  background: rgba(184, 151, 106, .16);
+  color: #d4b896;
+}
+
 .toolbar-brand {
   display: flex;
   align-items: center;
@@ -100,6 +137,15 @@ body {
 @media (max-width: 680px) {
   .legacy-toolbar {
     padding: 0 12px;
+  }
+
+  .toolbar-actions {
+    gap: 8px;
+  }
+
+  .view-switcher button {
+    font-size: 0;
+    padding: 8px;
   }
 
   .persistence-pill span {
