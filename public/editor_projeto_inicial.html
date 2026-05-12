@@ -146,7 +146,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
   </div>
   <span class="htitle">Editor · Projeto Inicial</span>
   <div class="header-actions">
-    <button class="icon-btn" type="button" onclick="openSettings()" title="ConfiguraÃ§Ãµes" aria-label="ConfiguraÃ§Ãµes">⚙</button>
+    <button class="icon-btn" type="button" onclick="openSettings()" title="Configurações" aria-label="Configurações">⚙</button>
     <button class="hbtn" onclick="generatePreview()">Gerar Projeto Inicial</button>
   </div>
 </header>
@@ -198,8 +198,8 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
 <div class="settings-overlay" id="settingsOverlay">
   <div class="settings-panel">
     <div class="settings-head">
-      <h2>ConfiguraÃ§Ãµes do Editor</h2>
-      <button class="settings-close" type="button" onclick="closeSettings()" aria-label="Fechar configuraÃ§Ãµes">Ã—</button>
+      <h2>Configurações do Editor</h2>
+      <button class="settings-close" type="button" onclick="closeSettings()" aria-label="Fechar configurações">×</button>
     </div>
     <div class="settings-body">
       <aside class="settings-card">
@@ -215,7 +215,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
       </aside>
 
       <section class="settings-card">
-        <h3>CatÃ¡logos manuais</h3>
+        <h3>Catálogos manuais</h3>
         <div class="catalog-form">
           <div class="field-group">
             <label>Tipo</label>
@@ -253,7 +253,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
             <input type="file" id="catalogImage" accept="image/*">
           </div>
           <div class="settings-actions field-full">
-            <button class="hbtn" type="button" onclick="addManualCatalogItem()">Adicionar ao catÃ¡logo</button>
+            <button class="hbtn" type="button" onclick="addManualCatalogItem()">Adicionar ao catálogo</button>
           </div>
         </div>
         <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>
@@ -278,7 +278,7 @@ const LEGACY_COLORS = [
   {name:"CINZA SAGRADO", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#8A8A8A"},
   {name:"GRAFITE", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#4A4A4A"},
   {name:"OFF WHITE", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#F0EDE6"},
-  {name:"MACADÂMIA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#C4A882"},
+  {name:"MACADAMIA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#C4A882"},
   {name:"NUDE", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#D4B8A0"},
   {name:"PRETO PIANO", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#1A1A1A"},
   {name:"BRANCO POLAR", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#FAFAF8"},
@@ -530,7 +530,7 @@ function buildSwatchHTML(ambId, field) {
     const selected = state[ambId]?.cores.some(item => item.key === key || (!item.key && item.name === c.name));
     return `
     <div class="swatch-wrap">
-      <div class="swatch ${selected ? 'selected' : ''}" title="${c.manufacturer} Â· ${c.line} Â· ${c.displayName || c.name}"
+      <div class="swatch ${selected ? 'selected' : ''}" title="${c.manufacturer} · ${c.line} · ${c.displayName || c.name}"
         style="${c.textureUrl ? `background-image:url('${c.textureUrl}');background-color:${c.hex}` : `background:${c.hex}`}"
         onclick="toggleColor('${ambId}','${c.name}','${c.hex}',this,'${c.textureUrl || ''}','${c.manufacturer || ''}','${c.line || ''}','${c.quality || ''}')">
       </div>
