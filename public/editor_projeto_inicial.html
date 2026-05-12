@@ -1,9 +1,12 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>D'coratto — Editor Projeto Inicial</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>D'coratto - Editor Projeto Inicial</title>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -42,6 +45,9 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .ambientes{padding:40px}
 .ambientes-title{font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:300;color:var(--gold);margin-bottom:8px}
 .ambientes-sub{font-size:11px;color:var(--muted);letter-spacing:.1em;margin-bottom:32px}
+.ambientes-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:28px}
+.ambientes-head .ambientes-sub{margin-bottom:0}
+.empty-ambientes{border:1px dashed var(--border);background:rgba(0,0,0,.16);padding:28px;color:var(--muted);font-size:13px;text-align:center}
 .amb-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 
 .amb-card{background:var(--panel);border:1px solid var(--border);border-radius:4px;overflow:hidden;transition:border .2s}
@@ -54,6 +60,8 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .amb-name{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;color:var(--white);margin-bottom:4px}
 .amb-summary{font-size:10px;color:var(--muted);letter-spacing:.08em}
 .amb-toggle{margin-left:auto;padding:0 16px;font-size:18px;color:var(--gold);transition:transform .3s}
+.amb-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.amb-remove{border:1px solid rgba(184,151,106,.28);background:transparent;color:var(--muted);cursor:pointer;font-size:10px;letter-spacing:.12em;padding:8px 10px;text-transform:uppercase}
 .amb-card.active .amb-toggle{transform:rotate(180deg)}
 
 .amb-body{display:none;padding:20px;border-top:1px solid var(--border);background:rgba(0,0,0,.2)}
@@ -62,6 +70,9 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .amb-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 .amb-fields .field-group{grid-column:auto}
 .amb-fields .field-full{grid-column:1/-1}
+.check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.check-item{display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:var(--dark2);color:var(--cream);font-size:12px;line-height:1.35;padding:10px}
+.check-item input{width:14px;height:14px;padding:0;accent-color:var(--gold)}
 
 /* COLOR PICKER */
 .color-picker-area{margin-top:4px}
@@ -126,6 +137,11 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .catalog-meta strong{font-size:11px;color:var(--cream);line-height:1.25}
 .catalog-meta span{font-size:9px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
 .catalog-meta button{margin-top:6px;justify-self:start}
+.option-form{display:grid;grid-template-columns:170px 1fr auto;gap:10px;align-items:end;margin-top:18px}
+.option-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:16px}
+.option-card{border:1px solid var(--border);background:rgba(0,0,0,.2);padding:12px}
+.option-card strong{display:block;color:var(--cream);font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px}
+.option-row{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid rgba(184,151,106,.14);padding:7px 0;color:var(--muted);font-size:12px}
 .logo-preview{display:grid;place-items:center;min-height:86px;border:1px solid var(--border);background:#090807;margin-bottom:12px}
 .logo-preview img{max-width:220px;max-height:68px;object-fit:contain}
 
@@ -181,8 +197,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
 
 <!-- AMBIENTES -->
 <div class="ambientes">
-  <h2 class="ambientes-title">Ambientes</h2>
-  <p class="ambientes-sub">Clique em cada ambiente para definir os materiais · As cores selecionadas aparecem automaticamente</p>
+  <div class="ambientes-head"><div><h2 class="ambientes-title">Ambientes</h2><p class="ambientes-sub">Adicione apenas os ambientes usados neste projeto.</p></div><button class="hbtn" type="button" onclick="addEnvironment()">Adicionar ambiente</button></div>
   <div class="amb-grid" id="ambGrid"></div>
 </div>
 
@@ -256,7 +271,16 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
             <button class="hbtn" type="button" onclick="addManualCatalogItem()">Adicionar ao catálogo</button>
           </div>
         </div>
-        <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>
+        <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>      </section>
+
+      <section class="settings-card">
+        <h3>Opções técnicas</h3>
+        <div class="option-form">
+          <div class="field-group"><label>Grupo</label><select id="optionGroup"><option value="tampon">Tamponamentos</option><option value="porta">Portas</option><option value="puxador">Puxadores</option><option value="corredica">Corrediças</option></select></div>
+          <div class="field-group"><label>Opção</label><input type="text" id="optionName" placeholder="Ex: Telescópica"></div>
+          <button class="hbtn" type="button" onclick="addMaterialOption()">Salvar</button>
+        </div>
+        <div class="option-list" id="materialOptionList"></div>
       </section>
     </div>
   </div>
@@ -296,6 +320,12 @@ const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
 const CONFIG_STORAGE_KEY = 'dcoratto.editor.settings.v1';
 const BUILDER_STORAGE_KEY = 'dcoratto.builder.document.v1';
 const DEFAULT_LOGO = 'https://dcorattopremium-5am4gqhj.manus.space/manus-storage/logo-transparent_c8b8c4c4.png';
+const DEFAULT_MATERIAL_OPTIONS = {
+  tampon: ["15mm","25mm","15 e 25mm","6mm","15 e 6mm"],
+  porta: ["LISA","CAVA 45°","PASSANTE","FRISO","ROMEU E JULIETA","AMERICANA","ESPELHO"],
+  puxador: ["CAVA 45°","GARD 256mm","PASSANTE","LISA PASSANTE","LISA PASSANTE COM FRISO","EMBUTIDO","PUXADOR J","PUXADOR L"],
+  corredica: ["Telescópica","Invisível","Slow Motion","Toque","Push Open"],
+};
 let editorSettings = loadEditorSettings();
 let builderDraft = loadBuilderDraft();
 
@@ -305,6 +335,7 @@ function loadEditorSettings() {
     return {
       logo: settings.logo || DEFAULT_LOGO,
       catalogItems: settings.catalogItems || [],
+      materialOptions: normalizeMaterialOptions(settings.materialOptions),
       observations: settings.observations || [
         "Apenas Marcenaria considerado no Projeto",
         "Apenas Marcenaria e Metalons considerados no Projeto",
@@ -314,8 +345,15 @@ function loadEditorSettings() {
       ],
     };
   } catch {
-    return { logo: DEFAULT_LOGO, catalogItems: [], observations: [] };
+    return { logo: DEFAULT_LOGO, catalogItems: [], materialOptions: normalizeMaterialOptions(), observations: [] };
   }
+}
+
+function normalizeMaterialOptions(options = {}) {
+  return Object.fromEntries(Object.entries(DEFAULT_MATERIAL_OPTIONS).map(([group, defaults]) => [
+    group,
+    [...new Set([...(options[group] || []), ...defaults])],
+  ]));
 }
 
 function loadBuilderDraft() {
@@ -328,6 +366,7 @@ function loadBuilderDraft() {
 
 function saveEditorSettings() {
   localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
+  postEditorEvent('settings_saved', { settings: editorSettings });
 }
 
 function manualCatalogItems(type) {
@@ -341,6 +380,7 @@ function applyEditorSettings() {
   const logoPreview = document.getElementById('settingsLogoPreview');
   if (logoPreview) logoPreview.src = logo;
   renderManualCatalogList();
+  renderMaterialOptionList();
   refreshPuxadorSelects();
 }
 
@@ -442,6 +482,56 @@ function renderManualCatalogList() {
   `).join('') : '<div class="amb-summary">Nenhum item manual cadastrado ainda.</div>';
 }
 
+function materialOptions(group) {
+  editorSettings.materialOptions = normalizeMaterialOptions(editorSettings.materialOptions);
+  if (group === 'puxador') return allPuxadores();
+  return editorSettings.materialOptions[group] || [];
+}
+
+function addMaterialOption() {
+  const group = document.getElementById('optionGroup').value;
+  const input = document.getElementById('optionName');
+  const value = input.value.trim();
+  if (!value) return;
+  editorSettings.materialOptions = normalizeMaterialOptions(editorSettings.materialOptions);
+  editorSettings.materialOptions[group] = [...new Set([...(editorSettings.materialOptions[group] || []), value])];
+  input.value = '';
+  saveEditorSettings();
+  renderMaterialOptionList();
+  renderAmbientes();
+  syncPreviewDocument();
+}
+
+function removeMaterialOption(group, value) {
+  editorSettings.materialOptions = normalizeMaterialOptions(editorSettings.materialOptions);
+  editorSettings.materialOptions[group] = (editorSettings.materialOptions[group] || []).filter(option => option !== value);
+  AMBIENTES.forEach(amb => {
+    if (state[amb.id]?.[group]) state[amb.id][group] = state[amb.id][group].filter(option => option !== value);
+  });
+  saveEditorSettings();
+  renderMaterialOptionList();
+  renderAmbientes();
+  syncPreviewDocument();
+}
+
+function renderMaterialOptionList() {
+  const list = document.getElementById('materialOptionList');
+  if (!list) return;
+  const labels = { tampon: 'Tamponamentos', porta: 'Portas', puxador: 'Puxadores', corredica: 'Corrediças' };
+  editorSettings.materialOptions = normalizeMaterialOptions(editorSettings.materialOptions);
+  list.innerHTML = Object.keys(labels).map(group => `
+    <div class="option-card">
+      <strong>${labels[group]}</strong>
+      ${materialOptions(group).map(option => `
+        <div class="option-row">
+          <span>${option}</span>
+          <button class="danger-btn" type="button" onclick="removeMaterialOption('${group}','${option.replace(/'/g, "\\'")}')">Remover</button>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
 function selectedFactories() {
   const selected = Array.from(document.querySelectorAll('#fabricante input[type="checkbox"]:checked')).map(o => o.value);
   return selected.length ? selected : ['VITTA', 'BOA VISTA'];
@@ -457,13 +547,9 @@ function availableColors() {
   ].sort((a, b) => `${a.manufacturer}-${a.line}-${a.name}`.localeCompare(`${b.manufacturer}-${b.line}-${b.name}`));
 }
 
-const PORTAS = ["LISA","CAVA 45°","PASSANTE","FRISO","ROMEU E JULIETA","AMERICANA","ESPELHO"];
-const PUXADORES = ["CAVA 45°","GARD 256mm","PASSANTE","LISA PASSANTE","LISA PASSANTE COM FRISO","EMBUTIDO","PUXADOR J","PUXADOR L"];
-const TAMPONS = ["15mm","25mm","15 e 25mm","6mm","15 e 6mm"];
-
 function allPuxadores() {
   const manualHandles = manualCatalogItems('handle').map(item => `${item.name}${item.line ? ' · '+item.line : ''}`);
-  return [...new Set([...PUXADORES, ...manualHandles])];
+  return [...new Set([...(editorSettings.materialOptions?.puxador || DEFAULT_MATERIAL_OPTIONS.puxador), ...manualHandles])];
 }
 const DEFAULT_OBS_OPTIONS = [
   "Apenas Marcenaria considerado no Projeto",
@@ -478,7 +564,7 @@ function obsOptions() {
   return editorSettings.observations;
 }
 
-const AMBIENTES = [
+const DEFAULT_AMBIENTES = [
   {id:"sala",      name:"Sala",            img:"data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22 viewBox=%220 0 640 360%22%3E%3Crect width=%22640%22 height=%22360%22 fill=%22%23110f0c%22/%3E%3Cpath d=%22M0 270 L160 190 L290 245 L435 145 L640 255 L640 360 L0 360 Z%22 fill=%22%23282018%22/%3E%3Ccircle cx=%22505%22 cy=%2285%22 r=%2238%22 fill=%22%23b8925f%22 opacity=%22.55%22/%3E%3Ctext x=%22320%22 y=%22188%22 text-anchor=%22middle%22 fill=%22%23c9a46d%22 font-family=%22Arial%22 font-size=%2220%22 letter-spacing=%224%22%3EAMBIENTE%3C/text%3E%3C/svg%3E"},
   {id:"cozinha",   name:"Cozinha",         img:"data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22 viewBox=%220 0 640 360%22%3E%3Crect width=%22640%22 height=%22360%22 fill=%22%23110f0c%22/%3E%3Cpath d=%22M0 270 L160 190 L290 245 L435 145 L640 255 L640 360 L0 360 Z%22 fill=%22%23282018%22/%3E%3Ccircle cx=%22505%22 cy=%2285%22 r=%2238%22 fill=%22%23b8925f%22 opacity=%22.55%22/%3E%3Ctext x=%22320%22 y=%22188%22 text-anchor=%22middle%22 fill=%22%23c9a46d%22 font-family=%22Arial%22 font-size=%2220%22 letter-spacing=%224%22%3EAMBIENTE%3C/text%3E%3C/svg%3E"},
   {id:"gourmet",   name:"Área Gourmet",    img:"data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22 viewBox=%220 0 640 360%22%3E%3Crect width=%22640%22 height=%22360%22 fill=%22%23110f0c%22/%3E%3Cpath d=%22M0 270 L160 190 L290 245 L435 145 L640 255 L640 360 L0 360 Z%22 fill=%22%23282018%22/%3E%3Ccircle cx=%22505%22 cy=%2285%22 r=%2238%22 fill=%22%23b8925f%22 opacity=%22.55%22/%3E%3Ctext x=%22320%22 y=%22188%22 text-anchor=%22middle%22 fill=%22%23c9a46d%22 font-family=%22Arial%22 font-size=%2220%22 letter-spacing=%224%22%3EAMBIENTE%3C/text%3E%3C/svg%3E"},
@@ -500,11 +586,27 @@ const AMBIENTES = [
   {id:"servico",   name:"Área de Serviço", img:"data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22 viewBox=%220 0 640 360%22%3E%3Crect width=%22640%22 height=%22360%22 fill=%22%23110f0c%22/%3E%3Cpath d=%22M0 270 L160 190 L290 245 L435 145 L640 255 L640 360 L0 360 Z%22 fill=%22%23282018%22/%3E%3Ccircle cx=%22505%22 cy=%2285%22 r=%2238%22 fill=%22%23b8925f%22 opacity=%22.55%22/%3E%3Ctext x=%22320%22 y=%22188%22 text-anchor=%22middle%22 fill=%22%23c9a46d%22 font-family=%22Arial%22 font-size=%2220%22 letter-spacing=%224%22%3EAMBIENTE%3C/text%3E%3C/svg%3E"},
 ];
 
-// State: per ambiente
+const DEFAULT_AMBIENTE_IMG = DEFAULT_AMBIENTES[0].img;
+let AMBIENTES = Array.isArray(builderDraft?.ambientes) ? builderDraft.ambientes : [];
 const state = {};
-AMBIENTES.forEach(a => {
-  state[a.id] = { tampon:[], porta:[], puxador:[], cores:[], obs:[] };
-});
+
+function emptyEnvironmentState() {
+  return { tampon:[], porta:[], puxador:[], corredica:[], cores:[], obs:[], obsExtra:'' };
+}
+
+function ensureEnvironmentState(ambId) {
+  if (!state[ambId]) state[ambId] = emptyEnvironmentState();
+  state[ambId].tampon ||= [];
+  state[ambId].porta ||= [];
+  state[ambId].puxador ||= [];
+  state[ambId].corredica ||= [];
+  state[ambId].cores ||= [];
+  state[ambId].obs ||= [];
+  state[ambId].obsExtra ||= '';
+  return state[ambId];
+}
+
+AMBIENTES.forEach(a => ensureEnvironmentState(a.id));
 
 if (builderDraft?.state) {
   AMBIENTES.forEach(a => {
@@ -514,6 +616,7 @@ if (builderDraft?.state) {
       tampon: builderDraft.state[a.id]?.tampon || [],
       porta: builderDraft.state[a.id]?.porta || [],
       puxador: builderDraft.state[a.id]?.puxador || [],
+      corredica: builderDraft.state[a.id]?.corredica || [],
       cores: builderDraft.state[a.id]?.cores || [],
       obs: builderDraft.state[a.id]?.obs || [],
     };
@@ -542,6 +645,18 @@ function buildSwatchHTML(ambId, field) {
 
 function buildSelectHTML(options, multiple=false) {
   return options.map(o => `<option value="${o}">${o}</option>`).join('');
+}
+
+function buildCheckboxHTML(ambId, field) {
+  return materialOptions(field).map(option => {
+    const selected = state[ambId]?.[field]?.includes(option);
+    return `
+      <label class="check-item">
+        <input type="checkbox" ${selected ? 'checked' : ''} onchange="updateCheckbox('${ambId}','${field}','${option.replace(/'/g, "\\'")}',this.checked)">
+        ${option}
+      </label>
+    `;
+  }).join('') || '<div class="amb-summary">Cadastre opções nas configurações.</div>';
 }
 
 function buildObsHTML(ambId) {
@@ -577,42 +692,77 @@ function buildHandlePickerHTML(ambId) {
   `;
 }
 
+function addEnvironment() {
+  const nextNumber = AMBIENTES.length + 1;
+  const name = prompt('Nome do ambiente', `Ambiente ${nextNumber}`);
+  if (!name) return;
+  const id = `amb-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
+  AMBIENTES.push({ id, name: name.trim(), img: DEFAULT_AMBIENTE_IMG });
+  ensureEnvironmentState(id);
+  renderAmbientes();
+  syncPreviewDocument();
+  setTimeout(() => toggleCard(id), 0);
+}
+
+function removeEnvironment(ambId) {
+  const amb = AMBIENTES.find(item => item.id === ambId);
+  if (!amb || !confirm(`Remover o ambiente "${amb.name}" deste projeto?`)) return;
+  AMBIENTES = AMBIENTES.filter(item => item.id !== ambId);
+  delete state[ambId];
+  renderAmbientes();
+  syncPreviewDocument();
+}
+
+function renameEnvironment(ambId, value) {
+  const amb = AMBIENTES.find(item => item.id === ambId);
+  if (!amb) return;
+  amb.name = value.trim() || 'Ambiente';
+  const name = document.querySelector(`#card-${ambId} .amb-name`);
+  if (name) name.textContent = amb.name;
+  syncPreviewDocument();
+}
+
 function renderCard(amb) {
-  const s = state[amb.id];
+  const s = ensureEnvironmentState(amb.id);
   return `
   <div class="amb-card" id="card-${amb.id}">
     <div class="amb-header" onclick="toggleCard('${amb.id}')">
-      <img class="amb-thumb" src="${amb.img}" alt="${amb.name}">
+      <img class="amb-thumb" src="${amb.img}" alt="${escapeAttribute(amb.name)}">
       <div class="amb-info">
-        <div class="amb-name">${amb.name}</div>
+        <div class="amb-name">${escapeHTML(amb.name)}</div>
         <div class="amb-summary" id="summary-${amb.id}">Clique para configurar</div>
       </div>
-      <span class="amb-toggle">▾</span>
+      <div class="amb-actions">
+        <button class="amb-remove" type="button" onclick="event.stopPropagation();removeEnvironment('${amb.id}')">Remover</button>
+        <span class="amb-toggle">▾</span>
+      </div>
     </div>
     <div class="amb-body">
       <div class="amb-fields">
+        <div class="field-group field-full">
+          <label>Nome do ambiente</label>
+          <input type="text" value="${escapeAttribute(amb.name)}" oninput="renameEnvironment('${amb.id}',this.value)">
+        </div>
         <div class="field-group">
           <label>Tamponamentos</label>
-          <select multiple size="3" onchange="updateMulti('${amb.id}','tampon',this)">
-            ${buildSelectHTML(TAMPONS)}
-          </select>
+          <div class="check-grid">${buildCheckboxHTML(amb.id,'tampon')}</div>
         </div>
         <div class="field-group">
           <label>Portas</label>
-          <select multiple size="3" onchange="updateMulti('${amb.id}','porta',this)">
-            ${buildSelectHTML(PORTAS)}
-          </select>
+          <div class="check-grid">${buildCheckboxHTML(amb.id,'porta')}</div>
         </div>
         <div class="field-group">
           <label>Puxadores</label>
-          <select multiple size="3" data-field="puxador" onchange="updateMulti('${amb.id}','puxador',this)">
-            ${buildSelectHTML(allPuxadores())}
-          </select>
+          <div class="check-grid" data-field="puxador">${buildCheckboxHTML(amb.id,'puxador')}</div>
           ${buildHandlePickerHTML(amb.id)}
         </div>
         <div class="field-group">
+          <label>Corrediças</label>
+          <div class="check-grid">${buildCheckboxHTML(amb.id,'corredica')}</div>
+        </div>
+        <div class="field-group">
           <label>Obs adicional</label>
-          <input type="text" placeholder="Texto livre..." oninput="state['${amb.id}'].obsExtra=this.value;syncPreviewDocument()">
+          <input type="text" placeholder="Texto livre..." value="${s.obsExtra || ''}" oninput="state['${amb.id}'].obsExtra=this.value;syncPreviewDocument()">
         </div>
       </div>
 
@@ -633,9 +783,16 @@ function renderCard(amb) {
   </div>`;
 }
 
-document.getElementById('ambGrid').innerHTML = AMBIENTES.map(renderCard).join('');
+function renderAmbientes() {
+  const grid = document.getElementById('ambGrid');
+  grid.innerHTML = AMBIENTES.length
+    ? AMBIENTES.map(renderCard).join('')
+    : '<div class="empty-ambientes" style="grid-column:1/-1">Nenhum ambiente cadastrado. Clique em Adicionar ambiente para começar.</div>';
+  hydrateBuilderControls();
+  updateProgress();
+}
 applyEditorSettings();
-hydrateBuilderControls();
+renderAmbientes();
 
 function handleFactoryChange() {
   const factories = selectedFactories();
@@ -659,15 +816,10 @@ function rerenderAllSwatches() {
 }
 
 function refreshPuxadorSelects() {
-  document.querySelectorAll('select[data-field="puxador"]').forEach(select => {
-    const selected = Array.from(select.selectedOptions).map(option => option.value);
-    select.innerHTML = buildSelectHTML(allPuxadores());
-    Array.from(select.options).forEach(option => {
-      option.selected = selected.includes(option.value);
-    });
-  });
   AMBIENTES.forEach(amb => {
-    const card = document.querySelector(`#card-${amb.id} select[data-field="puxador"]`)?.parentElement;
+    const card = document.querySelector(`#card-${amb.id} [data-field="puxador"]`)?.parentElement;
+    const grid = card?.querySelector('[data-field="puxador"]');
+    if (grid) grid.innerHTML = buildCheckboxHTML(amb.id, 'puxador');
     const oldPicker = card?.querySelector('.handle-picker');
     if (oldPicker) oldPicker.remove();
     card?.insertAdjacentHTML('beforeend', buildHandlePickerHTML(amb.id));
@@ -686,14 +838,7 @@ function hydrateBuilderControls() {
   }
 
   AMBIENTES.forEach(amb => {
-    const s = state[amb.id];
-    ['tampon', 'porta', 'puxador'].forEach(field => {
-      const select = document.querySelector(`#card-${amb.id} select[onchange*="'${field}'"], #card-${amb.id} select[data-field="${field}"]`);
-      if (!select) return;
-      Array.from(select.options).forEach(option => {
-        option.selected = (s[field] || []).includes(option.value);
-      });
-    });
+    const s = ensureEnvironmentState(amb.id);
     const extra = document.querySelector(`#card-${amb.id} input[placeholder="Texto livre..."]`);
     if (extra) extra.value = s.obsExtra || '';
     renderSelectedColors(amb.id);
@@ -719,17 +864,25 @@ function updateMulti(ambId, field, sel) {
   syncPreviewDocument();
 }
 
+function updateCheckbox(ambId, field, value, checked) {
+  const s = ensureEnvironmentState(ambId);
+  const current = new Set(s[field] || []);
+  if (checked) current.add(value);
+  else current.delete(value);
+  s[field] = [...current];
+  updateSummary(ambId);
+  updateProgress();
+  syncPreviewDocument();
+}
+
 function toggleHandle(ambId, value) {
   const list = state[ambId].puxador;
   const index = list.indexOf(value);
   if (index > -1) list.splice(index, 1);
   else list.push(value);
-  const select = document.querySelector(`#card-${ambId} select[data-field="puxador"]`);
-  if (select) {
-    Array.from(select.options).forEach(option => {
-      option.selected = list.includes(option.value);
-    });
-  }
+  document.querySelectorAll(`#card-${ambId} [data-field="puxador"] input[type="checkbox"]`).forEach(input => {
+    input.checked = list.includes(input.parentElement.textContent.trim());
+  });
   refreshPuxadorSelects();
   updateSummary(ambId);
   syncPreviewDocument();
@@ -831,6 +984,8 @@ function updateSummary(ambId) {
   const parts = [];
   if (s.cores.length) parts.push(s.cores.map(c=>c.name).join(', '));
   if (s.porta.length) parts.push('Porta: '+s.porta.join(', '));
+  if (s.puxador.length) parts.push('Puxador: '+s.puxador.join(', '));
+  if (s.corredica.length) parts.push('Corrediça: '+s.corredica.join(', '));
   const el = document.getElementById('summary-'+ambId);
   if (el) el.textContent = parts.length ? parts.join(' · ') : 'Clique para configurar';
 };
@@ -838,13 +993,13 @@ function updateSummary(ambId) {
 function updateProgress() {
   const done = AMBIENTES.filter(a => {
     const s = state[a.id];
-    return s.cores.length > 0 || s.porta.length > 0 || s.tampon.length > 0;
+    return s.cores.length > 0 || s.porta.length > 0 || s.tampon.length > 0 || s.puxador.length > 0 || s.corredica.length > 0;
   }).length;
-  document.getElementById('progressFill').style.width = (done/AMBIENTES.length*100)+'%';
+  document.getElementById('progressFill').style.width = (AMBIENTES.length ? done/AMBIENTES.length*100 : 0)+'%';
 }
 
 function hasEnvironmentData(s) {
-  return s.cores.length || s.porta.length || s.tampon.length || s.puxador.length || s.obs.length || s.obsExtra;
+  return s.cores.length || s.porta.length || s.tampon.length || s.puxador.length || s.corredica.length || s.obs.length || s.obsExtra;
 }
 
 function buildPreviewDocumentData() {
@@ -861,6 +1016,7 @@ function buildPreviewDocumentData() {
           tamponamentos: s.tampon.join(', '),
           portas: s.porta.join(', '),
           puxadores: s.puxador.join(', '),
+          corredicas: s.corredica.join(', '),
         },
         colors: s.cores,
         notes: [...s.obs, s.obsExtra || ''].filter(Boolean),
@@ -889,21 +1045,36 @@ function buildPreviewDocumentData() {
 }
 
 function saveBuilderDraft() {
-  localStorage.setItem(BUILDER_STORAGE_KEY, JSON.stringify({
+  const draft = {
     fields: {
       clientName: document.getElementById('clientName').value || '',
       contractNum: document.getElementById('contractNum').value || '',
       endereco: document.getElementById('endereco').value || '',
       factories: selectedFactories(),
     },
+    ambientes: AMBIENTES,
     state,
     updatedAt: new Date().toISOString(),
-  }));
+  };
+  localStorage.setItem(BUILDER_STORAGE_KEY, JSON.stringify(draft));
+  return draft;
 }
 
-function syncPreviewDocument() {
-  saveBuilderDraft();
-  localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(buildPreviewDocumentData()));
+function postEditorEvent(action, payload = {}) {
+  if (window.parent === window) return;
+  window.parent.postMessage({
+    type: 'dcoratto:editor-state',
+    action,
+    ...payload,
+    sentAt: new Date().toISOString(),
+  }, window.location.origin);
+}
+
+function syncPreviewDocument(action = 'editor_sync') {
+  const draft = saveBuilderDraft();
+  const preview = buildPreviewDocumentData();
+  localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
+  postEditorEvent(action, { draft, preview });
 }
 
 ['clientName', 'contractNum', 'endereco'].forEach(id => {
@@ -914,7 +1085,7 @@ syncPreviewDocument();
 // ─── GENERATE ─────────────────────────────────────────────────────────────────
 
 function generatePreview() {
-  syncPreviewDocument();
+  syncPreviewDocument('generate_project_initial');
   const clientName = document.getElementById('clientName').value || 'CLIENTE MODELO';
   const contractNum = document.getElementById('contractNum').value || '—';
   const fabricante = selectedFactories().join(' + ') || '—';
@@ -931,7 +1102,7 @@ function generatePreview() {
 
   AMBIENTES.forEach(amb => {
     const s = state[amb.id];
-    const hasData = s.cores.length||s.porta.length||s.tampon.length||s.puxador.length;
+    const hasData = s.cores.length||s.porta.length||s.tampon.length||s.puxador.length||s.corredica.length;
     if (!hasData) return;
 
     const allObs = [...s.obs, s.obsExtra||''].filter(Boolean).join(' · ');
@@ -948,6 +1119,7 @@ function generatePreview() {
         ${s.tampon.length ? `<div style="margin-bottom:20px"><div style="font-size:12px;font-weight:600;font-family:'Montserrat',sans-serif;margin-bottom:4px">Tamponamentos</div><div style="font-size:14px;color:#555">${s.tampon.join(', ')}</div></div>` : ''}
         ${s.porta.length ? `<div style="margin-bottom:20px"><div style="font-size:12px;font-weight:600;font-family:'Montserrat',sans-serif;margin-bottom:4px">Portas</div><div style="font-size:14px;color:#555">${s.porta.join(', ')}</div></div>` : ''}
         ${s.puxador.length ? `<div style="margin-bottom:20px"><div style="font-size:12px;font-weight:600;font-family:'Montserrat',sans-serif;margin-bottom:4px">Puxadores</div><div style="font-size:14px;color:#555">${s.puxador.join(', ')}</div></div>` : ''}
+        ${s.corredica.length ? `<div style="margin-bottom:20px"><div style="font-size:12px;font-weight:600;font-family:'Montserrat',sans-serif;margin-bottom:4px">Corrediças</div><div style="font-size:14px;color:#555">${s.corredica.join(', ')}</div></div>` : ''}
         ${s.cores.length ? `
         <div><div style="font-size:12px;font-weight:600;font-family:'Montserrat',sans-serif;margin-bottom:12px">Cores</div>
         <div style="display:flex;flex-wrap:wrap;gap:12px">

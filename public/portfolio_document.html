@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>D'coratto | Portfolio HTML</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -712,6 +715,7 @@
                 ${renderSpec('Tamponamentos', environment.specs?.tamponamentos)}
                 ${renderSpec('Portas', environment.specs?.portas)}
                 ${renderSpec('Puxadores', environment.specs?.puxadores)}
+                ${renderSpec('Corrediças', environment.specs?.corredicas)}
                 <div class="spec-group">
                   <span class="spec-title">Cores</span>
                   <div class="colors">
@@ -824,6 +828,14 @@
 
       function persistAndRender() {
         localStorage.setItem(storageKey, JSON.stringify(documentData));
+        if (window.parent !== window) {
+          window.parent.postMessage({
+            type: 'dcoratto:editor-state',
+            action: 'portfolio_sync',
+            preview: documentData,
+            sentAt: new Date().toISOString(),
+          }, window.location.origin);
+        }
         renderDocument();
       }
 

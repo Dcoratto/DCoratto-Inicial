@@ -30,7 +30,12 @@ O `schema.sql` cria/configura:
 
 ## Observacao de seguranca
 
-As policies atuais estao abertas para acelerar o desenvolvimento local. Antes de producao, devemos trocar para policies autenticadas por usuario/organizacao.
+As policies de producao exigem usuario autenticado no Supabase para consultar e gravar projetos, snapshots, HTMLs e logs. A leitura do Storage permanece publica para que links de HTML ja enviados aos clientes continuem abrindo.
+
+Crie no Supabase Auth o usuario operacional:
+
+- email: `dcorattoinovacao@gmail.com`
+- senha: `sob_medida`
 
 ## Fluxo persistente esperado
 
@@ -40,3 +45,7 @@ As policies atuais estao abertas para acelerar o desenvolvimento local. Antes de
 4. O preview le `project_document_payload`.
 5. O HTML final gerado e salvo em `document_html_versions` e no bucket `dcoratto-html`.
 6. A versao atual fica apontada em `document_projects.current_html_id`.
+
+## Auditoria e historico
+
+Cada alteracao enviada pelo editor cria um snapshot em `document_versions` e um registro em `editor_audit_logs`. Ao clicar em Gerar Projeto Inicial, o HTML compartilhavel tambem e salvo em `document_html_versions` e enviado para o bucket `dcoratto-html`.

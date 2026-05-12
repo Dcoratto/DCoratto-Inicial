@@ -150,12 +150,37 @@ create table if not exists public.document_html_versions (
   unique (project_id, version_number)
 );
 
+alter table public.document_html_versions
+  add column if not exists shared_with_client boolean not null default false,
+  add column if not exists shared_at timestamptz,
+  add column if not exists created_by text not null default '',
+  add column if not exists share_slug text;
+
 create table if not exists public.document_versions (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.document_projects(id) on delete cascade,
   snapshot jsonb not null,
   reason text not null default 'autosave',
   created_at timestamptz not null default now()
+);
+
+create table if not exists public.editor_audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid references public.document_projects(id) on delete set null,
+  event_id uuid unique,
+  actor_email text not null default '',
+  action text not null,
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.editor_settings (
+  id uuid primary key default gen_random_uuid(),
+  settings_key text not null unique default 'default',
+  payload jsonb not null default '{}'::jsonb,
+  updated_by text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 do $$
@@ -184,6 +209,10 @@ create index if not exists document_html_versions_project_idx on public.document
 create index if not exists document_versions_project_idx on public.document_versions(project_id, created_at desc);
 create index if not exists document_projects_updated_idx on public.document_projects(updated_at desc);
 create index if not exists catalog_materials_manufacturer_idx on public.catalog_materials(manufacturer, line_name, sort_order);
+create index if not exists editor_audit_logs_project_idx on public.editor_audit_logs(project_id, created_at desc);
+create index if not exists editor_audit_logs_actor_idx on public.editor_audit_logs(actor_email, created_at desc);
+create index if not exists document_html_versions_shared_idx on public.document_html_versions(shared_with_client, shared_at desc);
+create index if not exists editor_settings_key_idx on public.editor_settings(settings_key);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -220,6 +249,11 @@ create trigger set_environment_notes_updated_at
 before update on public.environment_notes
 for each row execute function public.set_updated_at();
 
+drop trigger if exists set_editor_settings_updated_at on public.editor_settings;
+create trigger set_editor_settings_updated_at
+before update on public.editor_settings
+for each row execute function public.set_updated_at();
+
 create or replace function public.unset_other_current_html()
 returns trigger
 language plpgsql
@@ -254,6 +288,8 @@ alter table public.catalog_options enable row level security;
 alter table public.catalog_materials enable row level security;
 alter table public.document_html_versions enable row level security;
 alter table public.document_versions enable row level security;
+alter table public.editor_audit_logs enable row level security;
+alter table public.editor_settings enable row level security;
 
 drop policy if exists "Public read projects" on public.document_projects;
 create policy "Public read projects" on public.document_projects for select using (true);
@@ -431,3 +467,88 @@ drop policy if exists "Public write dcoratto storage" on storage.objects;
 create policy "Public write dcoratto storage" on storage.objects
 for all using (bucket_id in ('dcoratto-photos', 'dcoratto-html'))
 with check (bucket_id in ('dcoratto-photos', 'dcoratto-html'));
+
+-- Harden production access: the React login uses Supabase Auth when configured.
+-- Keep storage reads public so previously shared client HTML links remain accessible.
+drop policy if exists "Public read projects" on public.document_projects;
+drop policy if exists "Public write projects" on public.document_projects;
+drop policy if exists "Authenticated read projects" on public.document_projects;
+create policy "Authenticated read projects" on public.document_projects for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write projects" on public.document_projects;
+create policy "Authenticated write projects" on public.document_projects for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Public read environments" on public.document_environments;
+drop policy if exists "Public write environments" on public.document_environments;
+drop policy if exists "Authenticated read environments" on public.document_environments;
+create policy "Authenticated read environments" on public.document_environments for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write environments" on public.document_environments;
+create policy "Authenticated write environments" on public.document_environments for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Public read environment photos" on public.environment_photos;
+drop policy if exists "Public write environment photos" on public.environment_photos;
+drop policy if exists "Authenticated read environment photos" on public.environment_photos;
+create policy "Authenticated read environment photos" on public.environment_photos for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write environment photos" on public.environment_photos;
+create policy "Authenticated write environment photos" on public.environment_photos for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Public read environment colors" on public.environment_colors;
+drop policy if exists "Public write environment colors" on public.environment_colors;
+drop policy if exists "Authenticated read environment colors" on public.environment_colors;
+create policy "Authenticated read environment colors" on public.environment_colors for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write environment colors" on public.environment_colors;
+create policy "Authenticated write environment colors" on public.environment_colors for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Public read environment materials" on public.environment_materials;
+drop policy if exists "Public write environment materials" on public.environment_materials;
+drop policy if exists "Authenticated read environment materials" on public.environment_materials;
+create policy "Authenticated read environment materials" on public.environment_materials for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write environment materials" on public.environment_materials;
+create policy "Authenticated write environment materials" on public.environment_materials for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Public read environment notes" on public.environment_notes;
+drop policy if exists "Public write environment notes" on public.environment_notes;
+drop policy if exists "Authenticated read environment notes" on public.environment_notes;
+create policy "Authenticated read environment notes" on public.environment_notes for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write environment notes" on public.environment_notes;
+create policy "Authenticated write environment notes" on public.environment_notes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Public read colors" on public.catalog_colors;
+drop policy if exists "Authenticated read colors" on public.catalog_colors;
+create policy "Authenticated read colors" on public.catalog_colors for select using (auth.role() = 'authenticated');
+
+drop policy if exists "Public read options" on public.catalog_options;
+drop policy if exists "Authenticated read options" on public.catalog_options;
+create policy "Authenticated read options" on public.catalog_options for select using (auth.role() = 'authenticated');
+
+drop policy if exists "Public read materials" on public.catalog_materials;
+drop policy if exists "Authenticated read materials" on public.catalog_materials;
+create policy "Authenticated read materials" on public.catalog_materials for select using (auth.role() = 'authenticated');
+
+drop policy if exists "Public read html versions" on public.document_html_versions;
+drop policy if exists "Public write html versions" on public.document_html_versions;
+drop policy if exists "Authenticated read html versions" on public.document_html_versions;
+create policy "Authenticated read html versions" on public.document_html_versions for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write html versions" on public.document_html_versions;
+create policy "Authenticated write html versions" on public.document_html_versions for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Public write versions" on public.document_versions;
+drop policy if exists "Authenticated read versions" on public.document_versions;
+create policy "Authenticated read versions" on public.document_versions for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write versions" on public.document_versions;
+create policy "Authenticated write versions" on public.document_versions for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Authenticated read audit logs" on public.editor_audit_logs;
+create policy "Authenticated read audit logs" on public.editor_audit_logs for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write audit logs" on public.editor_audit_logs;
+create policy "Authenticated write audit logs" on public.editor_audit_logs for insert with check (auth.role() = 'authenticated');
+
+drop policy if exists "Authenticated read editor settings" on public.editor_settings;
+create policy "Authenticated read editor settings" on public.editor_settings for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write editor settings" on public.editor_settings;
+create policy "Authenticated write editor settings" on public.editor_settings for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Public write dcoratto storage" on storage.objects;
+drop policy if exists "Authenticated write dcoratto storage" on storage.objects;
+create policy "Authenticated write dcoratto storage" on storage.objects
+for all using (bucket_id in ('dcoratto-photos', 'dcoratto-html') and auth.role() = 'authenticated')
+with check (bucket_id in ('dcoratto-photos', 'dcoratto-html') and auth.role() = 'authenticated');

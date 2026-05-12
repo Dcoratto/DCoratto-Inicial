@@ -127,11 +127,127 @@ body {
   color: #9fe0b6;
 }
 
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(184, 151, 106, .2);
+  border-radius: 999px;
+  color: #d4b896;
+  font-size: 10px;
+  letter-spacing: .06em;
+  padding: 5px 6px 5px 12px;
+}
+
+.user-pill button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(184, 151, 106, .13);
+  color: #f5f0e8;
+  cursor: pointer;
+}
+
 .legacy-frame {
   width: 100%;
   height: 100%;
   border: 0;
   background: #0e0d0b;
+}
+
+.login-shell {
+  display: grid;
+  width: 100vw;
+  min-height: 100vh;
+  place-items: center;
+  background:
+    linear-gradient(rgba(8, 8, 7, .84), rgba(8, 8, 7, .94)),
+    #0e0d0b;
+  padding: 24px;
+}
+
+.login-card {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 16px;
+  border: 1px solid rgba(184, 151, 106, .26);
+  background: #15120f;
+  padding: 34px;
+}
+
+.login-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgba(184, 151, 106, .34);
+  border-radius: 50%;
+  color: #d4b896;
+}
+
+.login-card span {
+  color: #8a8070;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+}
+
+.login-card h1 {
+  margin: 0 0 10px;
+  color: #f5f0e8;
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 34px;
+  font-weight: 300;
+}
+
+.login-card label {
+  display: grid;
+  gap: 8px;
+  color: #b8976a;
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.login-card input {
+  width: 100%;
+  border: 1px solid rgba(184, 151, 106, .28);
+  background: #0e0d0b;
+  color: #f5f0e8;
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: 0;
+  padding: 13px 14px;
+}
+
+.login-card button[type='submit'] {
+  border: 0;
+  background: #b8976a;
+  color: #17120c;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  margin-top: 4px;
+  padding: 14px 16px;
+  text-transform: uppercase;
+}
+
+.login-card button[disabled] {
+  cursor: wait;
+  opacity: .7;
+}
+
+.login-error {
+  margin: 0;
+  color: #ffb4a8;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 @media (max-width: 680px) {
@@ -149,6 +265,10 @@ body {
   }
 
   .persistence-pill span {
+    display: none;
+  }
+
+  .user-pill span {
     display: none;
   }
 }
