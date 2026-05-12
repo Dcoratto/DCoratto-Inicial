@@ -7,7 +7,7 @@ function App() {
   const [isLogged, setIsLogged] = useState(false);
   
   // Versão do sistema (mude aqui para forçar atualização em todos os usuários)
-  const SYSTEM_VERSION = "2026-05-12-v4";
+  const SYSTEM_VERSION = "2026-05-12-v5";
 
   // URL do seu editor
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
@@ -31,4 +31,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>,
-)
+)\
