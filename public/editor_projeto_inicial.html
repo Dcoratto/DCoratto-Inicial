@@ -11,9 +11,9 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --gold:#b8976a;--gold-l:#d4b896;--dark:#0e0d0b;--dark2:#161410;--dark3:#1e1b17;
-  --cream:#f5f0e8;--muted:#8a8070;--white:#ffffff;
-  --panel:#1a1714;--border:rgba(184,151,106,0.2);
+  --gold:#b8976a;--gold-l:#d4b896;--dark:#070605;--dark2:#151310;--dark3:#1f1c18;
+  --cream:#f7f2e8;--muted:#b7ab98;--white:#ffffff;
+  --panel:#221f1a;--panel-strong:#27231f;--field-bg:#1f1c18;--border:rgba(184,151,106,0.24);
 }
 html{scroll-behavior:smooth}
 body{background:var(--dark);color:var(--cream);font-family:'Montserrat',sans-serif;font-weight:300;min-height:100vh}
@@ -34,7 +34,7 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .cover-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
 .field-group{display:flex;flex-direction:column;gap:6px}
 .field-group label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
-.field-group input, .field-group select{background:var(--panel);border:1px solid var(--border);color:var(--cream);padding:10px 14px;font-family:'Montserrat',sans-serif;font-size:13px;font-weight:300;border-radius:2px;outline:none;transition:border .2s}
+.field-group input, .field-group select{background:var(--field-bg);border:1px solid var(--border);color:var(--cream);padding:10px 14px;font-family:'Montserrat',sans-serif;font-size:13px;font-weight:300;border-radius:4px;outline:none;transition:border .2s,background .2s}
 .factory-checks{display:flex;align-items:center;gap:10px;min-height:42px}
 .factory-check{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:2px;background:var(--panel);color:var(--cream);padding:10px 12px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
 .factory-check input{width:14px;height:14px;accent-color:var(--gold);padding:0}
@@ -71,7 +71,8 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .amb-fields .field-group{grid-column:auto}
 .amb-fields .field-full{grid-column:1/-1}
 .check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
-.check-item{display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:var(--dark2);color:var(--cream);font-size:12px;line-height:1.35;padding:10px}
+.check-item{display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.04);color:var(--cream);font-size:12px;line-height:1.35;padding:10px;border-radius:4px;transition:background .2s,border .2s}
+.check-item:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12)}
 .check-item input{width:14px;height:14px;padding:0;accent-color:var(--gold)}
 
 /* COLOR PICKER */
@@ -139,9 +140,12 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .catalog-meta button{margin-top:6px;justify-self:start}
 .option-form{display:grid;grid-template-columns:170px 1fr auto;gap:10px;align-items:end;margin-top:18px}
 .option-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:16px}
-.option-card{border:1px solid var(--border);background:rgba(0,0,0,.2);padding:12px}
-.option-card strong{display:block;color:var(--cream);font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px}
-.option-row{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid rgba(184,151,106,.14);padding:7px 0;color:var(--muted);font-size:12px}
+.option-card{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);padding:14px;border-radius:4px}
+.option-card strong{display:block;color:var(--cream);font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px}
+.option-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:8px;border-top:1px solid rgba(255,255,255,.08);padding:10px 0;color:var(--cream);font-size:12px}
+.option-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.option-row button{border:1px solid rgba(255,255,255,.08);background:transparent;color:var(--muted);padding:6px 10px;border-radius:3px;cursor:pointer;font-size:11px;letter-spacing:.08em;transition:all .2s}
+.option-row button:hover{border-color:var(--gold);color:var(--gold);background:rgba(184,151,106,.08)}
 .logo-preview{display:grid;place-items:center;min-height:86px;border:1px solid var(--border);background:#090807;margin-bottom:12px}
 .logo-preview img{max-width:220px;max-height:68px;object-fit:contain}
 
@@ -277,9 +281,10 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
         <h3>Opções técnicas</h3>
         <div class="option-form">
           <div class="field-group"><label>Grupo</label><select id="optionGroup"><option value="tampon">Tamponamentos</option><option value="porta">Portas</option><option value="puxador">Puxadores</option><option value="corredica">Corrediças</option></select></div>
-          <div class="field-group"><label>Opção</label><input type="text" id="optionName" placeholder="Ex: Telescópica"></div>
+          <div class="field-group"><label>Opção</label><input type="text" id="optionName" placeholder="Ex: Cava 45°"></div>
           <button class="hbtn" type="button" onclick="addMaterialOption()">Salvar</button>
         </div>
+        <p style="font-size:11px;color:var(--muted);margin-top:10px">Adicione, remova ou edite as opções de Tamponamentos, Portas e Corrediças aqui.</p>
         <div class="option-list" id="materialOptionList"></div>
       </section>
     </div>
@@ -527,6 +532,23 @@ function removeMaterialOption(group, value) {
   syncPreviewDocument();
 }
 
+function editMaterialOption(group, value) {
+  const newValue = prompt('Editar opção', value)?.trim();
+  if (!newValue || newValue === value) return;
+  const options = normalizeMaterialOptions(editorSettings.materialOptions);
+  options[group] = [...new Set((options[group] || []).map(option => option === value ? newValue : option))];
+  editorSettings.materialOptions = options;
+  AMBIENTES.forEach(amb => {
+    if (state[amb.id]?.[group]) {
+      state[amb.id][group] = state[amb.id][group].map(option => option === value ? newValue : option);
+    }
+  });
+  saveEditorSettings();
+  renderMaterialOptionList();
+  renderAmbientes();
+  syncPreviewDocument();
+}
+
 function renderMaterialOptionList() {
   const list = document.getElementById('materialOptionList');
   if (!list) return;
@@ -537,8 +559,9 @@ function renderMaterialOptionList() {
       <strong>${labels[group]}</strong>
       ${materialOptions(group).map(option => `
         <div class="option-row">
-          <span>${option}</span>
-          <button class="danger-btn" type="button" onclick="removeMaterialOption('${group}','${option.replace(/'/g, "\\'")}')">Remover</button>
+          <span title="${option}">${option}</span>
+          <button type="button" onclick="editMaterialOption('${group}','${option.replace(/'/g, "\\'")}')">Editar</button>
+          <button type="button" onclick="removeMaterialOption('${group}','${option.replace(/'/g, "\\'")}')">Remover</button>
         </div>
       `).join('')}
     </div>
