@@ -1,58 +1,34 @@
-import React, { useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import { Database, FileText, Images } from 'lucide-react';
-import './styles.css';
-
-const hasSupabaseEnv = Boolean(
-  import.meta.env.VITE_SUPABASE_URL
-  && import.meta.env.VITE_SUPABASE_ANON_KEY
-  && !import.meta.env.VITE_SUPABASE_URL.includes('seu-projeto')
-);
-
-const frameVersion = '2026-05-12-editor-settings-v2';
+import React, { useState, useEffect } from 'react'
+import ReactDOM from 'react-dom/client'
+import { Login } from './Login'
+import './styles.css'
 
 function App() {
-  const [activeView, setActiveView] = useState('builder');
-  const framePath = activeView === 'builder' ? '/editor_projeto_inicial.html' : '/portfolio_document.html';
-  const frameSrc = `${framePath}?v=${frameVersion}`;
+  const [isLogged, setIsLogged] = useState(false);
+  
+  // Versão do sistema para forçar atualização do cache (mude esta data para atualizar todos os usuários)
+  const SYSTEM_VERSION = "2026-05-12-v3";
+
+  // URL do seu editor (que está na pasta public)
+  const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
+
+  if (!isLogged) {
+    return <Login onLoginSuccess={() => setIsLogged(true)} />;
+  }
 
   return (
-    <main className="legacy-shell">
-      <header className="legacy-toolbar">
-        <div className="toolbar-brand">
-          <FileText size={18} />
-          <div>
-            <span>D'coratto</span>
-            <strong>Editor Projeto Inicial</strong>
-          </div>
-        </div>
-
-        <div className="toolbar-actions">
-          <div className="view-switcher" aria-label="Alternar visualizacao">
-            <button className={activeView === 'builder' ? 'active' : ''} type="button" onClick={() => setActiveView('builder')}>
-              <FileText size={14} />
-              Construtor
-            </button>
-            <button className={activeView === 'preview' ? 'active' : ''} type="button" onClick={() => setActiveView('preview')}>
-              <Images size={14} />
-              Preview HTML
-            </button>
-          </div>
-
-          <div className={`persistence-pill ${hasSupabaseEnv ? 'online' : 'offline'}`}>
-            <Database size={15} />
-            <span>{hasSupabaseEnv ? 'Supabase configurado' : 'Supabase pendente'}</span>
-          </div>
-        </div>
-      </header>
-
-      <iframe
-        className="legacy-frame"
-        title={activeView === 'builder' ? "Editor Projeto Inicial D'coratto" : "Preview HTML D'coratto"}
-        src={frameSrc}
+    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
+      <iframe 
+        src={editorUrl}
+        style={{ width: '100%', height: '100%', border: 'none' }}
+        title="DCoratto Sistema"
       />
-    </main>
+    </div>
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)
