@@ -9,9 +9,12 @@ const hasSupabaseEnv = Boolean(
   && !import.meta.env.VITE_SUPABASE_URL.includes('seu-projeto')
 );
 
+const frameVersion = '2026-05-12-editor-settings-v2';
+
 function App() {
   const [activeView, setActiveView] = useState('builder');
-  const frameSrc = activeView === 'builder' ? '/editor_projeto_inicial.html' : '/portfolio_document.html';
+  const framePath = activeView === 'builder' ? '/editor_projeto_inicial.html' : '/portfolio_document.html';
+  const frameSrc = `${framePath}?v=${frameVersion}`;
 
   return (
     <main className="legacy-shell">
