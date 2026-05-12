@@ -293,6 +293,12 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
 
 <script src="/catalog/boa-vista/catalog.js"></script>
 <script>
+
+function escapeAttribute(str) {
+  if (!str) return '';
+  return str.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
 const LEGACY_COLORS = [
@@ -1146,4 +1152,3 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') closePreview();
 </script>
 </body>
 </html>
-
