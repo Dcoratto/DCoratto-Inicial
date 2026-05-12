@@ -167,10 +167,10 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
     </div>
     <div class="field-group">
       <label>Fabricante / Promob</label>
-      <select id="fabricante" class="factory-select" multiple size="2" onchange="handleFactoryChange()">
-        <option value="VITTA">VITTA</option>
-        <option value="BOA VISTA">BOA VISTA</option>
-      </select>
+      <div class="factory-checks" id="fabricante">
+        <label class="factory-check"><input type="checkbox" value="VITTA" checked onchange="handleFactoryChange()"> Vitta</label>
+        <label class="factory-check"><input type="checkbox" value="BOA VISTA" checked onchange="handleFactoryChange()"> Boa Vista</label>
+      </div>
     </div>
     <div class="field-group" style="grid-column:1/-1">
       <label>Endereço da Obra</label>
@@ -294,14 +294,35 @@ const BOA_VISTA_COLORS = (window.BOA_VISTA_CATALOG || []).map(color => ({
 }));
 const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
 const CONFIG_STORAGE_KEY = 'dcoratto.editor.settings.v1';
+const BUILDER_STORAGE_KEY = 'dcoratto.builder.document.v1';
 const DEFAULT_LOGO = 'https://dcorattopremium-5am4gqhj.manus.space/manus-storage/logo-transparent_c8b8c4c4.png';
 let editorSettings = loadEditorSettings();
+let builderDraft = loadBuilderDraft();
 
 function loadEditorSettings() {
   try {
-    return JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY) || 'null') || { logo: DEFAULT_LOGO, catalogItems: [] };
+    const settings = JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY) || 'null') || {};
+    return {
+      logo: settings.logo || DEFAULT_LOGO,
+      catalogItems: settings.catalogItems || [],
+      observations: settings.observations || [
+        "Apenas Marcenaria considerado no Projeto",
+        "Apenas Marcenaria e Metalons considerados no Projeto",
+        "Leds não inclusos",
+        "Considerar cavas para instalação de LEDS",
+        "Eletrodomésticos não inclusos",
+      ],
+    };
   } catch {
-    return { logo: DEFAULT_LOGO, catalogItems: [] };
+    return { logo: DEFAULT_LOGO, catalogItems: [], observations: [] };
+  }
+}
+
+function loadBuilderDraft() {
+  try {
+    return JSON.parse(localStorage.getItem(BUILDER_STORAGE_KEY) || 'null') || null;
+  } catch {
+    return null;
   }
 }
 
@@ -422,7 +443,7 @@ function renderManualCatalogList() {
 }
 
 function selectedFactories() {
-  const selected = Array.from(document.getElementById('fabricante')?.selectedOptions || []).map(o => o.value);
+  const selected = Array.from(document.querySelectorAll('#fabricante input[type="checkbox"]:checked')).map(o => o.value);
   return selected.length ? selected : ['VITTA', 'BOA VISTA'];
 }
 
@@ -444,13 +465,18 @@ function allPuxadores() {
   const manualHandles = manualCatalogItems('handle').map(item => `${item.name}${item.line ? ' · '+item.line : ''}`);
   return [...new Set([...PUXADORES, ...manualHandles])];
 }
-const OBS_OPTIONS = [
+const DEFAULT_OBS_OPTIONS = [
   "Apenas Marcenaria considerado no Projeto",
   "Apenas Marcenaria e Metalons considerados no Projeto",
   "Leds não inclusos",
   "Considerar cavas para instalação de LEDS",
   "Eletrodomésticos não inclusos",
 ];
+
+function obsOptions() {
+  if (!editorSettings.observations?.length) editorSettings.observations = [...DEFAULT_OBS_OPTIONS];
+  return editorSettings.observations;
+}
 
 const AMBIENTES = [
   {id:"sala",      name:"Sala",            img:"data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22360%22 viewBox=%220 0 640 360%22%3E%3Crect width=%22640%22 height=%22360%22 fill=%22%23110f0c%22/%3E%3Cpath d=%22M0 270 L160 190 L290 245 L435 145 L640 255 L640 360 L0 360 Z%22 fill=%22%23282018%22/%3E%3Ccircle cx=%22505%22 cy=%2285%22 r=%2238%22 fill=%22%23b8925f%22 opacity=%22.55%22/%3E%3Ctext x=%22320%22 y=%22188%22 text-anchor=%22middle%22 fill=%22%23c9a46d%22 font-family=%22Arial%22 font-size=%2220%22 letter-spacing=%224%22%3EAMBIENTE%3C/text%3E%3C/svg%3E"},
@@ -480,6 +506,20 @@ AMBIENTES.forEach(a => {
   state[a.id] = { tampon:[], porta:[], puxador:[], cores:[], obs:[] };
 });
 
+if (builderDraft?.state) {
+  AMBIENTES.forEach(a => {
+    state[a.id] = {
+      ...state[a.id],
+      ...(builderDraft.state[a.id] || {}),
+      tampon: builderDraft.state[a.id]?.tampon || [],
+      porta: builderDraft.state[a.id]?.porta || [],
+      puxador: builderDraft.state[a.id]?.puxador || [],
+      cores: builderDraft.state[a.id]?.cores || [],
+      obs: builderDraft.state[a.id]?.obs || [],
+    };
+  });
+}
+
 // ─── BUILD UI ────────────────────────────────────────────────────────────────
 
 function buildSwatchHTML(ambId, field) {
@@ -505,9 +545,15 @@ function buildSelectHTML(options, multiple=false) {
 }
 
 function buildObsHTML(ambId) {
-  return OBS_OPTIONS.map((o,i) => `
-    <button class="obs-btn" onclick="toggleObs('${ambId}',${i},this)">${o}</button>
-  `).join('');
+  return obsOptions().map((o,i) => {
+    const selected = state[ambId]?.obs.includes(o);
+    return `
+    <span class="obs-item">
+      <button class="obs-btn ${selected ? 'selected' : ''}" onclick="toggleObs('${ambId}',${i},this)">${o}</button>
+      <button class="obs-edit" type="button" title="Editar observação" onclick="editObservation('${ambId}',${i})">✎</button>
+    </span>
+  `;
+  }).join('');
 }
 
 function buildHandlePickerHTML(ambId) {
@@ -577,7 +623,10 @@ function renderCard(amb) {
       </div>
 
       <div style="margin-top:16px">
-        <span class="color-picker-label">Observações do projeto</span>
+        <div class="obs-tools">
+          <span class="color-picker-label" style="margin-bottom:0">Observações do projeto</span>
+          <button class="obs-add" type="button" onclick="addObservation('${amb.id}')" title="Adicionar observação">+</button>
+        </div>
         <div class="obs-options">${buildObsHTML(amb.id)}</div>
       </div>
     </div>
@@ -586,6 +635,7 @@ function renderCard(amb) {
 
 document.getElementById('ambGrid').innerHTML = AMBIENTES.map(renderCard).join('');
 applyEditorSettings();
+hydrateBuilderControls();
 
 function handleFactoryChange() {
   const factories = selectedFactories();
@@ -622,6 +672,36 @@ function refreshPuxadorSelects() {
     if (oldPicker) oldPicker.remove();
     card?.insertAdjacentHTML('beforeend', buildHandlePickerHTML(amb.id));
   });
+}
+
+function hydrateBuilderControls() {
+  if (builderDraft?.fields) {
+    document.getElementById('clientName').value = builderDraft.fields.clientName || '';
+    document.getElementById('contractNum').value = builderDraft.fields.contractNum || '';
+    document.getElementById('endereco').value = builderDraft.fields.endereco || '';
+    const factories = builderDraft.fields.factories?.length ? builderDraft.fields.factories : ['VITTA', 'BOA VISTA'];
+    document.querySelectorAll('#fabricante input[type="checkbox"]').forEach(input => {
+      input.checked = factories.includes(input.value);
+    });
+  }
+
+  AMBIENTES.forEach(amb => {
+    const s = state[amb.id];
+    ['tampon', 'porta', 'puxador'].forEach(field => {
+      const select = document.querySelector(`#card-${amb.id} select[onchange*="'${field}'"], #card-${amb.id} select[data-field="${field}"]`);
+      if (!select) return;
+      Array.from(select.options).forEach(option => {
+        option.selected = (s[field] || []).includes(option.value);
+      });
+    });
+    const extra = document.querySelector(`#card-${amb.id} input[placeholder="Texto livre..."]`);
+    if (extra) extra.value = s.obsExtra || '';
+    renderSelectedColors(amb.id);
+    updateSummary(amb.id);
+  });
+  rerenderAllSwatches();
+  refreshPuxadorSelects();
+  updateProgress();
 }
 
 // ─── INTERACTIONS ─────────────────────────────────────────────────────────────
@@ -677,7 +757,7 @@ function renderSelectedColors(ambId) {
     <div class="sel-tag">
       <div style="width:12px;height:12px;border-radius:2px;background:${c.hex};${c.textureUrl ? `background-image:url('${c.textureUrl}');background-size:cover;background-position:center;` : ''}flex-shrink:0"></div>
       ${c.name}${c.quality ? ' / '+c.quality : ''}
-      <span class="rm" onclick="removeColor('${ambId}','${c.name}')">×</span>
+      <span class="rm" onclick="removeColor('${ambId}','${c.key || c.name}')">×</span>
     </div>`).join('');
 }
 
@@ -698,10 +778,51 @@ function removeColor(ambId, key) {
 
 function toggleObs(ambId, idx, btn) {
   const s = state[ambId].obs;
-  const val = OBS_OPTIONS[idx];
+  const val = obsOptions()[idx];
   const i = s.indexOf(val);
   if (i > -1) { s.splice(i,1); btn.classList.remove('selected'); }
   else { s.push(val); btn.classList.add('selected'); }
+  syncPreviewDocument();
+}
+
+function rerenderObservations() {
+  AMBIENTES.forEach(amb => {
+    const options = document.querySelector(`#card-${amb.id} .obs-options`);
+    if (options) options.innerHTML = buildObsHTML(amb.id);
+  });
+}
+
+function addObservation(ambId) {
+  const text = prompt('Nova observação do projeto:');
+  const value = (text || '').trim();
+  if (!value) return;
+  if (!editorSettings.observations.includes(value)) {
+    editorSettings.observations.push(value);
+    saveEditorSettings();
+  }
+  const applyAll = confirm('Aplicar esta observação em todos os ambientes? OK = todos, Cancelar = apenas este ambiente.');
+  const targetIds = applyAll ? AMBIENTES.map(a => a.id) : [ambId];
+  targetIds.forEach(id => {
+    if (!state[id].obs.includes(value)) state[id].obs.push(value);
+  });
+  rerenderObservations();
+  syncPreviewDocument();
+}
+
+function editObservation(ambId, idx) {
+  const oldValue = obsOptions()[idx];
+  const text = prompt('Editar observação:', oldValue);
+  const newValue = (text || '').trim();
+  if (!newValue || newValue === oldValue) return;
+  const applyAll = confirm('Aplicar esta edição nos ambientes que usam esta observação? OK = todos, Cancelar = apenas este ambiente.');
+  editorSettings.observations[idx] = newValue;
+  saveEditorSettings();
+  const targetIds = applyAll ? AMBIENTES.map(a => a.id) : [ambId];
+  targetIds.forEach(id => {
+    const position = state[id].obs.indexOf(oldValue);
+    if (position > -1) state[id].obs[position] = newValue;
+  });
+  rerenderObservations();
   syncPreviewDocument();
 }
 
@@ -767,7 +888,21 @@ function buildPreviewDocumentData() {
   };
 }
 
+function saveBuilderDraft() {
+  localStorage.setItem(BUILDER_STORAGE_KEY, JSON.stringify({
+    fields: {
+      clientName: document.getElementById('clientName').value || '',
+      contractNum: document.getElementById('contractNum').value || '',
+      endereco: document.getElementById('endereco').value || '',
+      factories: selectedFactories(),
+    },
+    state,
+    updatedAt: new Date().toISOString(),
+  }));
+}
+
 function syncPreviewDocument() {
+  saveBuilderDraft();
   localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(buildPreviewDocumentData()));
 }
 
@@ -839,3 +974,4 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') closePreview();
 </script>
 </body>
 </html>
+
