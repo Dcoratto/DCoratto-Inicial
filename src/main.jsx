@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Login } from './Login'
 import './styles.css'
@@ -6,10 +6,10 @@ import './styles.css'
 function App() {
   const [isLogged, setIsLogged] = useState(false);
   
-  // Versão do sistema para forçar atualização do cache (mude esta data para atualizar todos os usuários)
-  const SYSTEM_VERSION = "2026-05-12-v3";
+  // Versão do sistema (mude aqui para forçar atualização em todos os usuários)
+  const SYSTEM_VERSION = "2026-05-12-v4";
 
-  // URL do seu editor (que está na pasta public)
+  // URL do seu editor
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   if (!isLogged) {
