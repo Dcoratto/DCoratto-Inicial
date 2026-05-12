@@ -1,16 +1,20 @@
 # Arquitetura do Construtor D'coratto
 
-## Fonte oficial do frontend
+## Estrutura oficial do frontend
 
-O arquivo oficial do frontend e ponto de partida visual e funcional e:
+O ponto de entrada do front e o `index.html` na raiz. Ele carrega a aplicacao React em `src/main.jsx`.
+
+A casca React exibe o construtor e o preview dentro de iframes. Por isso, os HTMLs grandes ficam em `public/`, onde o Vite os publica diretamente por URL:
 
 `public/editor_projeto_inicial.html`
 
-Ele foi copiado do HTML recebido via WhatsApp:
+`public/portfolio_document.html`
 
-`editor_projeto_inicial - HTML.html`
+No build, o Vite copia esses arquivos para `dist/`. Em producao, o servidor Node serve apenas o conteudo gerado em `dist/`.
 
-Por enquanto, esse HTML deve ser tratado como fonte de verdade da interface. Qualquer evolucao do app deve trabalhar em cima dele, sem recriar a experiencia visual do zero.
+Nao deve existir outro `editor_projeto_inicial.html` na raiz do projeto. Isso cria ambiguidade no deploy e pode fazer a producao servir uma copia antiga. Qualquer evolucao visual ou funcional do construtor deve ser feita em `public/editor_projeto_inicial.html`.
+
+Arquivos de referencia, como PDFs de catalogo, devem ficar em `docs/referencias/`. Assets usados pelo app em runtime devem ficar em `public/`.
 
 ## Objetivo do construtor
 
