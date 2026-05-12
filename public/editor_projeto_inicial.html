@@ -282,7 +282,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
         <div class="option-form">
           <div class="field-group"><label>Grupo</label><select id="optionGroup"><option value="tampon">Tamponamentos</option><option value="porta">Portas</option><option value="puxador">Puxadores</option><option value="corredica">Corrediças</option></select></div>
           <div class="field-group"><label>Opção</label><input type="text" id="optionName" placeholder="Ex: Cava 45°"></div>
-          <button class="hbtn" type="button" onclick="addMaterialOption()">Salvar</button>
+          <button class="hbtn" type="button" id="saveMaterialOptionBtn">Salvar</button>
         </div>
         <p style="font-size:11px;color:var(--muted);margin-top:10px">Adicione, remova ou edite as opções de Tamponamentos, Portas e Corrediças aqui.</p>
         <div class="option-list" id="materialOptionList"></div>
@@ -400,6 +400,7 @@ function applyEditorSettings() {
   renderManualCatalogList();
   renderMaterialOptionList();
   refreshPuxadorSelects();
+  bindMaterialOptionEvents();
 }
 
 function fileToDataURL(file) {
@@ -560,8 +561,8 @@ function renderMaterialOptionList() {
       ${materialOptions(group).map(option => `
         <div class="option-row">
           <span title="${option}">${option}</span>
-          <button type="button" onclick="editMaterialOption('${group}','${option.replace(/'/g, "\\'")}')">Editar</button>
-          <button type="button" onclick="removeMaterialOption('${group}','${option.replace(/'/g, "\\'")}')">Remover</button>
+          <button type="button" data-action="edit" data-group="${group}" data-value="${escapeHTML(option)}">Editar</button>
+          <button type="button" data-action="remove" data-group="${group}" data-value="${escapeHTML(option)}">Remover</button>
         </div>
       `).join('')}
     </div>
@@ -571,6 +572,25 @@ function renderMaterialOptionList() {
 function selectedFactories() {
   const selected = Array.from(document.querySelectorAll('#fabricante input[type="checkbox"]:checked')).map(o => o.value);
   return selected.length ? selected : ['VITTA', 'BOA VISTA'];
+}
+
+function bindMaterialOptionEvents() {
+  const list = document.getElementById('materialOptionList');
+  if (!list || list.dataset.bound === 'true') return;
+  list.addEventListener('click', event => {
+    const button = event.target.closest('button[data-action]');
+    if (!button) return;
+    const action = button.dataset.action;
+    const group = button.dataset.group;
+    const value = button.dataset.value;
+    if (!action || !group || value === undefined) return;
+    event.preventDefault();
+    if (action === 'edit') editMaterialOption(group, value);
+    if (action === 'remove') removeMaterialOption(group, value);
+  });
+  const saveButton = document.getElementById('saveMaterialOptionBtn');
+  if (saveButton) saveButton.addEventListener('click', addMaterialOption);
+  list.dataset.bound = 'true';
 }
 
 function availableColors() {
