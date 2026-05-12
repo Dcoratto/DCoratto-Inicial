@@ -294,9 +294,16 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
 <script src="/catalog/boa-vista/catalog.js"></script>
 <script>
 
+function escapeHTML(str) {
+    if (!str) return '';
+    const p = document.createElement('p');
+    p.textContent = str;
+    return p.innerHTML;
+}
+
 function escapeAttribute(str) {
-  if (!str) return '';
-  return str.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    if (!str) return '';
+    return str.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
