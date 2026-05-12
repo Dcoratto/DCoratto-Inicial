@@ -60,6 +60,13 @@
         letter-spacing: .02em;
       }
 
+      .logo img {
+        max-width: 190px;
+        max-height: 58px;
+        object-fit: contain;
+        display: block;
+      }
+
       .nav {
         display: flex;
         gap: 30px;
@@ -453,7 +460,7 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="logo">D'coratto<small>sob medida</small></div>
+      <div class="logo" id="documentLogo">D'coratto<small>sob medida</small></div>
       <nav class="nav" id="nav"></nav>
     </header>
 
@@ -563,6 +570,7 @@
           return {
             projectType: 'Projeto Inicial',
             year: new Date().getFullYear(),
+            branding: { logo: '', companyName: "D'Coratto Sob Medida" },
             client: { name: 'CLIENTE MODELO', address: '', contractNumber: '', manufacturers: [] },
             environments: [],
           };
@@ -571,6 +579,10 @@
         return {
           projectType: raw.projectType || 'Projeto Inicial',
           year: raw.year || new Date().getFullYear(),
+          branding: {
+            logo: raw.branding?.logo || '',
+            companyName: raw.branding?.companyName || "D'Coratto Sob Medida",
+          },
           client: {
             name: raw.client?.name || 'CLIENTE MODELO',
             address: raw.client?.address || '',
@@ -582,6 +594,7 @@
       }
 
       function renderDocument() {
+        renderLogo();
         nav.innerHTML = documentData.environments.map((environment) => `
           <a href="#${slug(environment.title)}">${environment.title}</a>
         `).join('');
@@ -592,6 +605,16 @@
         `;
 
         bindDocumentEvents();
+      }
+
+      function renderLogo() {
+        const logo = document.getElementById('documentLogo');
+        if (!logo) return;
+        if (documentData.branding?.logo) {
+          logo.innerHTML = `<img src="${escapeAttribute(documentData.branding.logo)}" alt="D'Coratto Sob Medida">`;
+        } else {
+          logo.innerHTML = "D'coratto<small>sob medida</small>";
+        }
       }
 
       function renderCover() {
@@ -606,7 +629,7 @@
               <div class="cover-kicker">${escapeHTML(documentData.projectType)} - ${escapeHTML(documentData.year)}</div>
               <h1>${escapeHTML(documentData.client.name || 'CLIENTE MODELO')}</h1>
               <div class="cover-address">${escapeHTML(documentData.client.address || '')}</div>
-              <div class="cover-brand">D'Coratto Sob Medida</div>
+              <div class="cover-brand">${escapeHTML(documentData.branding?.companyName || "D'Coratto Sob Medida")}</div>
               <div class="cover-stats">
                 <div class="cover-stat">
                   <strong>${String(environmentsCount).padStart(2, '0')}</strong>
