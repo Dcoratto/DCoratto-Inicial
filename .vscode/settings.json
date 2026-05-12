@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cmd /c \"cd /d c:\\\\Users\\\\kageo\\\\Downloads\\\\DCoratto Inicial && npm run build\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
