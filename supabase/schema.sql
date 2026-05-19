@@ -156,6 +156,9 @@ alter table public.document_html_versions
   add column if not exists created_by text not null default '',
   add column if not exists share_slug text;
 
+alter table public.document_environments
+  add column if not exists corredicas text not null default '';
+
 create table if not exists public.document_versions (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.document_projects(id) on delete cascade,
@@ -373,6 +376,7 @@ select
             'tamponamentos', e.tamponamentos,
             'portas', e.portas,
             'puxadores', e.puxadores,
+            'corredicas', e.corredicas,
             'notes', e.notes,
             'freeNote', e.free_note
           ),

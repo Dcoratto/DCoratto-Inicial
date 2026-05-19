@@ -128,11 +128,12 @@ export async function saveProject(documentData) {
 
   const keepIds = environmentPayloads.map((environment) => environment.id);
   if (keepIds.length) {
+    const quotedIds = keepIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(',');
     const { error: deleteError } = await supabase
       .from('document_environments')
       .delete()
       .eq('project_id', projectId)
-      .not('id', 'in', `(${keepIds.join(',')})`);
+      .not('id', 'in', `(${quotedIds})`);
 
     if (deleteError) throw deleteError;
   }

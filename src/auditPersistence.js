@@ -131,6 +131,7 @@ async function writeEvent(event) {
       tamponamentos: environment.specs?.tamponamentos || '',
       portas: environment.specs?.portas || '',
       puxadores: environment.specs?.puxadores || '',
+      corredicas: environment.specs?.corredicas || '',
       notes: environment.notes || [],
       data: environment,
     }));
@@ -251,4 +252,9 @@ function stableEnvironmentId(projectId, title, index) {
     localStorage.setItem(ENVIRONMENT_ID_KEY, JSON.stringify(map));
   }
   return map[key];
+}
+
+if (typeof window !== 'undefined' && isSupabaseConfigured && navigator?.onLine) {
+  flushOfflineQueue().catch((error) => console.warn('Falha ao limpar fila offline na inicialização:', error));
+  window.addEventListener('online', () => flushOfflineQueue().catch((error) => console.warn('Falha ao reenviar fila offline após reconexão:', error)));
 }

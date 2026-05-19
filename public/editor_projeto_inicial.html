@@ -12,7 +12,7 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --gold:#b8976a;--gold-l:#d4b896;--dark:#070605;--dark2:#151310;--dark3:#1f1c18;
-  --cream:#f7f2e8;--muted:#b7ab98;--white:#ffffff;
+  --cream:#f7f2e8;--muted:#d2c4ad;--white:#ffffff;
   --panel:#221f1a;--panel-strong:#27231f;--field-bg:#1f1c18;--border:rgba(184,151,106,0.24);
 }
 html{scroll-behavior:smooth}
@@ -33,18 +33,18 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .cover-section h2{font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:300;color:var(--gold);margin-bottom:24px;letter-spacing:.03em}
 .cover-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
 .field-group{display:flex;flex-direction:column;gap:6px}
-.field-group label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
-.field-group input, .field-group select{background:var(--field-bg);border:1px solid var(--border);color:var(--cream);padding:10px 14px;font-family:'Montserrat',sans-serif;font-size:13px;font-weight:300;border-radius:4px;outline:none;transition:border .2s,background .2s}
+.field-group label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#c9ad82;font-weight:500}
+.field-group input, .field-group select{background:var(--field-bg);border:1px solid var(--border);color:#fff8eb;padding:10px 14px;font-family:'Montserrat',sans-serif;font-size:13px;font-weight:400;border-radius:4px;outline:none;transition:border .2s,background .2s}
 .factory-checks{display:flex;align-items:center;gap:10px;min-height:42px}
 .factory-check{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:2px;background:var(--panel);color:var(--cream);padding:10px 12px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
 .factory-check input{width:14px;height:14px;accent-color:var(--gold);padding:0}
 .field-group input:focus, .field-group select:focus{border-color:var(--gold)}
-.field-group input::placeholder{color:var(--muted)}
+.field-group input::placeholder{color:#9f917e}
 
 /* AMBIENTE CARDS */
 .ambientes{padding:40px}
 .ambientes-title{font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:300;color:var(--gold);margin-bottom:8px}
-.ambientes-sub{font-size:11px;color:var(--muted);letter-spacing:.1em;margin-bottom:32px}
+.ambientes-sub{font-size:11px;color:#c7b596;letter-spacing:.1em;margin-bottom:32px}
 .ambientes-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:28px}
 .ambientes-head .ambientes-sub{margin-bottom:0}
 .empty-ambientes{border:1px dashed var(--border);background:rgba(0,0,0,.16);padding:28px;color:var(--muted);font-size:13px;text-align:center}
@@ -58,10 +58,11 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .amb-thumb{width:120px;height:80px;object-fit:cover;flex-shrink:0;filter:brightness(.85)}
 .amb-info{padding:12px 16px;flex:1}
 .amb-name{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;color:var(--white);margin-bottom:4px}
-.amb-summary{font-size:10px;color:var(--muted);letter-spacing:.08em}
+.amb-summary{font-size:10px;color:#c4b59d;letter-spacing:.08em}
 .amb-toggle{margin-left:auto;padding:0 16px;font-size:18px;color:var(--gold);transition:transform .3s}
 .amb-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
-.amb-remove{border:1px solid rgba(184,151,106,.28);background:transparent;color:var(--muted);cursor:pointer;font-size:10px;letter-spacing:.12em;padding:8px 10px;text-transform:uppercase}
+.amb-remove{border:1px solid rgba(184,151,106,.45);background:rgba(184,151,106,.08);color:#dcc8a8;cursor:pointer;font-size:10px;letter-spacing:.12em;padding:8px 10px;text-transform:uppercase}
+.amb-remove:hover{border-color:var(--gold);background:rgba(184,151,106,.16);color:#fff1d6}
 .amb-card.active .amb-toggle{transform:rotate(180deg)}
 
 .amb-body{display:none;padding:20px;border-top:1px solid var(--border);background:rgba(0,0,0,.2)}
@@ -71,21 +72,21 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .amb-fields .field-group{grid-column:auto}
 .amb-fields .field-full{grid-column:1/-1}
 .check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
-.check-item{display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.04);color:var(--cream);font-size:12px;line-height:1.35;padding:10px;border-radius:4px;transition:background .2s,border .2s}
+.check-item{display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.055);color:#fff3df;font-size:12px;font-weight:400;line-height:1.35;padding:10px;border-radius:4px;transition:background .2s,border .2s}
 .check-item:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12)}
 .check-item input{width:14px;height:14px;padding:0;accent-color:var(--gold)}
 
 /* COLOR PICKER */
 .color-picker-area{margin-top:4px}
-.color-picker-label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;display:block}
+.color-picker-label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#c9ad82;font-weight:500;margin-bottom:8px;display:block}
 .color-swatches{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px}
 .swatch-section{width:100%;display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px}
 .swatch-section-title{width:100%;margin:10px 0 2px;color:var(--gold);font-size:9px;letter-spacing:.18em;text-transform:uppercase}
 .swatch{width:52px;height:52px;border-radius:4px;cursor:pointer;border:2px solid transparent;transition:all .2s;position:relative;background-size:cover;background-position:center;box-shadow:0 8px 14px rgba(0,0,0,.25)}
 .swatch:hover{transform:scale(1.15)}
 .swatch.selected{border-color:var(--gold);transform:scale(1.15)}
-.swatch-name{font-size:9px;text-align:center;color:#d7c2a7;margin-top:5px;width:72px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.swatch-line{font-size:8px;text-align:center;color:#b8976a;margin-top:2px;width:72px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.08em}
+.swatch-name{font-size:9px;text-align:center;color:#f0dfc7;margin-top:5px;width:72px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400}
+.swatch-line{font-size:8px;text-align:center;color:#d4aa70;margin-top:2px;width:72px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.08em;font-weight:500}
 .swatch-wrap{display:flex;flex-direction:column;align-items:center}
 .handle-picker{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .handle-card{width:62px;border:1px solid var(--border);background:rgba(0,0,0,.18);border-radius:4px;padding:4px;cursor:pointer;color:var(--muted)}
@@ -140,11 +141,11 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .catalog-meta button{margin-top:6px;justify-self:start}
 .option-form{display:grid;grid-template-columns:170px 1fr auto;gap:10px;align-items:end;margin-top:18px}
 .option-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:16px}
-.option-card{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);padding:14px;border-radius:4px}
+.option-card{border:1px solid rgba(184,151,106,.24);background:rgba(255,255,255,.045);padding:14px;border-radius:4px}
 .option-card strong{display:block;color:var(--cream);font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px}
-.option-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:8px;border-top:1px solid rgba(255,255,255,.08);padding:10px 0;color:var(--cream);font-size:12px}
+.option-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;border-top:1px solid rgba(255,255,255,.1);padding:10px 0;color:#fff4df;font-size:12px;font-weight:400}
 .option-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.option-row button{border:1px solid rgba(255,255,255,.08);background:transparent;color:var(--muted);padding:6px 10px;border-radius:3px;cursor:pointer;font-size:11px;letter-spacing:.08em;transition:all .2s}
+.option-row button{border:1px solid rgba(184,151,106,.36);background:rgba(0,0,0,.2);color:#e7d3b5;padding:6px 10px;border-radius:3px;cursor:pointer;font-size:11px;letter-spacing:.08em;transition:all .2s}
 .option-row button:hover{border-color:var(--gold);color:var(--gold);background:rgba(184,151,106,.08)}
 .logo-preview{display:grid;place-items:center;min-height:86px;border:1px solid var(--border);background:#090807;margin-bottom:12px}
 .logo-preview img{max-width:220px;max-height:68px;object-fit:contain}
@@ -311,6 +312,10 @@ function escapeAttribute(str) {
     return str.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+function escapeJS(str) {
+    return String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
+}
+
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
 const LEGACY_COLORS = [
@@ -346,6 +351,7 @@ const DEFAULT_MATERIAL_OPTIONS = {
 };
 let editorSettings = loadEditorSettings();
 let builderDraft = loadBuilderDraft();
+let editingMaterialOption = null;
 
 function loadEditorSettings() {
   try {
@@ -368,10 +374,10 @@ function loadEditorSettings() {
 }
 
 function normalizeMaterialOptions(options = {}) {
-  return Object.fromEntries(Object.entries(DEFAULT_MATERIAL_OPTIONS).map(([group, defaults]) => [
-    group,
-    [...new Set([...(options[group] || []), ...defaults])],
-  ]));
+  return Object.fromEntries(Object.entries(DEFAULT_MATERIAL_OPTIONS).map(([group, defaults]) => {
+    const list = Array.isArray(options[group]) ? options[group] : [];
+    return [group, list.length ? [...new Set(list)] : [...defaults]];
+  }));
 }
 
 function loadBuilderDraft() {
@@ -513,8 +519,19 @@ function addMaterialOption() {
   const value = input.value.trim();
   if (!value) return;
   editorSettings.materialOptions = normalizeMaterialOptions(editorSettings.materialOptions);
+  if (editingMaterialOption) {
+    const { group: oldGroup, value: oldValue } = editingMaterialOption;
+    editorSettings.materialOptions[oldGroup] = (editorSettings.materialOptions[oldGroup] || []).filter(option => option !== oldValue);
+    AMBIENTES.forEach(amb => {
+      if (!state[amb.id]?.[oldGroup]) return;
+      state[amb.id][oldGroup] = state[amb.id][oldGroup].filter(option => option !== oldValue);
+      if (oldGroup === group && !state[amb.id][group].includes(value)) state[amb.id][group].push(value);
+    });
+  }
   editorSettings.materialOptions[group] = [...new Set([...(editorSettings.materialOptions[group] || []), value])];
+  editingMaterialOption = null;
   input.value = '';
+  document.getElementById('saveMaterialOptionBtn').textContent = 'Salvar';
   saveEditorSettings();
   renderMaterialOptionList();
   renderAmbientes();
@@ -533,21 +550,12 @@ function removeMaterialOption(group, value) {
   syncPreviewDocument();
 }
 
-function editMaterialOption(group, value) {
-  const newValue = prompt('Editar opção', value)?.trim();
-  if (!newValue || newValue === value) return;
-  const options = normalizeMaterialOptions(editorSettings.materialOptions);
-  options[group] = [...new Set((options[group] || []).map(option => option === value ? newValue : option))];
-  editorSettings.materialOptions = options;
-  AMBIENTES.forEach(amb => {
-    if (state[amb.id]?.[group]) {
-      state[amb.id][group] = state[amb.id][group].map(option => option === value ? newValue : option);
-    }
-  });
-  saveEditorSettings();
-  renderMaterialOptionList();
-  renderAmbientes();
-  syncPreviewDocument();
+function startMaterialOptionEdit(group, value) {
+  editingMaterialOption = { group, value };
+  document.getElementById('optionGroup').value = group;
+  document.getElementById('optionName').value = value;
+  document.getElementById('optionName').focus();
+  document.getElementById('saveMaterialOptionBtn').textContent = 'Atualizar';
 }
 
 function renderMaterialOptionList() {
@@ -558,11 +566,11 @@ function renderMaterialOptionList() {
   list.innerHTML = Object.keys(labels).map(group => `
     <div class="option-card">
       <strong>${labels[group]}</strong>
-      ${materialOptions(group).map(option => `
+      ${(editorSettings.materialOptions[group] || []).map(option => `
         <div class="option-row">
-          <span title="${option}">${option}</span>
-          <button type="button" data-action="edit" data-group="${group}" data-value="${escapeHTML(option)}">Editar</button>
-          <button type="button" data-action="remove" data-group="${group}" data-value="${escapeHTML(option)}">Remover</button>
+          <span title="${escapeAttribute(option)}">${escapeHTML(option)}</span>
+          <button type="button" data-action="edit" data-group="${group}" data-value="${escapeAttribute(option)}">Editar</button>
+          <button type="button" data-action="remove" data-group="${group}" data-value="${escapeAttribute(option)}">Remover</button>
         </div>
       `).join('')}
     </div>
@@ -585,11 +593,17 @@ function bindMaterialOptionEvents() {
     const value = button.dataset.value;
     if (!action || !group || value === undefined) return;
     event.preventDefault();
-    if (action === 'edit') editMaterialOption(group, value);
+    if (action === 'edit') startMaterialOptionEdit(group, value);
     if (action === 'remove') removeMaterialOption(group, value);
   });
   const saveButton = document.getElementById('saveMaterialOptionBtn');
   if (saveButton) saveButton.addEventListener('click', addMaterialOption);
+  document.getElementById('optionName')?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addMaterialOption();
+    }
+  });
   list.dataset.bound = 'true';
 }
 
@@ -699,17 +713,13 @@ function buildSwatchHTML(ambId, field) {
   }).join('');
 }
 
-function buildSelectHTML(options, multiple=false) {
-  return options.map(o => `<option value="${o}">${o}</option>`).join('');
-}
-
 function buildCheckboxHTML(ambId, field) {
   return materialOptions(field).map(option => {
     const selected = state[ambId]?.[field]?.includes(option);
     return `
       <label class="check-item">
-        <input type="checkbox" ${selected ? 'checked' : ''} onchange="updateCheckbox('${ambId}','${field}','${option.replace(/'/g, "\\'")}',this.checked)">
-        ${option}
+        <input type="checkbox" ${selected ? 'checked' : ''} onchange="updateCheckbox('${escapeJS(ambId)}','${escapeJS(field)}','${escapeJS(option)}',this.checked)">
+        ${escapeHTML(option)}
       </label>
     `;
   }).join('') || '<div class="amb-summary">Cadastre opções nas configurações.</div>';
@@ -737,10 +747,10 @@ function buildHandlePickerHTML(ambId) {
         const value = `${item.name}${item.line ? ' · '+item.line : ''}`;
         const selected = state[ambId].puxador.includes(value);
         return `
-          <button class="handle-card ${selected ? 'selected' : ''}" type="button" onclick="toggleHandle('${ambId}','${value}')">
-            <img src="${item.textureUrl}" alt="${item.name}">
-            <span>${item.name}</span>
-            <span>${item.line}</span>
+          <button class="handle-card ${selected ? 'selected' : ''}" type="button" onclick="toggleHandle('${escapeJS(ambId)}','${escapeJS(value)}')">
+            <img src="${escapeAttribute(item.textureUrl)}" alt="${escapeAttribute(item.name)}">
+            <span>${escapeHTML(item.name)}</span>
+            <span>${escapeHTML(item.line)}</span>
           </button>
         `;
       }).join('')}
@@ -781,15 +791,15 @@ function renameEnvironment(ambId, value) {
 function renderCard(amb) {
   const s = ensureEnvironmentState(amb.id);
   return `
-  <div class="amb-card" id="card-${amb.id}">
-    <div class="amb-header" onclick="toggleCard('${amb.id}')">
+  <div class="amb-card" id="card-${escapeAttribute(amb.id)}">
+    <div class="amb-header" onclick="toggleCard('${escapeJS(amb.id)}')">
       <img class="amb-thumb" src="${amb.img}" alt="${escapeAttribute(amb.name)}">
       <div class="amb-info">
         <div class="amb-name">${escapeHTML(amb.name)}</div>
         <div class="amb-summary" id="summary-${amb.id}">Clique para configurar</div>
       </div>
       <div class="amb-actions">
-        <button class="amb-remove" type="button" onclick="event.stopPropagation();removeEnvironment('${amb.id}')">Remover</button>
+        <button class="amb-remove" type="button" onclick="event.stopPropagation();removeEnvironment('${escapeJS(amb.id)}')">Remover</button>
         <span class="amb-toggle">▾</span>
       </div>
     </div>
@@ -797,7 +807,7 @@ function renderCard(amb) {
       <div class="amb-fields">
         <div class="field-group field-full">
           <label>Nome do ambiente</label>
-          <input type="text" value="${escapeAttribute(amb.name)}" oninput="renameEnvironment('${amb.id}',this.value)">
+          <input type="text" value="${escapeAttribute(amb.name)}" oninput="renameEnvironment('${escapeJS(amb.id)}',this.value)">
         </div>
         <div class="field-group">
           <label>Tamponamentos</label>
@@ -818,7 +828,7 @@ function renderCard(amb) {
         </div>
         <div class="field-group">
           <label>Obs adicional</label>
-          <input type="text" placeholder="Texto livre..." value="${s.obsExtra || ''}" oninput="state['${amb.id}'].obsExtra=this.value;syncPreviewDocument()">
+          <input type="text" placeholder="Texto livre..." value="${escapeAttribute(s.obsExtra || '')}" oninput="ensureEnvironmentState('${escapeJS(amb.id)}').obsExtra=this.value;syncPreviewDocument()">
         </div>
       </div>
 
@@ -831,7 +841,7 @@ function renderCard(amb) {
       <div style="margin-top:16px">
         <div class="obs-tools">
           <span class="color-picker-label" style="margin-bottom:0">Observações do projeto</span>
-          <button class="obs-add" type="button" onclick="addObservation('${amb.id}')" title="Adicionar observação">+</button>
+          <button class="obs-add" type="button" onclick="addObservation('${escapeJS(amb.id)}')" title="Adicionar observação">+</button>
         </div>
         <div class="obs-options">${buildObsHTML(amb.id)}</div>
       </div>
@@ -1125,6 +1135,24 @@ function postEditorEvent(action, payload = {}) {
     sentAt: new Date().toISOString(),
   }, window.location.origin);
 }
+
+window.addEventListener('message', event => {
+  if (event.origin !== window.location.origin) return;
+  if (event.data?.type !== 'dcoratto:apply-settings') return;
+  const incoming = event.data.settings || {};
+  editorSettings = {
+    ...editorSettings,
+    ...incoming,
+    logo: incoming.logo || editorSettings.logo || DEFAULT_LOGO,
+    catalogItems: Array.isArray(incoming.catalogItems) ? incoming.catalogItems : editorSettings.catalogItems,
+    observations: Array.isArray(incoming.observations) ? incoming.observations : editorSettings.observations,
+    materialOptions: normalizeMaterialOptions(incoming.materialOptions || editorSettings.materialOptions),
+  };
+  localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
+  applyEditorSettings();
+  renderAmbientes();
+  syncPreviewDocument('settings_loaded');
+});
 
 function syncPreviewDocument(action = 'editor_sync') {
   const draft = saveBuilderDraft();

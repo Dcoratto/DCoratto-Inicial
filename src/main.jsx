@@ -1,16 +1,76 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Login } from './Login'
+import { persistEditorEvent, flushOfflineQueue } from './auditPersistence'
+import { isSupabaseConfigured, supabase } from './supabaseClient'
 import './styles.css'
 
 function App() {
   const [isLogged, setIsLogged] = useState(false);
-  
-  // Versão do sistema (mude aqui para forçar atualização em todos os usuários)
-  const SYSTEM_VERSION = "2026-05-12-v5";
+  const [remoteSettings, setRemoteSettings] = useState(null);
+  const iframeRef = useRef(null);
+  const actor = { email: 'dcorattoinovacao@gmail.com' };
 
-  // URL do seu editor
+  // Versao do sistema: altere para forcar atualizacao do iframe em producao.
+  const SYSTEM_VERSION = "2026-05-19-crud-config-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
+
+  useEffect(() => {
+    if (!isLogged) return undefined;
+
+    flushOfflineQueue();
+
+    async function loadRemoteSettings() {
+      if (!isSupabaseConfigured || !supabase) return;
+      const { data, error } = await supabase
+        .from('editor_settings')
+        .select('payload')
+        .eq('settings_key', 'default')
+        .maybeSingle();
+
+      if (!error && data?.payload) {
+        setRemoteSettings(data.payload);
+      }
+    }
+
+    loadRemoteSettings();
+  }, [isLogged]);
+
+  useEffect(() => {
+    if (!isLogged) return undefined;
+
+    function handleMessage(event) {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== 'dcoratto:editor-state') return;
+
+      const { action, draft, preview, settings } = event.data;
+      if (settings) setRemoteSettings(settings);
+
+      persistEditorEvent({
+        action,
+        actor,
+        draft,
+        preview,
+        settings,
+        saveHtml: action === 'generate_project_initial',
+      });
+    }
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [isLogged]);
+
+  function sendSettingsToEditor() {
+    if (!remoteSettings) return;
+    iframeRef.current?.contentWindow?.postMessage({
+      type: 'dcoratto:apply-settings',
+      settings: remoteSettings,
+    }, window.location.origin);
+  }
+
+  useEffect(() => {
+    if (isLogged) sendSettingsToEditor();
+  }, [isLogged, remoteSettings]);
 
   if (!isLogged) {
     return <Login onLoginSuccess={() => setIsLogged(true)} />;
@@ -18,8 +78,10 @@ function App() {
 
   return (
     <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
-      <iframe 
+      <iframe
+        ref={iframeRef}
         src={editorUrl}
+        onLoad={sendSettingsToEditor}
         style={{ width: '100%', height: '100%', border: 'none' }}
         title="DCoratto Sistema"
       />

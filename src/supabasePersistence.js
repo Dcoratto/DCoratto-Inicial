@@ -113,52 +113,55 @@ export async function saveHtmlVersion({ projectId, html, title = 'Portfolio HTML
 export async function saveEnvironmentStructuredData({ projectId, environmentId, colors, materials, notes }) {
   assertSupabaseReady();
 
-  const operations = [];
-
   if (colors) {
-    operations.push(
-      supabase.from('environment_colors').delete().eq('environment_id', environmentId),
-      supabase.from('environment_colors').insert(colors.map((color, index) => ({
+    const { error: deleteError } = await supabase.from('environment_colors').delete().eq('environment_id', environmentId);
+    if (deleteError) throw deleteError;
+
+    if (colors.length) {
+      const { error: insertError } = await supabase.from('environment_colors').insert(colors.map((color, index) => ({
         project_id: projectId,
         environment_id: environmentId,
         name: color.name,
         hex: color.hex,
         position: index,
-      }))),
-    );
+      })));
+      if (insertError) throw insertError;
+    }
   }
 
   if (materials) {
-    operations.push(
-      supabase.from('environment_materials').delete().eq('environment_id', environmentId),
-      supabase.from('environment_materials').insert(materials.map((material, index) => ({
+    const { error: deleteError } = await supabase.from('environment_materials').delete().eq('environment_id', environmentId);
+    if (deleteError) throw deleteError;
+
+    if (materials.length) {
+      const { error: insertError } = await supabase.from('environment_materials').insert(materials.map((material, index) => ({
         project_id: projectId,
         environment_id: environmentId,
         group_key: material.groupKey,
         label: material.label,
         value: material.value,
         position: index,
-      }))),
-    );
+      })));
+      if (insertError) throw insertError;
+    }
   }
 
   if (notes) {
-    operations.push(
-      supabase.from('environment_notes').delete().eq('environment_id', environmentId),
-      supabase.from('environment_notes').insert(notes.map((note, index) => ({
+    const { error: deleteError } = await supabase.from('environment_notes').delete().eq('environment_id', environmentId);
+    if (deleteError) throw deleteError;
+
+    if (notes.length) {
+      const { error: insertError } = await supabase.from('environment_notes').insert(notes.map((note, index) => ({
         project_id: projectId,
         environment_id: environmentId,
         note_type: note.type || 'observacao',
         body: note.body,
         position: index,
         show_on_html: note.showOnHtml ?? true,
-      }))),
-    );
+      })));
+      if (insertError) throw insertError;
+    }
   }
-
-  const results = await Promise.all(operations);
-  const failed = results.find((result) => result.error);
-  if (failed) throw failed.error;
 }
 
 export async function loadProjectDocumentPayload(projectId) {
