@@ -119,7 +119,7 @@
       }
 
       .client-intro-text .word-forma {
-        display: inline-block;
+        display: inline;
         margin: 0 .15em;
         font-family: 'Allura', cursive;
         font-size: 1.8em;
@@ -127,28 +127,35 @@
         font-style: italic;
         color: #d7c2a7;
         letter-spacing: -.02em;
+        text-transform: none !important;
+        white-space: nowrap;
+        border-right: 2px solid #d7c2a7;
         opacity: 0;
-        animation: formaTypeWriter 1.8s cubic-bezier(.7, 0, .3, 1) 2.4s forwards;
+        animation: formaWriting 2.2s steps(1, end) 2.3s forwards, formaCursor .6s infinite 2.3s;
       }
 
-      @keyframes formaTypeWriter {
+      @keyframes formaWriting {
         0% {
           opacity: 0;
-          width: 0;
-          max-width: 0;
-          clip-path: inset(0 100% 0 0);
           filter: blur(2px);
         }
-        85% {
+        1% {
           opacity: 1;
-          clip-path: inset(0 0 0 0);
           filter: blur(0);
         }
         100% {
           opacity: 1;
-          width: auto;
-          clip-path: inset(0 0 0 0);
           filter: blur(0);
+          border-right-color: transparent;
+        }
+      }
+
+      @keyframes formaCursor {
+        0%, 50% {
+          border-right-color: #d7c2a7;
+        }
+        51%, 100% {
+          border-right-color: transparent;
         }
       }
 
