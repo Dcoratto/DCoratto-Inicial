@@ -317,6 +317,22 @@
         text-shadow: 0 1px 0 rgba(255,255,255,.75);
       }
 
+      .environment-page .doc-annotation-text[data-drag-annotation] {
+        cursor: move;
+      }
+
+      .frame-arrow-target {
+        position: absolute;
+        z-index: 5;
+        width: 14px;
+        height: 14px;
+        border: 2px solid #111;
+        border-radius: 50%;
+        background: #f7f4ee;
+        transform: translate(-50%, -50%);
+        cursor: grab;
+      }
+
       .preview-frame-tools {
         position: absolute;
         top: 12px;
@@ -685,8 +701,8 @@
       const isEditablePreview = new URLSearchParams(window.location.search).has('preview');
       let documentData = JSON.parse(localStorage.getItem(storageKey) || 'null') || {
         client: {
-          name: 'Marcos Vinicius',
-          address: 'Condominio Eco Park - Mogi das Cruzes/SP',
+          name: 'CLIENTE MODELO',
+          address: '',
         },
         environments: [
           {
@@ -697,10 +713,7 @@
               portas: 'LISA',
               puxadores: 'PASSANTE',
             },
-            colors: [
-              { name: 'BEGE DUNAS', hex: '#d5c4a2' },
-              { name: 'CARVALHO JARI', hex: '#a9804a' },
-            ],
+            colors: [],
             notes: ['Apenas Marcenaria considerado no Projeto', 'Leds nao inclusos'],
             layout: 'balanced',
             photos: [
@@ -718,10 +731,7 @@
               portas: 'LISA',
               puxadores: 'CAVA 45°',
             },
-            colors: [
-              { name: 'GRAFITE', hex: '#555557' },
-              { name: 'CARVALHO JARI', hex: '#a9804a' },
-            ],
+            colors: [],
             notes: ['Apenas Marcenaria considerado no Projeto'],
             layout: 'balanced',
             photos: [
@@ -868,6 +878,148 @@
             persistAndRender();
           });
         });
+
+        document.querySelectorAll('[data-frame-photo-input]').forEach((input) => {
+          input.addEventListener('change', async () => {
+            const { environmentIndex, pageIndex, frameIndex } = input.dataset;
+            const frame = pageFrame(Number(environmentIndex), Number(pageIndex), Number(frameIndex));
+            const file = input.files?.[0];
+            if (!frame || !file) return;
+            const photo = await readPhoto(file, 0);
+            frame.photo = photo.src;
+            persistAndRender();
+          });
+        });
+
+        document.querySelectorAll('[data-frame-shape]').forEach((select) => {
+          select.addEventListener('change', () => {
+            const frame = pageFrame(Number(select.dataset.environmentIndex), Number(select.dataset.pageIndex), Number(select.dataset.frameIndex));
+            if (!frame) return;
+            frame.shape = select.value;
+            persistAndRender();
+          });
+        });
+
+        document.querySelectorAll('[data-add-frame]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const page = environmentPage(Number(button.dataset.environmentIndex), Number(button.dataset.pageIndex));
+            if (!page) return;
+            page.frames = Array.isArray(page.frames) ? page.frames : [];
+            page.frames.push({
+              id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+              title: `Moldura ${page.frames.length + 1}`,
+              photo: '',
+              shape: 'rounded',
+              annotations: [],
+            });
+            persistAndRender();
+          });
+        });
+
+        document.querySelectorAll('[data-add-annotation]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const frame = pageFrame(Number(button.dataset.environmentIndex), Number(button.dataset.pageIndex), Number(button.dataset.frameIndex));
+            if (!frame) return;
+            frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
+            frame.annotations.push({
+              id: `ann-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+              text: 'Texto da seta',
+              fromX: 15,
+              fromY: 18 + Math.min(frame.annotations.length * 10, 46),
+              toX: 58,
+              toY: 48,
+            });
+            persistAndRender();
+          });
+        });
+
+        document.querySelectorAll('[data-annotation-text]').forEach((input) => {
+          input.addEventListener('input', () => {
+            const annotation = frameAnnotation(Number(input.dataset.environmentIndex), Number(input.dataset.pageIndex), Number(input.dataset.frameIndex), Number(input.dataset.annotationIndex));
+            if (!annotation) return;
+            annotation.text = input.value;
+            persistWithoutRender();
+            const label = document.querySelector(`[data-annotation-label="${input.dataset.environmentIndex}-${input.dataset.pageIndex}-${input.dataset.frameIndex}-${input.dataset.annotationIndex}"]`);
+            if (label) label.textContent = input.value;
+          });
+        });
+
+        document.querySelectorAll('[data-remove-annotation]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const frame = pageFrame(Number(button.dataset.environmentIndex), Number(button.dataset.pageIndex), Number(button.dataset.frameIndex));
+            if (!frame) return;
+            frame.annotations.splice(Number(button.dataset.annotationIndex), 1);
+            persistAndRender();
+          });
+        });
+
+        document.querySelectorAll('[data-drag-annotation]').forEach((node) => {
+          node.addEventListener('pointerdown', startPreviewAnnotationDrag);
+        });
+      }
+
+      function environmentPage(environmentIndex, pageIndex) {
+        return documentData.environments?.[environmentIndex]?.pages?.[pageIndex] || null;
+      }
+
+      function pageFrame(environmentIndex, pageIndex, frameIndex) {
+        const page = environmentPage(environmentIndex, pageIndex);
+        if (!page) return null;
+        page.frames = Array.isArray(page.frames) ? page.frames : [];
+        return page.frames[frameIndex] || null;
+      }
+
+      function frameAnnotation(environmentIndex, pageIndex, frameIndex, annotationIndex) {
+        const frame = pageFrame(environmentIndex, pageIndex, frameIndex);
+        if (!frame) return null;
+        frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
+        return frame.annotations[annotationIndex] || null;
+      }
+
+      function startPreviewAnnotationDrag(event) {
+        if (!isEditablePreview) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const node = event.currentTarget;
+        const frameNode = node.closest('.doc-photo-frame');
+        const annotation = frameAnnotation(
+          Number(node.dataset.environmentIndex),
+          Number(node.dataset.pageIndex),
+          Number(node.dataset.frameIndex),
+          Number(node.dataset.annotationIndex),
+        );
+        if (!frameNode || !annotation) return;
+        const handle = node.dataset.dragAnnotation;
+        const keyX = handle === 'label' ? 'fromX' : 'toX';
+        const keyY = handle === 'label' ? 'fromY' : 'toY';
+
+        const move = (pointerEvent) => {
+          const rect = frameNode.getBoundingClientRect();
+          const x = Math.max(0, Math.min(100, ((pointerEvent.clientX - rect.left) / rect.width) * 100));
+          const y = Math.max(0, Math.min(100, ((pointerEvent.clientY - rect.top) / rect.height) * 100));
+          annotation[keyX] = x;
+          annotation[keyY] = y;
+          const id = `${node.dataset.environmentIndex}-${node.dataset.pageIndex}-${node.dataset.frameIndex}-${node.dataset.annotationIndex}`;
+          const line = frameNode.querySelector(`[data-annotation-line="${id}"]`);
+          const label = frameNode.querySelector(`[data-annotation-label="${id}"]`);
+          const target = frameNode.querySelector(`[data-annotation-target="${id}"]`);
+          if (handle === 'label') {
+            if (line) { line.setAttribute('x1', `${x}%`); line.setAttribute('y1', `${y}%`); }
+            if (label) { label.style.left = `${x}%`; label.style.top = `${y}%`; }
+          } else {
+            if (line) { line.setAttribute('x2', `${x}%`); line.setAttribute('y2', `${y}%`); }
+            if (target) { target.style.left = `${x}%`; target.style.top = `${y}%`; }
+          }
+        };
+
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          persistWithoutRender();
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
       }
 
       function renderEnvironment(environment, index) {
@@ -880,7 +1032,7 @@
               <h2>${escapeHTML(environment.title)}</h2>
               <span class="section-line"></span>
             </div>
-            <div class="mural-tools">
+            ${isEditablePreview ? `<div class="mural-tools">
               <div class="layout-suggestions">
                 ${layoutSuggestions(photos.length).map((suggestion) => `
                   <button type="button" class="${layout === suggestion.key ? 'active' : ''}" data-environment-index="${index}" data-layout="${suggestion.key}">
@@ -892,7 +1044,7 @@
                 Adicionar fotos
                 <input type="file" accept="image/*" multiple data-photo-input data-environment-index="${index}" />
               </label>
-            </div>
+            </div>` : ''}
             <div class="portfolio-layout">
               <div class="photo-mural layout-${escapeAttribute(layout)}">
                 ${photos.map((photo, photoIndex) => `
@@ -941,32 +1093,40 @@
             </div>
             <div class="cover-kicker" style="color:#8f7044;text-align:center;margin-bottom:10px">${escapeHTML(pageNumber)} · ${escapeHTML(page.title || `Página ${pageIndex + 1}`)}</div>
             ${page.description ? `<p class="page-description">${escapeHTML(page.description)}</p>` : ''}
+            ${isEditablePreview ? `
+              <div class="mural-tools" style="justify-content:center;margin:0 0 24px;padding-left:0">
+                <button type="button" class="photo-upload" data-add-frame data-environment-index="${environmentIndex}" data-page-index="${pageIndex}">Adicionar moldura</button>
+              </div>
+            ` : ''}
             <div class="page-frames">
-              ${frames.map((frame, frameIndex) => renderDocumentFrame(frame, page, frameIndex)).join('')}
+              ${frames.map((frame, frameIndex) => renderDocumentFrame(frame, page, frameIndex, environmentIndex, pageIndex)).join('')}
             </div>
           </section>
         `;
       }
-
       function normalizeFrames(page) {
         if (Array.isArray(page.frames) && page.frames.length) {
           return page.frames.map((frame, index) => ({
             title: frame.title || `Moldura ${index + 1}`,
             photo: frame.photo || frame.photos?.[0]?.src || '',
+            shape: frame.shape || 'rounded',
             annotations: Array.isArray(frame.annotations) ? frame.annotations : [],
           }));
         }
         return normalizePhotos(page.photos).map((photo, index) => ({
           title: photo.title || `Moldura ${index + 1}`,
           photo: photo.src,
+          shape: 'rounded',
           annotations: [],
         }));
       }
 
-      function renderDocumentFrame(frame, page, frameIndex) {
+      function renderDocumentFrame(frame, page, frameIndex, environmentIndex, pageIndex) {
         const hasPhoto = Boolean(frame.photo);
+        const shape = ['circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded';
         return `
-          <button class="doc-photo-frame" type="button" ${hasPhoto ? `data-lightbox-src="${escapeAttribute(frame.photo)}" data-lightbox-title="${escapeAttribute(frame.title || page.title)}"` : ''}>
+          <div class="doc-photo-frame shape-${escapeAttribute(shape)}">
+            ${isEditablePreview ? renderFramePreviewTools(frame, environmentIndex, pageIndex, frameIndex) : ''}
             ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
             <svg class="doc-annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
               <defs>
@@ -974,18 +1134,56 @@
                   <path d="M0,0 L8,4 L0,8 Z" fill="#111"></path>
                 </marker>
               </defs>
-              ${(frame.annotations || []).map(annotation => `
-                <line class="doc-annotation-line" x1="${Number(annotation.fromX ?? 18)}%" y1="${Number(annotation.fromY ?? 18)}%" x2="${Number(annotation.toX ?? 58)}%" y2="${Number(annotation.toY ?? 48)}%"></line>
+              ${(frame.annotations || []).map((annotation, annotationIndex) => `
+                <line data-annotation-line="${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}" class="doc-annotation-line" x1="${Number(annotation.fromX ?? 18)}%" y1="${Number(annotation.fromY ?? 18)}%" x2="${Number(annotation.toX ?? 58)}%" y2="${Number(annotation.toY ?? 48)}%"></line>
               `).join('')}
             </svg>
-            ${(frame.annotations || []).map(annotation => `
-              <span class="doc-annotation-text" style="left:${Number(annotation.fromX ?? 18)}%;top:${Number(annotation.fromY ?? 18)}%">${escapeHTML(annotation.text || '')}</span>
+            ${(frame.annotations || []).map((annotation, annotationIndex) => `
+              <span
+                data-annotation-label="${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}"
+                ${isEditablePreview ? `data-drag-annotation="label" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}"` : ''}
+                class="doc-annotation-text"
+                style="left:${Number(annotation.fromX ?? 18)}%;top:${Number(annotation.fromY ?? 18)}%"
+              >${escapeHTML(annotation.text || '')}</span>
+              ${isEditablePreview ? `<span
+                data-annotation-target="${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}"
+                data-drag-annotation="target"
+                data-environment-index="${environmentIndex}"
+                data-page-index="${pageIndex}"
+                data-frame-index="${frameIndex}"
+                data-annotation-index="${annotationIndex}"
+                class="frame-arrow-target"
+                style="left:${Number(annotation.toX ?? 58)}%;top:${Number(annotation.toY ?? 48)}%"
+              ></span>` : ''}
             `).join('')}
             <span class="doc-frame-title">${String(frameIndex + 1).padStart(2, '0')} · ${escapeHTML(frame.title || 'Moldura')}</span>
-          </button>
+          </div>
         `;
       }
 
+      function renderFramePreviewTools(frame, environmentIndex, pageIndex, frameIndex) {
+        return `
+          <div class="preview-frame-tools">
+            <label>
+              Foto
+              <input type="file" accept="image/*" data-frame-photo-input data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">
+            </label>
+            <select class="shape-select" data-frame-shape data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">
+              <option value="rounded" ${frame.shape === 'rounded' ? 'selected' : ''}>Arred.</option>
+              <option value="rectangle" ${frame.shape === 'rectangle' ? 'selected' : ''}>Retâng.</option>
+              <option value="square" ${frame.shape === 'square' ? 'selected' : ''}>Quadr.</option>
+              <option value="circle" ${frame.shape === 'circle' ? 'selected' : ''}>Círculo</option>
+            </select>
+            <button type="button" data-add-annotation data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">Seta</button>
+          </div>
+          ${(frame.annotations || []).map((annotation, annotationIndex) => `
+            <div class="annotation-edit-row" style="bottom:${12 + annotationIndex * 38}px">
+              <input value="${escapeAttribute(annotation.text || '')}" placeholder="Texto da seta" data-annotation-text data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}">
+              <button type="button" data-remove-annotation data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}">Remover</button>
+            </div>
+          `).join('')}
+        `;
+      }
       function renderSpec(title, value) {
         if (!value) return '';
         return `
@@ -1086,6 +1284,18 @@
           }, window.location.origin);
         }
         renderDocument();
+      }
+
+      function persistWithoutRender() {
+        localStorage.setItem(storageKey, JSON.stringify(documentData));
+        if (window.parent !== window) {
+          window.parent.postMessage({
+            type: 'dcoratto:editor-state',
+            action: 'portfolio_sync',
+            preview: documentData,
+            sentAt: new Date().toISOString(),
+          }, window.location.origin);
+        }
       }
 
       function closeLightbox() {

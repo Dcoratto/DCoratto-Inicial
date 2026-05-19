@@ -300,6 +300,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
           </div>
           <div class="settings-actions field-full">
             <button class="hbtn" type="button" onclick="addManualCatalogItem()">Adicionar ao catálogo</button>
+            <button class="danger-btn" type="button" onclick="clearManualCatalogColors()">Excluir cores manuais</button>
           </div>
         </div>
         <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>      </section>
@@ -344,27 +345,8 @@ function escapeJS(str) {
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 
-const LEGACY_COLORS = [
-  {name:"BEGE DUNAS", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#C8B89A"},
-  {name:"CARVALHO JARI", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#A0784A"},
-  {name:"BRANCO SNOW", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#F5F3EF"},
-  {name:"CINZA SAGRADO", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#8A8A8A"},
-  {name:"GRAFITE", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#4A4A4A"},
-  {name:"OFF WHITE", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#F0EDE6"},
-  {name:"MACADAMIA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#C4A882"},
-  {name:"NUDE", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#D4B8A0"},
-  {name:"PRETO PIANO", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#1A1A1A"},
-  {name:"BRANCO POLAR", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#FAFAF8"},
-  {name:"TERRA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#8B6347"},
-  {name:"CIMENTO", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#A0A09A"},
-  {name:"AREIA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#D4C4A8"},
-  {name:"NOGUEIRA", manufacturer:"VITTA", line:"VITTA", quality:"", hex:"#6B4C32"},
-];
-
-const BOA_VISTA_COLORS = (window.BOA_VISTA_CATALOG || []).map(color => ({
-  ...color,
-  displayName: `${color.name}${color.quality ? ' / ' + color.quality : ''}`,
-}));
+const LEGACY_COLORS = [];
+const BOA_VISTA_COLORS = [];
 const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
 const CONFIG_STORAGE_KEY = 'dcoratto.editor.settings.v1';
 const BUILDER_STORAGE_KEY = 'dcoratto.builder.document.v1';
@@ -516,6 +498,25 @@ function removeManualCatalogItem(id) {
   syncPreviewDocument();
 }
 
+function clearManualCatalogColors() {
+  const items = editorSettings.catalogItems || [];
+  const colorCount = items.filter(item => item.type === 'color').length;
+  if (!colorCount) {
+    alert('Não há cores manuais cadastradas.');
+    return;
+  }
+  if (!confirm(`Excluir ${colorCount} cor(es) manual(is) do catálogo?`)) return;
+  editorSettings.catalogItems = items.filter(item => item.type !== 'color');
+  Object.values(state).forEach(envState => {
+    envState.cores = [];
+  });
+  saveEditorSettings();
+  saveBuilderDraft();
+  applyEditorSettings();
+  rerenderAllSwatches();
+  syncPreviewDocument();
+}
+
 function renderManualCatalogList() {
   const list = document.getElementById('manualCatalogList');
   if (!list) return;
@@ -643,6 +644,18 @@ function availableColors() {
   ].sort((a, b) => `${a.manufacturer}-${a.line}-${a.name}`.localeCompare(`${b.manufacturer}-${b.line}-${b.name}`));
 }
 
+function colorKey(color) {
+  return `${color.manufacturer || ''}|${color.line || ''}|${color.name}|${color.quality || ''}`;
+}
+
+function pruneUnavailableColors() {
+  const available = new Set(availableColors().map(colorKey));
+  AMBIENTES.forEach(amb => {
+    const envState = ensureEnvironmentState(amb.id);
+    envState.cores = (envState.cores || []).filter(color => available.has(color.key || colorKey(color)));
+  });
+}
+
 function allPuxadores() {
   const manualHandles = manualCatalogItems('handle').map(item => `${item.name}${item.line ? ' · '+item.line : ''}`);
   return [...new Set([...(editorSettings.materialOptions?.puxador || DEFAULT_MATERIAL_OPTIONS.puxador), ...manualHandles])];
@@ -724,9 +737,9 @@ if (builderDraft?.state) {
 
 function buildSwatchHTML(ambId, field) {
   const colors = availableColors();
-  if (!colors.length) return '<div class="amb-summary">Selecione um fabricante para ver as cores.</div>';
+  if (!colors.length) return '<div class="amb-summary">Nenhuma cor cadastrada. Abra Configurações e adicione cores ao catálogo manual.</div>';
   return colors.map(c => {
-    const key = `${c.manufacturer || ''}|${c.line || ''}|${c.name}|${c.quality || ''}`;
+    const key = colorKey(c);
     const selected = state[ambId]?.cores.some(item => item.key === key || (!item.key && item.name === c.name));
     return `
     <div class="swatch-wrap">
@@ -886,10 +899,13 @@ function renderAmbientes() {
   updateProgress();
 }
 applyEditorSettings();
+pruneUnavailableColors();
+saveBuilderDraft();
 renderAmbientes();
 
 function handleFactoryChange() {
   const factories = selectedFactories();
+  pruneUnavailableColors();
   AMBIENTES.forEach(amb => {
     state[amb.id].cores = state[amb.id].cores.filter(c => !c.manufacturer || factories.includes(c.manufacturer));
     const swatches = document.querySelector(`#card-${amb.id} .color-swatches`);
