@@ -314,7 +314,6 @@ async function findHtmlVersionByShareSlug(shareSlug) {
     .eq('share_slug', shareSlug)
     .eq('shared_with_client', true)
     .maybeSingle();
-  if (error?.code === '42703') return '';
   if (error) throw error;
   return data?.html_content || '';
 }
@@ -438,7 +437,7 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
         factory: Array.isArray(client.manufacturers) ? client.manufacturers.join(' + ') : '',
         address: client.address || draft?.fields?.endereco || '',
         document_type: 'projeto_inicial',
-        status: 'shared',
+        status: 'draft',
         data: { draft: draft || null, preview, actor: actor || null, lastEventId: eventId || null, lastEventAt: createdAt || new Date().toISOString() },
       });
     if (projectError) throw projectError;
@@ -455,20 +454,20 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
       shared_at: new Date().toISOString(),
       created_by: actor?.email || '',
       share_slug: shareSlug,
-      data: { publicUrl, storagePublicUrl, client, shareSlug },
+      data: {
+        publicUrl,
+        storagePublicUrl,
+        client,
+        shareSlug,
+        sharedWithClient: true,
+        sharedAt: new Date().toISOString(),
+        createdBy: actor?.email || '',
+      },
     };
 
     const { error: htmlError } = await supabaseServer
       .from('document_html_versions')
       .insert(htmlPayload);
-    if (htmlError?.code === '42703') {
-      const { share_slug: _shareSlug, ...payloadWithoutShareSlug } = htmlPayload;
-      const { error: retryError } = await supabaseServer
-        .from('document_html_versions')
-        .insert(payloadWithoutShareSlug);
-      if (retryError) throw retryError;
-      return {};
-    }
     if (htmlError) throw htmlError;
 
     return {};
