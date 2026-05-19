@@ -9,7 +9,7 @@
     <title>D'coratto | Portfolio HTML</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&family=Montserrat:wght@300;400;500;600&family=Allura:wght@400&family=Dancingscript:wght@400;500&display=swap" rel="stylesheet" />
     <style>
       *, *::before, *::after { box-sizing: border-box; }
       :root {
@@ -103,7 +103,7 @@
         line-height: 1.04;
         letter-spacing: .015em;
         opacity: 0;
-        animation: introTextIn 1.35s ease .15s forwards;
+        animation: introTextIn 2s ease .3s forwards;
       }
 
       .client-intro-text span {
@@ -118,13 +118,47 @@
         text-transform: uppercase;
       }
 
+      .client-intro-text .word-forma {
+        display: inline-block;
+        margin: 0 .15em;
+        font-family: 'Allura', cursive;
+        font-size: 1.8em;
+        font-weight: 400;
+        font-style: italic;
+        color: #d7c2a7;
+        letter-spacing: -.02em;
+        opacity: 0;
+        animation: formaTypeWriter 1.8s cubic-bezier(.7, 0, .3, 1) 2.4s forwards;
+      }
+
+      @keyframes formaTypeWriter {
+        0% {
+          opacity: 0;
+          width: 0;
+          max-width: 0;
+          clip-path: inset(0 100% 0 0);
+          filter: blur(2px);
+        }
+        85% {
+          opacity: 1;
+          clip-path: inset(0 0 0 0);
+          filter: blur(0);
+        }
+        100% {
+          opacity: 1;
+          width: auto;
+          clip-path: inset(0 0 0 0);
+          filter: blur(0);
+        }
+      }
+
       .client-intro-logo {
         display: grid;
         min-height: 58px;
         place-items: center;
         opacity: 0;
         transform: translateY(8px) scale(.96);
-        animation: introLogoIn .9s ease 1.85s forwards;
+        animation: introLogoIn 1.2s ease 4.4s forwards;
       }
 
       .client-intro-logo img {
@@ -159,7 +193,7 @@
         letter-spacing: .18em;
         opacity: 0;
         text-transform: uppercase;
-        animation: introGestureIn .7s ease 3s forwards;
+        animation: introGestureIn .9s ease 6.1s forwards;
       }
 
       .client-intro-gesture-icon {
@@ -1334,7 +1368,7 @@
     <div class="client-intro" id="clientIntro" aria-hidden="true">
       <div class="client-intro-card">
         <p class="client-intro-text">
-          Seu sonho começa a ganhar forma.
+          Seu sonho começa a ganhar <span class="word-forma">forma</span>.
           <span>Projeto desenvolvido pela D’Coratto Sob Medida com exclusividade, sofisticação e atenção a cada detalhe.</span>
         </p>
         <div class="client-intro-logo" id="clientIntroLogo"></div>
