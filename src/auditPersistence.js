@@ -4,6 +4,9 @@ const PROJECT_ID_KEY = 'dcoratto.active.project.id.v1';
 const OFFLINE_QUEUE_KEY = 'dcoratto.persistence.queue.v1';
 const ENVIRONMENT_ID_KEY = 'dcoratto.environment.ids.v1';
 const HTML_BUCKET = import.meta.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
+const MAX_QUEUE_EVENTS = 25;
+const MAX_QUEUE_BYTES = 1_200_000;
+let warnedMissingSession = false;
 
 export function getActiveProjectId() {
   const existing = localStorage.getItem(PROJECT_ID_KEY);
@@ -38,6 +41,11 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
     return { source: 'local-queue', projectId: getActiveProjectId() };
   }
 
+  if (!(await hasSupabaseSession())) {
+    enqueue(payload);
+    return { source: 'local-queue', projectId: getActiveProjectId(), error: 'missing_supabase_session' };
+  }
+
   try {
     const result = await writeEvent(payload);
     await flushOfflineQueue();
@@ -51,6 +59,7 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
 
 export async function flushOfflineQueue() {
   if (!isSupabaseConfigured || !supabase) return;
+  if (!(await hasSupabaseSession())) return;
 
   const queue = readOfflineQueue();
   if (!queue.length) return;
@@ -65,7 +74,22 @@ export async function flushOfflineQueue() {
     }
   }
 
-  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(remaining));
+  writeOfflineQueue(remaining);
+}
+
+async function hasSupabaseSession() {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const hasSession = Boolean(data?.session?.access_token);
+    if (!hasSession && !warnedMissingSession) {
+      warnedMissingSession = true;
+      console.warn('Supabase configurado, mas sem sessao autenticada. Eventos serao mantidos na fila local compacta.');
+    }
+    return hasSession;
+  } catch (error) {
+    console.warn('Nao foi possivel verificar a sessao do Supabase.', error);
+    return false;
+  }
 }
 
 async function writeEvent(event) {
@@ -272,8 +296,57 @@ async function nextHtmlVersionNumber(projectId) {
 
 function enqueue(event) {
   const queue = readOfflineQueue();
-  queue.push(event);
-  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue.slice(-200)));
+  queue.push(compactQueuedEvent(event));
+  writeOfflineQueue(queue);
+}
+
+function writeOfflineQueue(events) {
+  const queue = events.slice(-MAX_QUEUE_EVENTS).map(compactQueuedEvent);
+  while (queue.length) {
+    const serialized = JSON.stringify(queue);
+    if (serialized.length <= MAX_QUEUE_BYTES && trySetQueue(serialized)) return;
+    queue.shift();
+  }
+  trySetQueue('[]');
+}
+
+function trySetQueue(serialized) {
+  try {
+    localStorage.setItem(OFFLINE_QUEUE_KEY, serialized);
+    return true;
+  } catch (error) {
+    console.warn('Fila local cheia. Eventos antigos foram descartados para manter o editor responsivo.', error);
+    return false;
+  }
+}
+
+function compactQueuedEvent(event) {
+  return stripLargeLocalAssets({
+    id: event.id,
+    action: event.action,
+    actor: event.actor,
+    draft: event.draft || null,
+    preview: event.preview || null,
+    settings: event.settings || null,
+    saveHtml: Boolean(event.saveHtml),
+    createdAt: event.createdAt,
+  });
+}
+
+function stripLargeLocalAssets(value) {
+  if (typeof value === 'string') {
+    if (value.startsWith('data:image/')) {
+      return `[imagem-local:${Math.round(value.length / 1024)}kb]`;
+    }
+    return value.length > 20000 ? `${value.slice(0, 20000)}...[conteudo-local-omitido]` : value;
+  }
+  if (Array.isArray(value)) return value.map(stripLargeLocalAssets);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, stripLargeLocalAssets(item)]),
+    );
+  }
+  return value;
 }
 
 function stableEnvironmentId(projectId, title, index) {

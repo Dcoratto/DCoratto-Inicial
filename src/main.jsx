@@ -18,7 +18,7 @@ function App() {
   useEffect(() => {
     if (!isLogged) return undefined;
 
-    flushOfflineQueue();
+    flushOfflineQueue().catch((error) => console.warn('Falha ao limpar fila offline:', error));
 
     async function loadRemoteSettings() {
       if (!isSupabaseConfigured || !supabase) return;

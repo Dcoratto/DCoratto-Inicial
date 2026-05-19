@@ -1140,7 +1140,7 @@ function normalizedEnvironmentPages(amb) {
       title: frame.title || `${page.title || `Página ${index + 1}`} - Moldura ${frameIndex + 1}`,
       src: frame.photo,
     })),
-    hasData: Boolean(page.title || page.description || (page.annotations || []).length || normalizedPageFrames(page).some(frame => frame.photo || frame.annotations.length)),
+    hasData: Boolean(page.title || page.description || (page.annotations || []).length || normalizedPageFrames(page).some(frame => frame.photo)),
   })).filter(page => page.hasData);
 }
 
@@ -1199,7 +1199,7 @@ function saveBuilderDraft() {
     state,
     updatedAt: new Date().toISOString(),
   };
-  localStorage.setItem(BUILDER_STORAGE_KEY, JSON.stringify(draft));
+  safeSetLocalStorage(BUILDER_STORAGE_KEY, JSON.stringify(draft));
   return draft;
 }
 
@@ -1238,7 +1238,7 @@ function ensurePageFrames(page) {
   }
   page.frames.forEach((frame, frameIndex) => {
     const layout = frameDefaultLayout(frameIndex);
-    frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
+    frame.annotations = [];
     frame.title ||= 'Moldura';
     frame.photo ||= '';
     frame.shape ||= 'rounded';
@@ -1285,18 +1285,7 @@ function normalizedPageFrames(page) {
     imgX: Number(frame.imgX ?? 0),
     imgY: Number(frame.imgY ?? 0),
     editImage: Boolean(frame.editImage),
-    annotations: (frame.annotations || []).map(annotation => ({
-      id: annotation.id,
-      text: annotation.text || '',
-      fromX: Number(annotation.fromX ?? 18),
-      fromY: Number(annotation.fromY ?? 18),
-      toX: Number(annotation.toX ?? 58),
-      toY: Number(annotation.toY ?? 48),
-      arrowColor: annotation.arrowColor || '#111111',
-      textColor: annotation.textColor || '#111111',
-      fontSize: Number(annotation.fontSize ?? 17),
-      arrowWidth: Number(annotation.arrowWidth ?? 2),
-    })).filter(annotation => annotation.text),
+    annotations: [],
   }));
 }
 
@@ -1440,24 +1429,9 @@ function startAnnotationDrag(event, ambId, pageId, frameId, annotationId, handle
 }
 
 function renderFrameEditor(ambId, pageId, frame) {
-  const annotations = frame.annotations || [];
   return `
     <div class="frame-editor ${frame.photo ? '' : 'empty'}">
       ${frame.photo ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || 'Moldura')}">` : 'Envie uma foto para esta moldura'}
-      <svg class="frame-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <defs>
-          <marker id="arrowHead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-            <path d="M0,0 L8,4 L0,8 Z" fill="#111"></path>
-          </marker>
-        </defs>
-        ${annotations.map(annotation => `
-          <line data-ann-line="${escapeAttribute(annotation.id)}" class="frame-arrow-line" style="--arrow-color:${escapeAttribute(annotation.arrowColor || '#111111')};--arrow-width:${Number(annotation.arrowWidth ?? 2)}" x1="${Number(annotation.fromX ?? 18)}%" y1="${Number(annotation.fromY ?? 18)}%" x2="${Number(annotation.toX ?? 58)}%" y2="${Number(annotation.toY ?? 48)}%"></line>
-        `).join('')}
-      </svg>
-      ${annotations.map(annotation => `
-        <div data-ann-label="${escapeAttribute(annotation.id)}" class="frame-arrow-label" style="left:${Number(annotation.fromX ?? 18)}%;top:${Number(annotation.fromY ?? 18)}%;--text-color:${escapeAttribute(annotation.textColor || '#111111')};--text-size:${Number(annotation.fontSize ?? 17)}px" onpointerdown="startAnnotationDrag(event,'${escapeJS(ambId)}','${escapeJS(pageId)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','label')">${escapeHTML(annotation.text || '')}</div>
-        <div data-ann-target="${escapeAttribute(annotation.id)}" class="frame-arrow-target" style="left:${Number(annotation.toX ?? 58)}%;top:${Number(annotation.toY ?? 48)}%" onpointerdown="startAnnotationDrag(event,'${escapeJS(ambId)}','${escapeJS(pageId)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','target')"></div>
-      `).join('')}
     </div>
   `;
 }
@@ -1475,7 +1449,6 @@ function renderPageFrames(ambId, page) {
           <div class="frame-head">
             <span class="frame-title">Moldura ${String(frameIndex + 1).padStart(2, '0')}</span>
             <div class="amb-actions">
-              <button class="ghost-btn" type="button" onclick="addFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}')">Adicionar seta</button>
               <button class="amb-remove" type="button" onclick="removePageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}')">Remover moldura</button>
             </div>
           </div>
@@ -1506,18 +1479,6 @@ function renderPageFrames(ambId, page) {
             </div>
           </div>
           ${renderFrameEditor(ambId, page.id, frame)}
-          <div class="annotation-list">
-            ${(frame.annotations || []).map(annotation => `
-              <div class="annotation-row">
-                <input type="text" value="${escapeAttribute(annotation.text || '')}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','text',this.value)" placeholder="Texto da seta">
-                <input type="color" value="${escapeAttribute(annotation.textColor || '#111111')}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','textColor',this.value)" title="Cor do texto">
-                <input type="color" value="${escapeAttribute(annotation.arrowColor || '#111111')}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','arrowColor',this.value)" title="Cor da seta">
-                <input type="number" min="8" max="42" value="${Number(annotation.fontSize ?? 17)}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','fontSize',this.value)" title="Tamanho texto">
-                <input type="number" min="1" max="8" value="${Number(annotation.arrowWidth ?? 2)}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','arrowWidth',this.value)" title="Espessura seta">
-                <button class="amb-remove" type="button" onclick="removeFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}')">Remover</button>
-              </div>
-            `).join('')}
-          </div>
         </div>
       `).join('') : '<div class="amb-summary">Nenhuma moldura cadastrada nesta página.</div>'}
     </div>
@@ -1630,7 +1591,7 @@ function mergePreviewDocument(preview) {
           imgX: frame.imgX,
           imgY: frame.imgY,
           editImage: Boolean(frame.editImage),
-          annotations: Array.isArray(frame.annotations) ? frame.annotations : [],
+          annotations: [],
         })) : [],
       }))
       : environmentPages(amb.id);
@@ -1640,8 +1601,16 @@ function mergePreviewDocument(preview) {
 function syncPreviewDocument(action = 'editor_sync') {
   const draft = saveBuilderDraft();
   const preview = buildPreviewDocumentData();
-  localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
+  safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
   postEditorEvent(action, { draft, preview });
+}
+
+function safeSetLocalStorage(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    console.warn('Armazenamento local cheio. A edicao continua ativa e a persistencia remota sera tentada.', error);
+  }
 }
 
 ['clientName', 'contractNum', 'endereco'].forEach(id => {
