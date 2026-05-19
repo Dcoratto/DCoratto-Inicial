@@ -1245,6 +1245,10 @@ function ensurePageFrames(page) {
     frame.y = normalizePercent(frame.y, layout.y, 0, 98);
     frame.width = normalizePercent(frame.width, layout.width, 8, 100 - frame.x);
     frame.height = normalizePercent(frame.height, layout.height, 8, 100 - frame.y);
+    frame.imgScale = normalizePercent(frame.imgScale, 1, 1, 3);
+    frame.imgX = normalizePercent(frame.imgX, 0, -100, 100);
+    frame.imgY = normalizePercent(frame.imgY, 0, -100, 100);
+    frame.editImage = Boolean(frame.editImage);
   });
   return page.frames;
 }
@@ -1276,6 +1280,10 @@ function normalizedPageFrames(page) {
     y: Number(frame.y),
     width: Number(frame.width),
     height: Number(frame.height),
+    imgScale: Number(frame.imgScale ?? 1),
+    imgX: Number(frame.imgX ?? 0),
+    imgY: Number(frame.imgY ?? 0),
+    editImage: Boolean(frame.editImage),
     annotations: (frame.annotations || []).map(annotation => ({
       id: annotation.id,
       text: annotation.text || '',
@@ -1616,6 +1624,10 @@ function mergePreviewDocument(preview) {
           y: frame.y,
           width: frame.width,
           height: frame.height,
+          imgScale: frame.imgScale,
+          imgX: frame.imgX,
+          imgY: frame.imgY,
+          editImage: Boolean(frame.editImage),
           annotations: Array.isArray(frame.annotations) ? frame.annotations : [],
         })) : [],
       }))

@@ -244,24 +244,23 @@
       }
 
       .environment-page.editable .doc-photo-frame {
-        outline: 1px dashed rgba(17, 17, 17, .22);
-        outline-offset: 4px;
+        outline: 1px dashed rgba(17, 17, 17, .20);
+        outline-offset: 2px;
         cursor: move;
       }
 
       .environment-page.editable .doc-photo-frame:hover,
       .environment-page.editable .doc-photo-frame.is-selected {
-        outline-color: #8f7044;
+        outline: 2px solid #7c46ff;
+        outline-offset: 0;
       }
 
       .doc-photo-frame.shape-circle {
-        aspect-ratio: 1 / 1;
         min-height: 0;
         border-radius: 50%;
       }
 
       .doc-photo-frame.shape-square {
-        aspect-ratio: 1 / 1;
         min-height: 0;
         border-radius: 0;
       }
@@ -280,6 +279,12 @@
         min-height: inherit;
         object-fit: cover;
         display: block;
+        transform-origin: center;
+        user-select: none;
+      }
+
+      .environment-page.editable .doc-photo-frame.is-editing-image img {
+        cursor: grab;
       }
 
       .photo-card img {
@@ -395,19 +400,64 @@
 
       .frame-resize-handle {
         position: absolute;
-        right: 8px;
-        bottom: 8px;
         z-index: 12;
-        width: 18px;
-        height: 18px;
-        border: 1px solid rgba(17,17,17,.42);
-        background: rgba(247,244,238,.92);
-        cursor: nwse-resize;
+        width: 12px;
+        height: 12px;
+        border: 2px solid #7c46ff;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 2px 8px rgba(0,0,0,.16);
         display: none;
       }
 
-      .environment-page.editable .frame-resize-handle {
+      .environment-page.editable .doc-photo-frame.is-selected .frame-resize-handle {
         display: block;
+      }
+
+      .frame-resize-handle[data-resize-frame="nw"] { left: -7px; top: -7px; cursor: nwse-resize; }
+      .frame-resize-handle[data-resize-frame="n"] { left: 50%; top: -7px; transform: translateX(-50%); cursor: ns-resize; }
+      .frame-resize-handle[data-resize-frame="ne"] { right: -7px; top: -7px; cursor: nesw-resize; }
+      .frame-resize-handle[data-resize-frame="e"] { right: -7px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+      .frame-resize-handle[data-resize-frame="se"] { right: -7px; bottom: -7px; cursor: nwse-resize; }
+      .frame-resize-handle[data-resize-frame="s"] { left: 50%; bottom: -7px; transform: translateX(-50%); cursor: ns-resize; }
+      .frame-resize-handle[data-resize-frame="sw"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
+      .frame-resize-handle[data-resize-frame="w"] { left: -7px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+
+      .frame-selection-toolbar {
+        position: absolute;
+        left: 50%;
+        top: -42px;
+        z-index: 18;
+        display: none;
+        align-items: center;
+        gap: 6px;
+        padding: 6px;
+        border: 1px solid rgba(17,17,17,.14);
+        border-radius: 999px;
+        background: rgba(255,255,255,.96);
+        box-shadow: 0 10px 30px rgba(0,0,0,.16);
+        transform: translateX(-50%);
+        white-space: nowrap;
+      }
+
+      .environment-page.editable .doc-photo-frame.is-selected .frame-selection-toolbar {
+        display: flex;
+      }
+
+      .frame-selection-toolbar button,
+      .frame-selection-toolbar label {
+        border: 0;
+        background: transparent;
+        color: #111;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+
+      .frame-selection-toolbar input[type="range"] {
+        width: 88px;
       }
 
       .preview-frame-tools input[type="file"] { display: none; }
@@ -801,6 +851,7 @@
       };
 
       documentData = normalizeDocumentData(documentData);
+      const selectedFrameKeys = new Set();
 
       const nav = document.getElementById('nav');
       const root = document.getElementById('document');
@@ -814,7 +865,16 @@
       });
 
       document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') closeLightbox();
+        if (event.key === 'Escape') {
+          closeLightbox();
+          clearFrameSelection();
+        }
+        if ((event.key === 'Delete' || event.key === 'Backspace') && isEditablePreview && selectedFrameKeys.size) {
+          const target = event.target;
+          if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+          event.preventDefault();
+          deleteSelectedFrames();
+        }
       });
 
       window.addEventListener('storage', (event) => {
@@ -909,6 +969,8 @@
       }
 
       function bindDocumentEvents() {
+        applyFrameSelectionClasses();
+
         document.querySelectorAll('[data-lightbox-src]').forEach((button) => {
           button.addEventListener('click', () => {
             lightboxImage.src = button.dataset.lightboxSrc;
@@ -962,6 +1024,36 @@
             if (!frame) return;
             frame.shape = select.value;
             persistAndRender();
+          });
+        });
+
+        document.querySelectorAll('[data-delete-frame]').forEach((button) => {
+          button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const frame = pageFrame(Number(button.dataset.environmentIndex), Number(button.dataset.pageIndex), Number(button.dataset.frameIndex));
+            if (!frame) return;
+            selectSingleFrame(frameKey(button.dataset.environmentIndex, button.dataset.pageIndex, button.dataset.frameIndex));
+            deleteSelectedFrames();
+          });
+        });
+
+        document.querySelectorAll('[data-edit-image]').forEach((button) => {
+          button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const frame = pageFrame(Number(button.dataset.environmentIndex), Number(button.dataset.pageIndex), Number(button.dataset.frameIndex));
+            if (!frame) return;
+            frame.editImage = !frame.editImage;
+            persistAndRender();
+          });
+        });
+
+        document.querySelectorAll('[data-image-zoom]').forEach((input) => {
+          input.addEventListener('input', () => {
+            const frame = pageFrame(Number(input.dataset.environmentIndex), Number(input.dataset.pageIndex), Number(input.dataset.frameIndex));
+            if (!frame) return;
+            frame.imgScale = Number(input.value);
+            updateFrameImageTransform(input.closest('.doc-photo-frame'), frame);
+            persistWithoutRender();
           });
         });
 
@@ -1047,6 +1139,10 @@
         document.querySelectorAll('[data-resize-frame]').forEach((node) => {
           node.addEventListener('pointerdown', startPreviewFrameResize);
         });
+
+        document.querySelectorAll('[data-editable-frame-image]').forEach((node) => {
+          node.addEventListener('pointerdown', startFrameImagePan);
+        });
       }
 
       function environmentPage(environmentIndex, pageIndex) {
@@ -1067,6 +1163,52 @@
         return frame.annotations[annotationIndex] || null;
       }
 
+      function frameKey(environmentIndex, pageIndex, frameIndex) {
+        return `${environmentIndex}:${pageIndex}:${frameIndex}`;
+      }
+
+      function selectSingleFrame(key) {
+        selectedFrameKeys.clear();
+        selectedFrameKeys.add(key);
+        applyFrameSelectionClasses();
+      }
+
+      function toggleFrameSelection(key) {
+        if (selectedFrameKeys.has(key)) selectedFrameKeys.delete(key);
+        else selectedFrameKeys.add(key);
+        applyFrameSelectionClasses();
+      }
+
+      function clearFrameSelection() {
+        selectedFrameKeys.clear();
+        applyFrameSelectionClasses();
+      }
+
+      function applyFrameSelectionClasses() {
+        document.querySelectorAll('[data-draggable-frame]').forEach((node) => {
+          const key = frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex);
+          node.classList.toggle('is-selected', selectedFrameKeys.has(key));
+        });
+      }
+
+      function deleteSelectedFrames() {
+        const grouped = new Map();
+        selectedFrameKeys.forEach((key) => {
+          const [environmentIndex, pageIndex, frameIndex] = key.split(':').map(Number);
+          const pageKey = `${environmentIndex}:${pageIndex}`;
+          if (!grouped.has(pageKey)) grouped.set(pageKey, []);
+          grouped.get(pageKey).push(frameIndex);
+        });
+        grouped.forEach((indexes, pageKey) => {
+          const [environmentIndex, pageIndex] = pageKey.split(':').map(Number);
+          const page = environmentPage(environmentIndex, pageIndex);
+          if (!page || !Array.isArray(page.frames)) return;
+          indexes.sort((a, b) => b - a).forEach((index) => page.frames.splice(index, 1));
+        });
+        selectedFrameKeys.clear();
+        persistAndRender();
+      }
+
       function frameDefaultLayout(index) {
         const presets = [
           { x: 18, y: 8, width: 64, height: 64 },
@@ -1084,38 +1226,54 @@
         frame.y = Number.isFinite(Number(frame.y)) ? Number(frame.y) : fallback.y;
         frame.width = Number.isFinite(Number(frame.width)) ? Number(frame.width) : fallback.width;
         frame.height = Number.isFinite(Number(frame.height)) ? Number(frame.height) : fallback.height;
+        frame.imgScale = Number.isFinite(Number(frame.imgScale)) ? Number(frame.imgScale) : 1;
+        frame.imgX = Number.isFinite(Number(frame.imgX)) ? Number(frame.imgX) : 0;
+        frame.imgY = Number.isFinite(Number(frame.imgY)) ? Number(frame.imgY) : 0;
+        frame.editImage = Boolean(frame.editImage);
         frame.x = Math.max(0, Math.min(98, frame.x));
         frame.y = Math.max(0, Math.min(98, frame.y));
         frame.width = Math.max(8, Math.min(100 - frame.x, frame.width));
         frame.height = Math.max(8, Math.min(100 - frame.y, frame.height));
+        frame.imgScale = Math.max(1, Math.min(3, frame.imgScale));
+        frame.imgX = Math.max(-100, Math.min(100, frame.imgX));
+        frame.imgY = Math.max(-100, Math.min(100, frame.imgY));
         return frame;
       }
 
       function startPreviewFrameDrag(event) {
         if (!isEditablePreview) return;
-        if (event.target.closest('.preview-frame-tools, .annotation-edit-row, [data-drag-annotation], [data-resize-frame]')) return;
+        if (event.target.closest('.preview-frame-tools, .frame-selection-toolbar, .annotation-edit-row, [data-drag-annotation], [data-resize-frame]')) return;
         event.preventDefault();
         const node = event.currentTarget;
+        const key = frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex);
+        if (event.shiftKey || event.ctrlKey || event.metaKey) toggleFrameSelection(key);
+        else if (!selectedFrameKeys.has(key)) selectSingleFrame(key);
+        if (event.target.closest('[data-editable-frame-image]')) return;
         const frame = pageFrame(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.frameIndex));
         const canvas = node.closest('.page-frames');
         if (!frame || !canvas) return;
-        node.classList.add('is-selected');
         const canvasRect = canvas.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
-        const initial = { x: Number(frame.x || 0), y: Number(frame.y || 0) };
+        const selected = [...selectedFrameKeys].map((selectedKey) => {
+          const [environmentIndex, pageIndex, frameIndex] = selectedKey.split(':').map(Number);
+          const selectedFrame = pageFrame(environmentIndex, pageIndex, frameIndex);
+          const selectedNode = document.querySelector(`[data-draggable-frame][data-environment-index="${environmentIndex}"][data-page-index="${pageIndex}"][data-frame-index="${frameIndex}"]`);
+          return selectedFrame && selectedNode ? { frame: selectedFrame, node: selectedNode, x: Number(selectedFrame.x || 0), y: Number(selectedFrame.y || 0) } : null;
+        }).filter(Boolean);
 
         const move = (pointerEvent) => {
           const dx = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
           const dy = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
-          frame.x = Math.max(0, Math.min(100 - Number(frame.width || 20), initial.x + dx));
-          frame.y = Math.max(0, Math.min(100 - Number(frame.height || 20), initial.y + dy));
-          node.style.left = `${frame.x}%`;
-          node.style.top = `${frame.y}%`;
+          selected.forEach((item) => {
+            item.frame.x = Math.max(0, Math.min(100 - Number(item.frame.width || 20), item.x + dx));
+            item.frame.y = Math.max(0, Math.min(100 - Number(item.frame.height || 20), item.y + dy));
+            item.node.style.left = `${item.frame.x}%`;
+            item.node.style.top = `${item.frame.y}%`;
+          });
         };
 
         const up = () => {
-          node.classList.remove('is-selected');
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
           persistWithoutRender();
@@ -1133,16 +1291,35 @@
         const frame = pageFrame(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.frameIndex));
         const canvas = node?.closest('.page-frames');
         if (!frame || !canvas || !node) return;
+        selectSingleFrame(frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex));
+        const handle = event.currentTarget.dataset.resizeFrame || 'se';
         const canvasRect = canvas.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
-        const initial = { width: Number(frame.width || 20), height: Number(frame.height || 20) };
+        const initial = {
+          x: Number(frame.x || 0),
+          y: Number(frame.y || 0),
+          width: Number(frame.width || 20),
+          height: Number(frame.height || 20),
+        };
 
         const move = (pointerEvent) => {
           const dw = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
           const dh = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
-          frame.width = Math.max(8, Math.min(100 - Number(frame.x || 0), initial.width + dw));
-          frame.height = Math.max(8, Math.min(100 - Number(frame.y || 0), initial.height + dh));
+          if (handle.includes('e')) frame.width = Math.max(8, Math.min(100 - initial.x, initial.width + dw));
+          if (handle.includes('s')) frame.height = Math.max(8, Math.min(100 - initial.y, initial.height + dh));
+          if (handle.includes('w')) {
+            const nextX = Math.max(0, Math.min(initial.x + initial.width - 8, initial.x + dw));
+            frame.x = nextX;
+            frame.width = Math.max(8, Math.min(100 - nextX, initial.width + (initial.x - nextX)));
+          }
+          if (handle.includes('n')) {
+            const nextY = Math.max(0, Math.min(initial.y + initial.height - 8, initial.y + dh));
+            frame.y = nextY;
+            frame.height = Math.max(8, Math.min(100 - nextY, initial.height + (initial.y - nextY)));
+          }
+          node.style.left = `${frame.x}%`;
+          node.style.top = `${frame.y}%`;
           node.style.width = `${frame.width}%`;
           node.style.height = `${frame.height}%`;
         };
@@ -1187,6 +1364,41 @@
           frame.photo = photoSrc;
           persistAndRender();
         }
+      }
+
+      function updateFrameImageTransform(frameNode, frame) {
+        const image = frameNode?.querySelector('[data-editable-frame-image]');
+        if (!image || !frame) return;
+        image.style.transform = `translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
+      }
+
+      function startFrameImagePan(event) {
+        if (!isEditablePreview) return;
+        const frameNode = event.currentTarget.closest('.doc-photo-frame');
+        const frame = pageFrame(Number(frameNode?.dataset.environmentIndex), Number(frameNode?.dataset.pageIndex), Number(frameNode?.dataset.frameIndex));
+        if (!frame || !frame.editImage) return;
+        event.preventDefault();
+        event.stopPropagation();
+        selectSingleFrame(frameKey(frameNode.dataset.environmentIndex, frameNode.dataset.pageIndex, frameNode.dataset.frameIndex));
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const initial = { x: Number(frame.imgX || 0), y: Number(frame.imgY || 0) };
+
+        const move = (pointerEvent) => {
+          const rect = frameNode.getBoundingClientRect();
+          frame.imgX = Math.max(-100, Math.min(100, initial.x + ((pointerEvent.clientX - startX) / rect.width) * 100));
+          frame.imgY = Math.max(-100, Math.min(100, initial.y + ((pointerEvent.clientY - startY) / rect.height) * 100));
+          updateFrameImageTransform(frameNode, frame);
+        };
+
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          persistWithoutRender();
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
       }
 
       function startPreviewAnnotationDrag(event) {
@@ -1344,15 +1556,24 @@
         const hasPhoto = Boolean(frame.photo);
         const shape = ['circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded';
         const frameStyle = `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${Number(frame.height)}%`;
+        const imageStyle = `transform:translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
         return `
           <div
-            class="doc-photo-frame is-positioned shape-${escapeAttribute(shape)}"
+            class="doc-photo-frame is-positioned shape-${escapeAttribute(shape)} ${frame.editImage ? 'is-editing-image' : ''}"
             style="${frameStyle}"
             ${isEditablePreview ? `data-draggable-frame data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}"` : ''}
           >
             ${isEditablePreview ? renderFramePreviewTools(frame, environmentIndex, pageIndex, frameIndex) : ''}
-            ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" draggable="true" data-photo-src="${escapeAttribute(frame.photo)}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
-            ${isEditablePreview ? '<span class="drop-hint">Solte a foto aqui</span><span class="frame-resize-handle" data-resize-frame></span>' : ''}
+            ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" draggable="true" data-photo-src="${escapeAttribute(frame.photo)}" data-editable-frame-image style="${imageStyle}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
+            ${isEditablePreview ? `
+              <span class="drop-hint">Solte a foto aqui</span>
+              <span class="frame-selection-toolbar">
+                <button type="button" data-edit-image data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">${frame.editImage ? 'Mover moldura' : 'Editar foto'}</button>
+                <label>Zoom <input type="range" min="1" max="3" step="0.05" value="${Number(frame.imgScale || 1)}" data-image-zoom data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}"></label>
+                <button type="button" data-delete-frame data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">Excluir</button>
+              </span>
+              ${['nw','n','ne','e','se','s','sw','w'].map(handle => `<span class="frame-resize-handle" data-resize-frame="${handle}"></span>`).join('')}
+            ` : ''}
             <svg class="doc-annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
               <defs>
                 ${(frame.annotations || []).map((annotation, annotationIndex) => `
