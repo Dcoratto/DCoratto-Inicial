@@ -2217,16 +2217,16 @@
 
         const move = (pointerEvent) => {
           const end = pagePoint(pointerEvent, pageNode);
-          annotation.toX = end.x;
-          annotation.toY = end.y;
+          annotation.fromX = end.x;
+          annotation.fromY = end.y;
           updatePageAnnotationLine(line, annotation, pageNode);
           updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
         };
 
         const up = (pointerEvent) => {
           const end = pagePoint(pointerEvent, pageNode);
-          annotation.toX = end.x;
-          annotation.toY = end.y;
+          annotation.fromX = end.x;
+          annotation.fromY = end.y;
           updatePageAnnotationLine(line, annotation, pageNode);
           updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
           window.removeEventListener('pointermove', move);
