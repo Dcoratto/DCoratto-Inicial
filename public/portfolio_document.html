@@ -357,13 +357,28 @@
 
       .page-annotation-line {
         stroke: var(--arrow-color, #111);
-        stroke-width: var(--arrow-width, 0.9);
+        stroke-width: var(--arrow-width-px, 1px);
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        vector-effect: non-scaling-stroke;
         cursor: move;
         pointer-events: stroke;
       }
 
       .page-annotation-line.is-selected {
         filter: drop-shadow(0 0 2px rgba(124,70,255,.55));
+      }
+
+      .page-annotation-arrow-head {
+        position: absolute;
+        z-index: 30;
+        width: 7px;
+        height: 7px;
+        background: var(--arrow-color, #111);
+        clip-path: polygon(100% 50%, 0 0, 0 100%);
+        pointer-events: none;
+        transform: translate(-100%, -50%) rotate(var(--arrow-angle, 0deg));
+        transform-origin: 100% 50%;
       }
 
       .page-annotation-text {
@@ -380,7 +395,7 @@
         pointer-events: auto;
         text-shadow: var(--text-shadow, 0 1px 0 rgba(255,255,255,.75));
         -webkit-text-stroke: var(--text-stroke, 0 transparent);
-        transform: translate(-6px, -50%);
+        transform: translate(8px, -50%);
       }
 
       .page-annotation-text.is-selected {
@@ -394,7 +409,7 @@
         display: none;
         align-items: center;
         gap: 6px;
-        transform: translate(-6px, calc(-100% - 12px));
+        transform: translate(0, calc(-100% - 12px));
         border: 1px solid rgba(17,17,17,.14);
         border-radius: 999px;
         background: rgba(255,255,255,.96);
@@ -436,6 +451,12 @@
         background: #ece8df;
       }
 
+      .photo-upload[disabled],
+      .history-action[disabled] {
+        cursor: not-allowed;
+        opacity: .42;
+      }
+
       .page-frames.arrow-draw-mode {
         cursor: crosshair;
       }
@@ -459,7 +480,10 @@
 
       .doc-annotation-line {
         stroke: var(--arrow-color, #111);
-        stroke-width: var(--arrow-width, 2);
+        stroke-width: var(--arrow-width-px, 1.2px);
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        vector-effect: non-scaling-stroke;
         marker-end: url(#docArrowHead);
       }
 
@@ -1036,6 +1060,11 @@
       let frameClipboard = [];
       let pageAnnotationClipboard = [];
       let arrowDrawMode = null;
+      const historyLimit = 80;
+      const undoStack = [];
+      const redoStack = [];
+      let isApplyingHistory = false;
+      let lastHistorySnapshot = '';
       const annotationDefaultsKey = 'dcoratto.page.annotation.defaults.v1';
       let pageAnnotationDefaults = loadPageAnnotationDefaults();
 
@@ -1045,6 +1074,7 @@
       const lightboxImage = lightbox.querySelector('img');
 
       renderDocument();
+      resetDocumentHistory();
 
       lightbox.addEventListener('click', (event) => {
         if (event.target === lightbox || event.target.tagName === 'BUTTON') closeLightbox();
@@ -1052,7 +1082,20 @@
 
       document.addEventListener('keydown', (event) => {
         const target = event.target;
-        if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+        const isTextEditing = target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+        const isModifierShortcut = event.ctrlKey || event.metaKey;
+        if (isEditablePreview && isModifierShortcut && !event.altKey && event.key.toLowerCase() === 'z' && !isTextEditing) {
+          event.preventDefault();
+          if (event.shiftKey) redoLastAction();
+          else undoLastAction();
+          return;
+        }
+        if (isEditablePreview && isModifierShortcut && !event.altKey && event.key.toLowerCase() === 'y' && !isTextEditing) {
+          event.preventDefault();
+          redoLastAction();
+          return;
+        }
+        if (isTextEditing) return;
         if (event.key === 'Escape') {
           closeLightbox();
           clearFrameSelection();
@@ -1063,15 +1106,15 @@
           deleteSelectedElements();
         }
         if (!isEditablePreview) return;
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
+        if (isModifierShortcut && event.key.toLowerCase() === 'c') {
           event.preventDefault();
           copySelectedElements();
         }
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') {
+        if (isModifierShortcut && event.key.toLowerCase() === 'v') {
           event.preventDefault();
           pasteCopiedElements();
         }
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
+        if (isModifierShortcut && event.key.toLowerCase() === 'd') {
           event.preventDefault();
           duplicateSelectedElements();
         }
@@ -1085,6 +1128,7 @@
         if (event.key === storageKey) {
           documentData = normalizeDocumentData(JSON.parse(event.newValue || 'null'));
           renderDocument();
+          resetDocumentHistory();
         }
       });
 
@@ -1145,6 +1189,107 @@
           textBorder: Boolean(annotation.textBorder),
         };
         localStorage.setItem(annotationDefaultsKey, JSON.stringify(pageAnnotationDefaults));
+      }
+
+      function serializeDocumentData(data = documentData) {
+        try {
+          return JSON.stringify(data);
+        } catch {
+          return '';
+        }
+      }
+
+      function resetDocumentHistory() {
+        undoStack.length = 0;
+        redoStack.length = 0;
+        lastHistorySnapshot = serializeDocumentData();
+        updateHistoryControls();
+      }
+
+      function rememberDocumentHistory() {
+        const snapshot = serializeDocumentData();
+        if (!snapshot) return;
+        if (!isEditablePreview || isApplyingHistory) {
+          lastHistorySnapshot = snapshot;
+          updateHistoryControls();
+          return;
+        }
+        if (snapshot === lastHistorySnapshot) {
+          updateHistoryControls();
+          return;
+        }
+        if (lastHistorySnapshot) {
+          undoStack.push(lastHistorySnapshot);
+          if (undoStack.length > historyLimit) undoStack.shift();
+        }
+        redoStack.length = 0;
+        lastHistorySnapshot = snapshot;
+        updateHistoryControls();
+      }
+
+      function postPortfolioSync() {
+        if (window.parent === window) return;
+        window.parent.postMessage({
+          type: 'dcoratto:editor-state',
+          action: 'portfolio_sync',
+          preview: documentData,
+          sentAt: new Date().toISOString(),
+        }, window.location.origin);
+      }
+
+      function restoreHistorySnapshot(snapshot) {
+        if (!snapshot) return;
+        isApplyingHistory = true;
+        try {
+          documentData = normalizeDocumentData(JSON.parse(snapshot));
+          selectedFrameKeys.clear();
+          selectedPageAnnotationKeys.clear();
+          arrowDrawMode = null;
+          lastHistorySnapshot = serializeDocumentData();
+          safePersistDocument();
+          postPortfolioSync();
+          renderDocument();
+        } catch (error) {
+          console.warn('Nao foi possivel restaurar o historico do documento.', error);
+        } finally {
+          isApplyingHistory = false;
+          updateHistoryControls();
+        }
+      }
+
+      function undoLastAction(event) {
+        event?.preventDefault?.();
+        if (!isEditablePreview || !undoStack.length) return;
+        const currentSnapshot = serializeDocumentData();
+        const previousSnapshot = undoStack.pop();
+        if (currentSnapshot && currentSnapshot !== previousSnapshot) {
+          redoStack.push(currentSnapshot);
+          if (redoStack.length > historyLimit) redoStack.shift();
+        }
+        restoreHistorySnapshot(previousSnapshot);
+      }
+
+      function redoLastAction(event) {
+        event?.preventDefault?.();
+        if (!isEditablePreview || !redoStack.length) return;
+        const currentSnapshot = serializeDocumentData();
+        const nextSnapshot = redoStack.pop();
+        if (currentSnapshot && currentSnapshot !== nextSnapshot) {
+          undoStack.push(currentSnapshot);
+          if (undoStack.length > historyLimit) undoStack.shift();
+        }
+        restoreHistorySnapshot(nextSnapshot);
+      }
+
+      function updateHistoryControls() {
+        document.querySelectorAll('[data-history-undo]').forEach((button) => {
+          button.disabled = !undoStack.length;
+          button.title = undoStack.length ? 'Desfazer ultima acao (Ctrl+Z)' : 'Nada para desfazer';
+        });
+        document.querySelectorAll('[data-history-redo]').forEach((button) => {
+          button.disabled = !redoStack.length;
+          button.title = redoStack.length ? 'Refazer ultima acao (Ctrl+Y)' : 'Nada para refazer';
+        });
       }
 
       function renderDocument() {
@@ -1341,6 +1486,14 @@
           });
         });
 
+        document.querySelectorAll('[data-history-undo]').forEach((button) => {
+          button.addEventListener('click', undoLastAction);
+        });
+
+        document.querySelectorAll('[data-history-redo]').forEach((button) => {
+          button.addEventListener('click', redoLastAction);
+        });
+
         document.querySelectorAll('[data-page-arrow-button]').forEach((button) => {
           button.addEventListener('click', () => {
             arrowDrawMode = {
@@ -1462,6 +1615,8 @@
         });
 
         applyArrowDrawMode();
+        updatePageAnnotationGeometry();
+        updateHistoryControls();
       }
 
       function environmentPage(environmentIndex, pageIndex) {
@@ -1495,6 +1650,31 @@
           x: Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
           y: Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)),
         };
+      }
+
+      function pageAnnotationAngle(annotation, pageNode = null) {
+        const rect = pageNode?.getBoundingClientRect?.();
+        const scaleX = rect?.width || 1;
+        const scaleY = rect?.height || 1;
+        const dx = (Number(annotation.toX ?? 0) - Number(annotation.fromX ?? 0)) * scaleX;
+        const dy = (Number(annotation.toY ?? 0) - Number(annotation.fromY ?? 0)) * scaleY;
+        return Math.atan2(dy, dx) * 180 / Math.PI;
+      }
+
+      function updatePageAnnotationArrowHead(node, annotation, pageNode) {
+        if (!node || !annotation) return;
+        node.style.left = `${Number(annotation.toX ?? 0)}%`;
+        node.style.top = `${Number(annotation.toY ?? 0)}%`;
+        node.style.setProperty('--arrow-color', annotation.arrowColor || '#111111');
+        node.style.setProperty('--arrow-angle', `${pageAnnotationAngle(annotation, pageNode)}deg`);
+      }
+
+      function updatePageAnnotationGeometry() {
+        document.querySelectorAll('[data-page-annotation-arrow-head]').forEach((node) => {
+          const pageNode = node.closest('[data-page-frames]');
+          const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
+          updatePageAnnotationArrowHead(node, annotation, pageNode);
+        });
       }
 
       function applyArrowDrawMode() {
@@ -1925,8 +2105,8 @@
         const annotation = {
           id: `page-ann-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
           text: 'Texto da seta',
-          fromX: start.x + 12,
-          fromY: start.y + 8,
+          fromX: start.x,
+          fromY: start.y,
           toX: start.x,
           toY: start.y,
           ...pageAnnotationDefaults,
@@ -1940,6 +2120,7 @@
         line.setAttribute('class', 'page-annotation-line');
         line.style.setProperty('--arrow-color', annotation.arrowColor);
         line.style.setProperty('--arrow-width', annotation.arrowWidth);
+        line.style.setProperty('--arrow-width-px', `${annotation.arrowWidth}px`);
         line.setAttribute('x1', `${annotation.fromX}%`);
         line.setAttribute('y1', `${annotation.fromY}%`);
         line.setAttribute('x2', `${annotation.toX}%`);
@@ -1949,13 +2130,18 @@
 
         const move = (pointerEvent) => {
           const end = pagePoint(pointerEvent, pageNode);
-          annotation.fromX = end.x;
-          annotation.fromY = end.y;
-          line.setAttribute('x1', `${annotation.fromX}%`);
-          line.setAttribute('y1', `${annotation.fromY}%`);
+          annotation.toX = end.x;
+          annotation.toY = end.y;
+          line.setAttribute('x2', `${annotation.toX}%`);
+          line.setAttribute('y2', `${annotation.toY}%`);
         };
 
-        const up = () => {
+        const up = (pointerEvent) => {
+          const end = pagePoint(pointerEvent, pageNode);
+          annotation.toX = end.x;
+          annotation.toY = end.y;
+          line.setAttribute('x2', `${annotation.toX}%`);
+          line.setAttribute('y2', `${annotation.toY}%`);
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
           arrowDrawMode = null;
@@ -1991,6 +2177,7 @@
         const label = pageNode.querySelector(`[data-page-annotation-text="${id}"]`);
         const head = pageNode.querySelector(`[data-page-annotation-head="${id}"]`);
         const tail = pageNode.querySelector(`[data-page-annotation-tail="${id}"]`);
+        const arrowHead = pageNode.querySelector(`[data-page-annotation-arrow-head="${id}"]`);
         const toolbar = pageNode.querySelector(`[data-page-annotation-toolbar][data-environment-index="${node.dataset.environmentIndex}"][data-page-index="${node.dataset.pageIndex}"][data-annotation-index="${node.dataset.annotationIndex}"]`);
 
         const move = (pointerEvent) => {
@@ -2017,6 +2204,7 @@
             head.style.left = `${annotation.toX}%`;
             head.style.top = `${annotation.toY}%`;
           }
+          updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
           if (toolbar) {
             toolbar.style.left = `${annotation.fromX}%`;
             toolbar.style.top = `${annotation.fromY}%`;
@@ -2055,6 +2243,7 @@
           const label = pageNode.querySelector(`[data-page-annotation-text="${id}"]`);
           const head = pageNode.querySelector(`[data-page-annotation-head="${id}"]`);
           const tail = pageNode.querySelector(`[data-page-annotation-tail="${id}"]`);
+          const arrowHead = pageNode.querySelector(`[data-page-annotation-arrow-head="${id}"]`);
           if (line) {
             line.setAttribute(handle === 'head' ? 'x2' : 'x1', `${point.x}%`);
             line.setAttribute(handle === 'head' ? 'y2' : 'y1', `${point.y}%`);
@@ -2076,6 +2265,7 @@
             head.style.left = `${point.x}%`;
             head.style.top = `${point.y}%`;
           }
+          updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
         };
 
         const up = () => {
@@ -2244,6 +2434,8 @@
               <div class="mural-tools" style="justify-content:center;margin:0 0 24px;padding-left:0">
                 <button type="button" class="photo-upload" data-add-frame data-environment-index="${environmentIndex}" data-page-index="${pageIndex}">Adicionar moldura</button>
                 <button type="button" class="photo-upload" data-page-arrow-button data-environment-index="${environmentIndex}" data-page-index="${pageIndex}">Seta para texto</button>
+                <button type="button" class="photo-upload history-action" data-history-undo disabled>Desfazer</button>
+                <button type="button" class="photo-upload history-action" data-history-redo disabled>Refazer</button>
               </div>
             ` : ''}
             <div class="page-frames" data-page-frames data-environment-index="${environmentIndex}" data-page-index="${pageIndex}">
@@ -2258,17 +2450,20 @@
         page.annotations = Array.isArray(page.annotations) ? page.annotations : [];
         return `
           <svg class="page-annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <defs>
-              ${page.annotations.map((annotation, annotationIndex) => `
-                <marker id="pageArrowHead-${environmentIndex}-${pageIndex}-${annotationIndex}" markerWidth="5" markerHeight="5" refX="4.5" refY="2.5" orient="auto">
-                  <path d="M0,0 L5,2.5 L0,5 Z" fill="${escapeAttribute(annotation.arrowColor || '#111111')}"></path>
-                </marker>
-              `).join('')}
-            </defs>
             ${page.annotations.map((annotation, annotationIndex) => `
-              <line data-page-annotation-line="${environmentIndex}-${pageIndex}-${annotationIndex}" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}" class="page-annotation-line ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}" style="--arrow-color:${escapeAttribute(annotation.arrowColor || '#111111')};--arrow-width:${Number(annotation.arrowWidth ?? 0.9)};marker-end:url(#pageArrowHead-${environmentIndex}-${pageIndex}-${annotationIndex})" x1="${Number(annotation.fromX ?? 30)}%" y1="${Number(annotation.fromY ?? 30)}%" x2="${Number(annotation.toX ?? 20)}%" y2="${Number(annotation.toY ?? 20)}%"></line>
+              <line data-page-annotation-line="${environmentIndex}-${pageIndex}-${annotationIndex}" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}" class="page-annotation-line ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}" style="--arrow-color:${escapeAttribute(annotation.arrowColor || '#111111')};--arrow-width:${Number(annotation.arrowWidth ?? 0.9)};--arrow-width-px:${Number(annotation.arrowWidth ?? 0.9)}px" x1="${Number(annotation.fromX ?? 30)}%" y1="${Number(annotation.fromY ?? 30)}%" x2="${Number(annotation.toX ?? 20)}%" y2="${Number(annotation.toY ?? 20)}%"></line>
             `).join('')}
           </svg>
+          ${page.annotations.map((annotation, annotationIndex) => `
+            <span
+              data-page-annotation-arrow-head="${environmentIndex}-${pageIndex}-${annotationIndex}"
+              data-environment-index="${environmentIndex}"
+              data-page-index="${pageIndex}"
+              data-annotation-index="${annotationIndex}"
+              class="page-annotation-arrow-head"
+              style="left:${Number(annotation.toX ?? 20)}%;top:${Number(annotation.toY ?? 20)}%;--arrow-color:${escapeAttribute(annotation.arrowColor || '#111111')};--arrow-angle:${pageAnnotationAngle(annotation)}deg"
+            ></span>
+          `).join('')}
           ${page.annotations.map((annotation, annotationIndex) => `
             <span
               data-page-annotation-toolbar
@@ -2473,27 +2668,15 @@
 
       function persistAndRender() {
         safePersistDocument();
-        if (window.parent !== window) {
-          window.parent.postMessage({
-            type: 'dcoratto:editor-state',
-            action: 'portfolio_sync',
-            preview: documentData,
-            sentAt: new Date().toISOString(),
-          }, window.location.origin);
-        }
+        rememberDocumentHistory();
+        postPortfolioSync();
         renderDocument();
       }
 
       function persistWithoutRender() {
         safePersistDocument();
-        if (window.parent !== window) {
-          window.parent.postMessage({
-            type: 'dcoratto:editor-state',
-            action: 'portfolio_sync',
-            preview: documentData,
-            sentAt: new Date().toISOString(),
-          }, window.location.origin);
-        }
+        rememberDocumentHistory();
+        postPortfolioSync();
       }
 
       function safePersistDocument() {
