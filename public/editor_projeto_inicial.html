@@ -81,6 +81,20 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .page-fields .field-full{grid-column:1/-1}
 .page-photo-preview{width:100%;max-width:240px;aspect-ratio:16/10;object-fit:cover;border:1px solid var(--border);border-radius:3px;background:#11100e}
 .preview-edit-note{grid-column:1/-1;border:1px dashed rgba(184,151,106,.35);padding:12px;color:#d7c2a7;font-size:11px;letter-spacing:.08em;line-height:1.5}
+.frames-panel{grid-column:1/-1;display:grid;gap:14px;margin-top:16px}
+.frame-card{border:1px solid rgba(184,151,106,.24);background:rgba(0,0,0,.16);border-radius:4px;padding:14px}
+.frame-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.frame-title{font-size:10px;color:var(--gold-l);letter-spacing:.16em;text-transform:uppercase}
+.frame-editor{position:relative;min-height:280px;margin-top:12px;background:#e9e3d8;color:#111;overflow:hidden;border:1px solid rgba(184,151,106,.28)}
+.frame-editor.empty{display:grid;place-items:center;color:#7d7162;font-size:10px;letter-spacing:.16em;text-transform:uppercase}
+.frame-editor img{width:100%;height:100%;min-height:280px;object-fit:cover;display:block}
+.frame-overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.frame-arrow-line{stroke:var(--arrow-color,#111);stroke-width:var(--arrow-width,2);marker-end:url(#arrowHead)}
+.frame-arrow-label{position:absolute;z-index:4;transform:translate(-50%,-50%);cursor:move;color:var(--text-color,#111);font-family:Georgia,serif;font-size:var(--text-size,17px);line-height:1.2;text-shadow:0 1px 0 rgba(255,255,255,.75)}
+.frame-arrow-target{position:absolute;z-index:5;width:14px;height:14px;border:2px solid #111;border-radius:50%;background:#f7f4ee;transform:translate(-50%,-50%);cursor:grab}
+.annotation-list{display:grid;gap:8px;margin-top:12px}
+.annotation-row{display:grid;grid-template-columns:minmax(150px,1fr) 42px 42px 70px 70px auto;gap:8px;align-items:center}
+.annotation-row input{min-width:0}
 .check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .check-item{display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.055);color:#fff3df;font-size:12px;font-weight:400;line-height:1.35;padding:10px;border-radius:4px;transition:background .2s,border .2s}
 .check-item:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12)}
@@ -1214,16 +1228,42 @@ function ensurePageFrames(page) {
       title: page.title || 'Moldura 1',
       photo: page.photo,
       shape: 'rounded',
+      x: 18,
+      y: 8,
+      width: 64,
+      height: 64,
       annotations: [],
     }] : [];
   }
-  page.frames.forEach(frame => {
+  page.frames.forEach((frame, frameIndex) => {
+    const layout = frameDefaultLayout(frameIndex);
     frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
     frame.title ||= 'Moldura';
     frame.photo ||= '';
     frame.shape ||= 'rounded';
+    frame.x = normalizePercent(frame.x, layout.x, 0, 98);
+    frame.y = normalizePercent(frame.y, layout.y, 0, 98);
+    frame.width = normalizePercent(frame.width, layout.width, 8, 100 - frame.x);
+    frame.height = normalizePercent(frame.height, layout.height, 8, 100 - frame.y);
   });
   return page.frames;
+}
+
+function normalizePercent(value, fallback, min = 0, max = 100) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+function frameDefaultLayout(index) {
+  const presets = [
+    { x: 18, y: 8, width: 64, height: 64 },
+    { x: 5, y: 18, width: 43, height: 46 },
+    { x: 52, y: 18, width: 43, height: 46 },
+    { x: 10, y: 58, width: 34, height: 34 },
+    { x: 48, y: 58, width: 42, height: 34 },
+  ];
+  return presets[index % presets.length];
 }
 
 function normalizedPageFrames(page) {
@@ -1232,6 +1272,10 @@ function normalizedPageFrames(page) {
     title: frame.title || `Moldura ${frameIndex + 1}`,
     photo: frame.photo || '',
     shape: frame.shape || 'rounded',
+    x: Number(frame.x),
+    y: Number(frame.y),
+    width: Number(frame.width),
+    height: Number(frame.height),
     annotations: (frame.annotations || []).map(annotation => ({
       id: annotation.id,
       text: annotation.text || '',
@@ -1239,6 +1283,10 @@ function normalizedPageFrames(page) {
       fromY: Number(annotation.fromY ?? 18),
       toX: Number(annotation.toX ?? 58),
       toY: Number(annotation.toY ?? 48),
+      arrowColor: annotation.arrowColor || '#111111',
+      textColor: annotation.textColor || '#111111',
+      fontSize: Number(annotation.fontSize ?? 17),
+      arrowWidth: Number(annotation.arrowWidth ?? 2),
     })).filter(annotation => annotation.text),
   }));
 }
@@ -1268,6 +1316,7 @@ function addPageFrame(ambId, pageId) {
     title: `Moldura ${frames.length + 1}`,
     photo: '',
     shape: 'rounded',
+    ...frameDefaultLayout(frames.length),
     annotations: [],
   });
   renderAmbientes();
@@ -1312,6 +1361,10 @@ function addFrameAnnotation(ambId, pageId, frameId) {
     fromY: 18 + Math.min(frame.annotations.length * 10, 48),
     toX: 58,
     toY: 46,
+    arrowColor: '#111111',
+    textColor: '#111111',
+    fontSize: 17,
+    arrowWidth: 2,
   });
   renderAmbientes();
   syncPreviewDocument('environment_page_annotation_added');
@@ -1331,7 +1384,15 @@ function updateFrameAnnotation(ambId, pageId, frameId, annotationId, field, valu
   const frame = ensurePageFrames(page).find(item => item.id === frameId);
   const annotation = frame?.annotations.find(item => item.id === annotationId);
   if (!annotation) return;
-  annotation[field] = field === 'text' ? value : Math.max(0, Math.min(100, Number(value)));
+  if (field === 'text' || field === 'textColor' || field === 'arrowColor') {
+    annotation[field] = value;
+  } else if (field === 'fontSize') {
+    annotation[field] = Math.max(8, Math.min(42, Number(value)));
+  } else if (field === 'arrowWidth') {
+    annotation[field] = Math.max(1, Math.min(8, Number(value)));
+  } else {
+    annotation[field] = Math.max(0, Math.min(100, Number(value)));
+  }
   syncPreviewDocument('environment_page_annotation_updated');
 }
 
@@ -1381,11 +1442,11 @@ function renderFrameEditor(ambId, pageId, frame) {
           </marker>
         </defs>
         ${annotations.map(annotation => `
-          <line data-ann-line="${escapeAttribute(annotation.id)}" class="frame-arrow-line" x1="${Number(annotation.fromX ?? 18)}%" y1="${Number(annotation.fromY ?? 18)}%" x2="${Number(annotation.toX ?? 58)}%" y2="${Number(annotation.toY ?? 48)}%"></line>
+          <line data-ann-line="${escapeAttribute(annotation.id)}" class="frame-arrow-line" style="--arrow-color:${escapeAttribute(annotation.arrowColor || '#111111')};--arrow-width:${Number(annotation.arrowWidth ?? 2)}" x1="${Number(annotation.fromX ?? 18)}%" y1="${Number(annotation.fromY ?? 18)}%" x2="${Number(annotation.toX ?? 58)}%" y2="${Number(annotation.toY ?? 48)}%"></line>
         `).join('')}
       </svg>
       ${annotations.map(annotation => `
-        <div data-ann-label="${escapeAttribute(annotation.id)}" class="frame-arrow-label" style="left:${Number(annotation.fromX ?? 18)}%;top:${Number(annotation.fromY ?? 18)}%" onpointerdown="startAnnotationDrag(event,'${escapeJS(ambId)}','${escapeJS(pageId)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','label')">${escapeHTML(annotation.text || '')}</div>
+        <div data-ann-label="${escapeAttribute(annotation.id)}" class="frame-arrow-label" style="left:${Number(annotation.fromX ?? 18)}%;top:${Number(annotation.fromY ?? 18)}%;--text-color:${escapeAttribute(annotation.textColor || '#111111')};--text-size:${Number(annotation.fontSize ?? 17)}px" onpointerdown="startAnnotationDrag(event,'${escapeJS(ambId)}','${escapeJS(pageId)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','label')">${escapeHTML(annotation.text || '')}</div>
         <div data-ann-target="${escapeAttribute(annotation.id)}" class="frame-arrow-target" style="left:${Number(annotation.toX ?? 58)}%;top:${Number(annotation.toY ?? 48)}%" onpointerdown="startAnnotationDrag(event,'${escapeJS(ambId)}','${escapeJS(pageId)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','target')"></div>
       `).join('')}
     </div>
@@ -1418,14 +1479,32 @@ function renderPageFrames(ambId, page) {
               <label>Foto da moldura</label>
               <input type="file" accept="image/*" onchange="handleFramePhotoUpload('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}',this)">
             </div>
+            <div class="field-group">
+              <label>Posição X (%)</label>
+              <input type="number" min="0" max="98" value="${Number(frame.x ?? 0)}" oninput="updatePageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','x',Number(this.value))">
+            </div>
+            <div class="field-group">
+              <label>Posição Y (%)</label>
+              <input type="number" min="0" max="98" value="${Number(frame.y ?? 0)}" oninput="updatePageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','y',Number(this.value))">
+            </div>
+            <div class="field-group">
+              <label>Largura (%)</label>
+              <input type="number" min="8" max="100" value="${Number(frame.width ?? 64)}" oninput="updatePageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','width',Number(this.value))">
+            </div>
+            <div class="field-group">
+              <label>Altura (%)</label>
+              <input type="number" min="8" max="100" value="${Number(frame.height ?? 64)}" oninput="updatePageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','height',Number(this.value))">
+            </div>
           </div>
           ${renderFrameEditor(ambId, page.id, frame)}
           <div class="annotation-list">
             ${(frame.annotations || []).map(annotation => `
               <div class="annotation-row">
                 <input type="text" value="${escapeAttribute(annotation.text || '')}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','text',this.value)" placeholder="Texto da seta">
-                <input type="number" min="0" max="100" value="${Number(annotation.fromX ?? 18)}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','fromX',this.value)" title="Texto X">
-                <input type="number" min="0" max="100" value="${Number(annotation.toX ?? 58)}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','toX',this.value)" title="Alvo X">
+                <input type="color" value="${escapeAttribute(annotation.textColor || '#111111')}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','textColor',this.value)" title="Cor do texto">
+                <input type="color" value="${escapeAttribute(annotation.arrowColor || '#111111')}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','arrowColor',this.value)" title="Cor da seta">
+                <input type="number" min="8" max="42" value="${Number(annotation.fontSize ?? 17)}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','fontSize',this.value)" title="Tamanho texto">
+                <input type="number" min="1" max="8" value="${Number(annotation.arrowWidth ?? 2)}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','arrowWidth',this.value)" title="Espessura seta">
                 <button class="amb-remove" type="button" onclick="removeFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}')">Remover</button>
               </div>
             `).join('')}
@@ -1533,6 +1612,10 @@ function mergePreviewDocument(preview) {
           title: frame.title || 'Moldura',
           photo: frame.photo || '',
           shape: frame.shape || 'rounded',
+          x: frame.x,
+          y: frame.y,
+          width: frame.width,
+          height: frame.height,
           annotations: Array.isArray(frame.annotations) ? frame.annotations : [],
         })) : [],
       }))

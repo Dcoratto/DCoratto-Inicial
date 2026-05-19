@@ -218,15 +218,15 @@
       }
 
       .page-frames {
-        display: grid;
-        grid-template-columns: repeat(12, minmax(0, 1fr));
-        gap: 28px;
-        align-items: start;
+        position: relative;
+        min-height: 720px;
+        display: block;
       }
 
       .doc-photo-frame {
         position: relative;
-        grid-column: span 6;
+        width: 46%;
+        height: 330px;
         min-height: 330px;
         background: #e9e3d8;
         overflow: hidden;
@@ -237,12 +237,22 @@
         box-shadow: 0 24px 60px rgba(30, 20, 10, .12);
       }
 
-      .doc-photo-frame:first-child:nth-last-child(1) {
-        grid-column: 3 / span 8;
-        min-height: 520px;
+      .doc-photo-frame.is-positioned {
+        position: absolute;
+        min-height: 0;
+        touch-action: none;
       }
 
-      .doc-photo-frame:nth-child(3n) { grid-column: span 4; }
+      .environment-page.editable .doc-photo-frame {
+        outline: 1px dashed rgba(17, 17, 17, .22);
+        outline-offset: 4px;
+        cursor: move;
+      }
+
+      .environment-page.editable .doc-photo-frame:hover,
+      .environment-page.editable .doc-photo-frame.is-selected {
+        outline-color: #8f7044;
+      }
 
       .doc-photo-frame.shape-circle {
         aspect-ratio: 1 / 1;
@@ -270,6 +280,29 @@
         min-height: inherit;
         object-fit: cover;
         display: block;
+      }
+
+      .photo-card img {
+        -webkit-user-drag: element;
+      }
+
+      .drop-hint {
+        position: absolute;
+        inset: 14px;
+        z-index: 6;
+        display: none;
+        place-items: center;
+        border: 1px dashed rgba(17,17,17,.35);
+        color: #111;
+        background: rgba(247,244,238,.74);
+        font-size: 10px;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+        pointer-events: none;
+      }
+
+      .environment-page.editable .doc-photo-frame.drag-over .drop-hint {
+        display: grid;
       }
 
       .doc-frame-empty {
@@ -301,8 +334,8 @@
       }
 
       .doc-annotation-line {
-        stroke: #111;
-        stroke-width: 2;
+        stroke: var(--arrow-color, #111);
+        stroke-width: var(--arrow-width, 2);
         marker-end: url(#docArrowHead);
       }
 
@@ -311,8 +344,9 @@
         z-index: 4;
         max-width: 210px;
         color: #111;
+        color: var(--text-color, #111);
         font-family: Georgia, serif;
-        font-size: 17px;
+        font-size: var(--text-size, 17px);
         line-height: 1.25;
         text-shadow: 0 1px 0 rgba(255,255,255,.75);
       }
@@ -359,6 +393,23 @@
         cursor: pointer;
       }
 
+      .frame-resize-handle {
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        z-index: 12;
+        width: 18px;
+        height: 18px;
+        border: 1px solid rgba(17,17,17,.42);
+        background: rgba(247,244,238,.92);
+        cursor: nwse-resize;
+        display: none;
+      }
+
+      .environment-page.editable .frame-resize-handle {
+        display: block;
+      }
+
       .preview-frame-tools input[type="file"] { display: none; }
 
       .annotation-edit-row {
@@ -378,6 +429,13 @@
         color: #111;
         padding: 8px;
         font-size: 12px;
+      }
+
+      .annotation-edit-row input[type="color"],
+      .annotation-edit-row input[type="number"] {
+        flex: 0 0 44px;
+        min-width: 0;
+        padding: 4px;
       }
 
       .section-heading {
@@ -879,6 +937,13 @@
           });
         });
 
+        document.querySelectorAll('[data-photo-src]').forEach((node) => {
+          node.addEventListener('dragstart', (event) => {
+            event.dataTransfer?.setData('text/dcoratto-photo', node.dataset.photoSrc || '');
+            event.dataTransfer?.setData('text/plain', node.dataset.photoSrc || '');
+          });
+        });
+
         document.querySelectorAll('[data-frame-photo-input]').forEach((input) => {
           input.addEventListener('change', async () => {
             const { environmentIndex, pageIndex, frameIndex } = input.dataset;
@@ -910,6 +975,7 @@
               title: `Moldura ${page.frames.length + 1}`,
               photo: '',
               shape: 'rounded',
+              ...frameDefaultLayout(page.frames.length),
               annotations: [],
             });
             persistAndRender();
@@ -928,6 +994,10 @@
               fromY: 18 + Math.min(frame.annotations.length * 10, 46),
               toX: 58,
               toY: 48,
+              arrowColor: '#111111',
+              textColor: '#111111',
+              fontSize: 17,
+              arrowWidth: 2,
             });
             persistAndRender();
           });
@@ -944,6 +1014,16 @@
           });
         });
 
+        document.querySelectorAll('[data-annotation-style]').forEach((input) => {
+          input.addEventListener('input', () => {
+            const annotation = frameAnnotation(Number(input.dataset.environmentIndex), Number(input.dataset.pageIndex), Number(input.dataset.frameIndex), Number(input.dataset.annotationIndex));
+            if (!annotation) return;
+            const field = input.dataset.annotationStyle;
+            annotation[field] = input.type === 'number' ? Number(input.value) : input.value;
+            persistAndRender();
+          });
+        });
+
         document.querySelectorAll('[data-remove-annotation]').forEach((button) => {
           button.addEventListener('click', () => {
             const frame = pageFrame(Number(button.dataset.environmentIndex), Number(button.dataset.pageIndex), Number(button.dataset.frameIndex));
@@ -955,6 +1035,17 @@
 
         document.querySelectorAll('[data-drag-annotation]').forEach((node) => {
           node.addEventListener('pointerdown', startPreviewAnnotationDrag);
+        });
+
+        document.querySelectorAll('[data-draggable-frame]').forEach((node) => {
+          node.addEventListener('pointerdown', startPreviewFrameDrag);
+          node.addEventListener('dragover', handleFrameDragOver);
+          node.addEventListener('dragleave', handleFrameDragLeave);
+          node.addEventListener('drop', handleFrameDrop);
+        });
+
+        document.querySelectorAll('[data-resize-frame]').forEach((node) => {
+          node.addEventListener('pointerdown', startPreviewFrameResize);
         });
       }
 
@@ -974,6 +1065,128 @@
         if (!frame) return null;
         frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
         return frame.annotations[annotationIndex] || null;
+      }
+
+      function frameDefaultLayout(index) {
+        const presets = [
+          { x: 18, y: 8, width: 64, height: 64 },
+          { x: 5, y: 18, width: 43, height: 46 },
+          { x: 52, y: 18, width: 43, height: 46 },
+          { x: 10, y: 58, width: 34, height: 34 },
+          { x: 48, y: 58, width: 42, height: 34 },
+        ];
+        return presets[index % presets.length];
+      }
+
+      function applyFrameLayout(frame, index) {
+        const fallback = frameDefaultLayout(index);
+        frame.x = Number.isFinite(Number(frame.x)) ? Number(frame.x) : fallback.x;
+        frame.y = Number.isFinite(Number(frame.y)) ? Number(frame.y) : fallback.y;
+        frame.width = Number.isFinite(Number(frame.width)) ? Number(frame.width) : fallback.width;
+        frame.height = Number.isFinite(Number(frame.height)) ? Number(frame.height) : fallback.height;
+        frame.x = Math.max(0, Math.min(98, frame.x));
+        frame.y = Math.max(0, Math.min(98, frame.y));
+        frame.width = Math.max(8, Math.min(100 - frame.x, frame.width));
+        frame.height = Math.max(8, Math.min(100 - frame.y, frame.height));
+        return frame;
+      }
+
+      function startPreviewFrameDrag(event) {
+        if (!isEditablePreview) return;
+        if (event.target.closest('.preview-frame-tools, .annotation-edit-row, [data-drag-annotation], [data-resize-frame]')) return;
+        event.preventDefault();
+        const node = event.currentTarget;
+        const frame = pageFrame(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.frameIndex));
+        const canvas = node.closest('.page-frames');
+        if (!frame || !canvas) return;
+        node.classList.add('is-selected');
+        const canvasRect = canvas.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const initial = { x: Number(frame.x || 0), y: Number(frame.y || 0) };
+
+        const move = (pointerEvent) => {
+          const dx = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
+          const dy = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
+          frame.x = Math.max(0, Math.min(100 - Number(frame.width || 20), initial.x + dx));
+          frame.y = Math.max(0, Math.min(100 - Number(frame.height || 20), initial.y + dy));
+          node.style.left = `${frame.x}%`;
+          node.style.top = `${frame.y}%`;
+        };
+
+        const up = () => {
+          node.classList.remove('is-selected');
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          persistWithoutRender();
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      }
+
+      function startPreviewFrameResize(event) {
+        if (!isEditablePreview) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const node = event.currentTarget.closest('.doc-photo-frame');
+        const frame = pageFrame(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.frameIndex));
+        const canvas = node?.closest('.page-frames');
+        if (!frame || !canvas || !node) return;
+        const canvasRect = canvas.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const initial = { width: Number(frame.width || 20), height: Number(frame.height || 20) };
+
+        const move = (pointerEvent) => {
+          const dw = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
+          const dh = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
+          frame.width = Math.max(8, Math.min(100 - Number(frame.x || 0), initial.width + dw));
+          frame.height = Math.max(8, Math.min(100 - Number(frame.y || 0), initial.height + dh));
+          node.style.width = `${frame.width}%`;
+          node.style.height = `${frame.height}%`;
+        };
+
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          persistWithoutRender();
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      }
+
+      function handleFrameDragOver(event) {
+        if (!isEditablePreview) return;
+        event.preventDefault();
+        event.currentTarget.classList.add('drag-over');
+      }
+
+      function handleFrameDragLeave(event) {
+        event.currentTarget.classList.remove('drag-over');
+      }
+
+      function handleFrameDrop(event) {
+        if (!isEditablePreview) return;
+        event.preventDefault();
+        const node = event.currentTarget;
+        node.classList.remove('drag-over');
+        const frame = pageFrame(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.frameIndex));
+        if (!frame) return;
+        const photoSrc = event.dataTransfer?.getData('text/dcoratto-photo') || event.dataTransfer?.getData('text/plain');
+        const file = event.dataTransfer?.files?.[0];
+        if (file && file.type.startsWith('image/')) {
+          readPhoto(file, 0).then(photo => {
+            frame.photo = photo.src;
+            persistAndRender();
+          });
+          return;
+        }
+        if (photoSrc && photoSrc.startsWith('data:image')) {
+          frame.photo = photoSrc;
+          persistAndRender();
+        }
       }
 
       function startPreviewAnnotationDrag(event) {
@@ -1048,8 +1261,8 @@
             <div class="portfolio-layout">
               <div class="photo-mural layout-${escapeAttribute(layout)}">
                 ${photos.map((photo, photoIndex) => `
-                  <button class="photo-card ${tileClass(photoIndex, photos.length, layout)}" type="button" data-lightbox-src="${escapeAttribute(photo.src)}" data-lightbox-title="${escapeAttribute(photo.title)}">
-                    <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.title)}" />
+                  <button class="photo-card ${tileClass(photoIndex, photos.length, layout)}" type="button" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" data-lightbox-src="${escapeAttribute(photo.src)}" data-lightbox-title="${escapeAttribute(photo.title)}">
+                    <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.title)}" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" />
                     <span class="photo-index">${String(photoIndex + 1).padStart(2, '0')}</span>
                     <span class="photo-label">${escapeHTML(photo.title || `Vista ${photoIndex + 1}`)}</span>
                   </button>
@@ -1086,7 +1299,7 @@
         const pageNumber = page.number || `${String(environmentIndex + 1).padStart(2, '0')}.${String(pageIndex + 1).padStart(2, '0')}`;
         const frames = normalizeFrames(page);
         return `
-          <section class="environment-page" id="${slug(environment.title)}-${slug(page.title || `pagina-${pageIndex + 1}`)}">
+          <section class="environment-page ${isEditablePreview ? 'editable' : ''}" id="${slug(environment.title)}-${slug(page.title || `pagina-${pageIndex + 1}`)}">
             <div class="page-fixed-title">
               <strong>${escapeHTML(documentData.projectType || 'Projeto Inicial')}</strong>
               <span>${escapeHTML(environment.title)}</span>
@@ -1106,36 +1319,50 @@
       }
       function normalizeFrames(page) {
         if (Array.isArray(page.frames) && page.frames.length) {
-          return page.frames.map((frame, index) => ({
-            title: frame.title || `Moldura ${index + 1}`,
-            photo: frame.photo || frame.photos?.[0]?.src || '',
-            shape: frame.shape || 'rounded',
-            annotations: Array.isArray(frame.annotations) ? frame.annotations : [],
-          }));
+          page.frames.forEach((frame, index) => {
+            frame.id ||= `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
+            frame.title ||= `Moldura ${index + 1}`;
+            frame.photo ||= frame.photos?.[0]?.src || '';
+            frame.shape ||= 'rounded';
+            frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
+            applyFrameLayout(frame, index);
+          });
+          return page.frames;
         }
         return normalizePhotos(page.photos).map((photo, index) => ({
+          id: `frame-${Date.now()}-${index}`,
           title: photo.title || `Moldura ${index + 1}`,
           photo: photo.src,
           shape: 'rounded',
+          ...frameDefaultLayout(index),
           annotations: [],
         }));
       }
 
       function renderDocumentFrame(frame, page, frameIndex, environmentIndex, pageIndex) {
+        applyFrameLayout(frame, frameIndex);
         const hasPhoto = Boolean(frame.photo);
         const shape = ['circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded';
+        const frameStyle = `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${Number(frame.height)}%`;
         return `
-          <div class="doc-photo-frame shape-${escapeAttribute(shape)}">
+          <div
+            class="doc-photo-frame is-positioned shape-${escapeAttribute(shape)}"
+            style="${frameStyle}"
+            ${isEditablePreview ? `data-draggable-frame data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}"` : ''}
+          >
             ${isEditablePreview ? renderFramePreviewTools(frame, environmentIndex, pageIndex, frameIndex) : ''}
-            ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
+            ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" draggable="true" data-photo-src="${escapeAttribute(frame.photo)}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
+            ${isEditablePreview ? '<span class="drop-hint">Solte a foto aqui</span><span class="frame-resize-handle" data-resize-frame></span>' : ''}
             <svg class="doc-annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
               <defs>
-                <marker id="docArrowHead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" fill="#111"></path>
-                </marker>
+                ${(frame.annotations || []).map((annotation, annotationIndex) => `
+                  <marker id="docArrowHead-${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                    <path d="M0,0 L8,4 L0,8 Z" fill="${escapeAttribute(annotation.arrowColor || '#111111')}"></path>
+                  </marker>
+                `).join('')}
               </defs>
               ${(frame.annotations || []).map((annotation, annotationIndex) => `
-                <line data-annotation-line="${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}" class="doc-annotation-line" x1="${Number(annotation.fromX ?? 18)}%" y1="${Number(annotation.fromY ?? 18)}%" x2="${Number(annotation.toX ?? 58)}%" y2="${Number(annotation.toY ?? 48)}%"></line>
+                <line data-annotation-line="${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}" class="doc-annotation-line" style="--arrow-color:${escapeAttribute(annotation.arrowColor || '#111')};--arrow-width:${Number(annotation.arrowWidth ?? 2)};marker-end:url(#docArrowHead-${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex})" x1="${Number(annotation.fromX ?? 18)}%" y1="${Number(annotation.fromY ?? 18)}%" x2="${Number(annotation.toX ?? 58)}%" y2="${Number(annotation.toY ?? 48)}%"></line>
               `).join('')}
             </svg>
             ${(frame.annotations || []).map((annotation, annotationIndex) => `
@@ -1143,7 +1370,7 @@
                 data-annotation-label="${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}"
                 ${isEditablePreview ? `data-drag-annotation="label" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}"` : ''}
                 class="doc-annotation-text"
-                style="left:${Number(annotation.fromX ?? 18)}%;top:${Number(annotation.fromY ?? 18)}%"
+                style="left:${Number(annotation.fromX ?? 18)}%;top:${Number(annotation.fromY ?? 18)}%;--text-color:${escapeAttribute(annotation.textColor || '#111')};--text-size:${Number(annotation.fontSize ?? 17)}px"
               >${escapeHTML(annotation.text || '')}</span>
               ${isEditablePreview ? `<span
                 data-annotation-target="${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}"
@@ -1179,6 +1406,10 @@
           ${(frame.annotations || []).map((annotation, annotationIndex) => `
             <div class="annotation-edit-row" style="bottom:${12 + annotationIndex * 38}px">
               <input value="${escapeAttribute(annotation.text || '')}" placeholder="Texto da seta" data-annotation-text data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}">
+              <input type="color" value="${escapeAttribute(annotation.textColor || '#111111')}" title="Cor do texto" data-annotation-style="textColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}">
+              <input type="color" value="${escapeAttribute(annotation.arrowColor || '#111111')}" title="Cor da seta" data-annotation-style="arrowColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}">
+              <input type="number" min="8" max="42" value="${Number(annotation.fontSize ?? 17)}" title="Tamanho do texto" data-annotation-style="fontSize" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}">
+              <input type="number" min="1" max="8" value="${Number(annotation.arrowWidth ?? 2)}" title="Espessura da seta" data-annotation-style="arrowWidth" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}">
               <button type="button" data-remove-annotation data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}" data-annotation-index="${annotationIndex}">Remover</button>
             </div>
           `).join('')}
