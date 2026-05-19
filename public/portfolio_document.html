@@ -200,8 +200,8 @@
         font-weight: 500;
         letter-spacing: .18em;
         opacity: 0;
-        text-transform: uppercase;8s ease 8.2
-        animation: introGestureIn .9s ease 6.1s forwards;
+        text-transform: uppercase;
+        animation: introGestureIn 1s ease 8.6s forwards;
       }
 
       .client-intro-gesture-icon {
@@ -1914,18 +1914,7 @@
 
         document.querySelectorAll('[data-add-frame]').forEach((button) => {
           button.addEventListener('click', () => {
-            const page = environmentPage(Number(button.dataset.environmentIndex), Number(button.dataset.pageIndex));
-            if (!page) return;
-            page.frames = Array.isArray(page.frames) ? page.frames : [];
-            page.frames.push({
-              id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
-              title: `Moldura ${page.frames.length + 1}`,
-              photo: '',
-              shape: 'rounded',
-              ...frameDefaultLayout(page.frames.length),
-              annotations: [],
-            });
-            persistAndRender();
+            openFrameFormatMenu(button);
           });
         });
 
@@ -1994,7 +1983,22 @@
         document.querySelectorAll('[data-page-annotation-text]').forEach((node) => {
           node.addEventListener('pointerdown', (event) => {
             event.stopPropagation();
+            
+            // Se Ctrl+Click, cicla entre elementos sobrados
+            if (event.ctrlKey && isEditablePreview) {
+              event.preventDefault();
+              cycleOverlappingAnnotations(event.clientX, event.clientY, Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex));
+              return;
+            }
+            
             selectSinglePageAnnotation(pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex));
+          });
+          node.addEventListener('contextmenu', (event) => {
+            if (!isEditablePreview) return;
+            event.preventDefault();
+            event.stopPropagation();
+            selectSinglePageAnnotation(pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex));
+            openAnnotationContextMenu(event.clientX, event.clientY);
           });
           node.addEventListener('input', () => {
             const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
@@ -2035,7 +2039,17 @@
         });
 
         document.querySelectorAll('[data-page-annotation-line]').forEach((node) => {
-          node.addEventListener('pointerdown', startPageAnnotationMove);
+          node.addEventListener('pointerdown', (event) => {
+            event.stopPropagation();
+            selectSinglePageAnnotation(pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex));
+          });
+          node.addEventListener('contextmenu', (event) => {
+            if (!isEditablePreview) return;
+            event.preventDefault();
+            event.stopPropagation();
+            selectSinglePageAnnotation(pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex));
+            openAnnotationContextMenu(event.clientX, event.clientY);
+          });
         });
 
         document.querySelectorAll('[data-draggable-frame]').forEach((node) => {
@@ -2425,10 +2439,6 @@
         pasteCopiedElements();
       }
 
-      function closeFrameContextMenu() {
-        document.getElementById('frameContextMenu')?.classList.remove('active');
-      }
-
       function openFrameContextMenu(anchor) {
         let menu = document.getElementById('frameContextMenu');
         if (!menu) {
@@ -2437,18 +2447,35 @@
           menu.className = 'frame-context-menu';
           document.body.appendChild(menu);
         }
-        menu.innerHTML = `
+        
+        const isPageAnnotation = selectedPageAnnotationKeys.size > 0;
+        
+        let menuHTML = `
           <button type="button" data-menu-action="copy"><span>⧉</span><span>Copiar</span><kbd>Ctrl+C</kbd></button>
           <button type="button" data-menu-action="paste"><span>▣</span><span>Colar</span><kbd>Ctrl+V</kbd></button>
           <button type="button" data-menu-action="duplicate"><span>⊞</span><span>Duplicar</span><kbd>Ctrl+D</kbd></button>
+        `;
+        
+        if (isPageAnnotation) {
+          menuHTML += `
+            <button type="button" data-menu-action="bring-forward"><span>↑</span><span>Trazer para frente</span></button>
+            <button type="button" data-menu-action="send-backward"><span>↓</span><span>Enviar para trás</span></button>
+          `;
+        }
+        
+        menuHTML += `
           <button type="button" data-menu-action="delete"><span>⌫</span><span>Excluir</span><kbd>Del</kbd></button>
         `;
+        
+        menu.innerHTML = menuHTML;
         menu.querySelectorAll('button').forEach(button => {
           button.addEventListener('click', () => {
             const action = button.dataset.menuAction;
             if (action === 'copy') copySelectedElements();
             if (action === 'paste') pasteCopiedElements();
             if (action === 'duplicate') duplicateSelectedElements();
+            if (action === 'bring-forward') bringPageAnnotationForward();
+            if (action === 'send-backward') sendPageAnnotationBackward();
             if (action === 'delete') deleteSelectedElements();
             closeFrameContextMenu();
           });
@@ -2457,6 +2484,222 @@
         menu.style.left = `${Math.min(window.innerWidth - 280, rect.right + 10)}px`;
         menu.style.top = `${Math.min(window.innerHeight - 230, rect.top - 4)}px`;
         menu.classList.add('active');
+      }
+
+      function closeFrameContextMenu() {
+        document.getElementById('frameContextMenu')?.classList.remove('active');
+      }
+
+      function openFrameFormatMenu(button) {
+        let menu = document.getElementById('frameFormatMenu');
+        if (!menu) {
+          menu = document.createElement('div');
+          menu.id = 'frameFormatMenu';
+          menu.className = 'frame-format-menu';
+          menu.style.cssText = `
+            position: fixed;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 8px 0;
+            min-width: 180px;
+            z-index: 10000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          `;
+          document.body.appendChild(menu);
+        }
+
+        const options = frameFormatOptions();
+        menu.innerHTML = options.map((opt, idx) => `
+          <button type="button" data-format-index="${idx}" style="
+            display: block;
+            width: 100%;
+            padding: 10px 15px;
+            text-align: left;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-family: inherit;
+          " onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='none'">
+            ${opt.name}
+          </button>
+        `).join('');
+
+        menu.querySelectorAll('button').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const formatIndex = Number(btn.dataset.formatIndex);
+            addFrameWithFormat(
+              Number(button.dataset.environmentIndex),
+              Number(button.dataset.pageIndex),
+              formatIndex
+            );
+            menu.style.display = 'none';
+          });
+        });
+
+        const rect = button.getBoundingClientRect();
+        menu.style.left = `${rect.left}px`;
+        menu.style.top = `${rect.bottom + 5}px`;
+        menu.style.display = 'block';
+
+        // Fechar ao clicar fora
+        setTimeout(() => {
+          document.addEventListener('pointerdown', function closeMenuOnClickOut(e) {
+            if (!menu.contains(e.target) && e.target !== button) {
+              menu.style.display = 'none';
+              document.removeEventListener('pointerdown', closeMenuOnClickOut);
+            }
+          });
+        }, 100);
+      }
+
+      function addFrameWithFormat(environmentIndex, pageIndex, formatIndex) {
+        const page = environmentPage(environmentIndex, pageIndex);
+        if (!page) return;
+        page.frames = Array.isArray(page.frames) ? page.frames : [];
+        
+        const format = frameFormatOptions()[formatIndex];
+        const position = getRandomPosition();
+        
+        page.frames.push({
+          id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+          title: `Moldura ${page.frames.length + 1}`,
+          photo: '',
+          shape: 'rounded',
+          x: position.x,
+          y: position.y,
+          width: format.width,
+          height: format.height,
+          imgScale: 1,
+          imgX: 0,
+          imgY: 0,
+          editImage: false,
+          annotations: [],
+        });
+        persistAndRender();
+      }
+
+      function openAnnotationContextMenu(clientX, clientY) {
+        let menu = document.getElementById('frameContextMenu');
+        if (!menu) {
+          menu = document.createElement('div');
+          menu.id = 'frameContextMenu';
+          menu.className = 'frame-context-menu';
+          document.body.appendChild(menu);
+        }
+        
+        const isPageAnnotation = selectedPageAnnotationKeys.size > 0;
+        
+        let menuHTML = `
+          <button type="button" data-menu-action="copy"><span>⧉</span><span>Copiar</span><kbd>Ctrl+C</kbd></button>
+          <button type="button" data-menu-action="paste"><span>▣</span><span>Colar</span><kbd>Ctrl+V</kbd></button>
+          <button type="button" data-menu-action="duplicate"><span>⊞</span><span>Duplicar</span><kbd>Ctrl+D</kbd></button>
+        `;
+        
+        if (isPageAnnotation) {
+          menuHTML += `
+            <button type="button" data-menu-action="bring-forward"><span>↑</span><span>Trazer para frente</span></button>
+            <button type="button" data-menu-action="send-backward"><span>↓</span><span>Enviar para trás</span></button>
+          `;
+        }
+        
+        menuHTML += `
+          <button type="button" data-menu-action="delete"><span>⌫</span><span>Excluir</span><kbd>Del</kbd></button>
+        `;
+        
+        menu.innerHTML = menuHTML;
+        menu.querySelectorAll('button').forEach(button => {
+          button.addEventListener('click', () => {
+            const action = button.dataset.menuAction;
+            if (action === 'copy') copySelectedElements();
+            if (action === 'paste') pasteCopiedElements();
+            if (action === 'duplicate') duplicateSelectedElements();
+            if (action === 'bring-forward') bringPageAnnotationForward();
+            if (action === 'send-backward') sendPageAnnotationBackward();
+            if (action === 'delete') deleteSelectedElements();
+            closeFrameContextMenu();
+          });
+        });
+        
+        menu.style.left = `${Math.min(window.innerWidth - 280, clientX)}px`;
+        menu.style.top = `${Math.min(window.innerHeight - 230, clientY)}px`;
+        menu.classList.add('active');
+      }
+
+      function bringPageAnnotationForward() {
+        selectedPageAnnotationRefs().forEach((ref) => {
+          const allAnnotations = ref.page.annotations || [];
+          const currentIndex = allAnnotations.indexOf(ref.annotation);
+          if (currentIndex < allAnnotations.length - 1) {
+            [allAnnotations[currentIndex], allAnnotations[currentIndex + 1]] = [allAnnotations[currentIndex + 1], allAnnotations[currentIndex]];
+          }
+        });
+        persistAndRender();
+      }
+
+      function sendPageAnnotationBackward() {
+        selectedPageAnnotationRefs().forEach((ref) => {
+          const allAnnotations = ref.page.annotations || [];
+          const currentIndex = allAnnotations.indexOf(ref.annotation);
+          if (currentIndex > 0) {
+            [allAnnotations[currentIndex], allAnnotations[currentIndex - 1]] = [allAnnotations[currentIndex - 1], allAnnotations[currentIndex]];
+          }
+        });
+        persistAndRender();
+      }
+
+      function cycleOverlappingAnnotations(clientX, clientY, environmentIndex, pageIndex) {
+        const page = environmentPage(environmentIndex, pageIndex);
+        if (!page || !Array.isArray(page.annotations)) return;
+        
+        // Encontra quais anotações estão perto do clique
+        const tolerance = 50; // pixels
+        const nearby = page.annotations
+          .map((annotation, index) => ({
+            annotation,
+            index,
+            key: pageAnnotationKey(environmentIndex, pageIndex, index)
+          }))
+          .filter(({ annotation }) => {
+            const allTexts = document.querySelectorAll(`[data-page-annotation-text^="${environmentIndex}-${pageIndex}"]`);
+            let found = false;
+            for (let i = 0; i < allTexts.length; i++) {
+              if (allTexts[i].textContent.trim() === (annotation.text || 'Texto da seta').trim()) {
+                const rect = allTexts[i].getBoundingClientRect();
+                const dist = Math.hypot(rect.left + rect.width / 2 - clientX, rect.top + rect.height / 2 - clientY);
+                if (dist < tolerance) {
+                  found = true;
+                }
+                break;
+              }
+            }
+            return found;
+          });
+        
+        if (nearby.length === 0) return;
+        
+        // Encontra a próxima anotação na sequência
+        const currentIndex = nearby.findIndex(item => selectedPageAnnotationKeys.has(item.key));
+        const nextIndex = (currentIndex + 1) % nearby.length;
+        selectSinglePageAnnotation(nearby[nextIndex].key);
+      }
+
+      function frameFormatOptions() {
+        return [
+          { name: 'Quadrada Pequena', width: 25, height: 25 },
+          { name: 'Retangular Pequena', width: 35, height: 25 },
+          { name: 'Quadrada Média', width: 35, height: 35 },
+          { name: 'Retangular Média', width: 45, height: 30 },
+          { name: 'Grande', width: 45, height: 45 },
+        ];
+      }
+
+      function getRandomPosition() {
+        return {
+          x: Math.max(5, Math.min(85, Math.random() * 70 + 15)),
+          y: Math.max(5, Math.min(85, Math.random() * 70 + 15)),
+        };
       }
 
       function frameDefaultLayout(index) {
@@ -2975,34 +3218,42 @@
       function renderPageAnnotations(page, environmentIndex, pageIndex) {
         page.annotations = Array.isArray(page.annotations) ? page.annotations : [];
         return `
-          ${page.annotations.map((annotation, annotationIndex) => `
+          ${page.annotations.map((annotation, annotationIndex) => {
+            const zIndex = 30 + annotationIndex;
+            return `
             <span
               data-page-annotation-line="${environmentIndex}-${pageIndex}-${annotationIndex}"
               data-environment-index="${environmentIndex}"
               data-page-index="${pageIndex}"
               data-annotation-index="${annotationIndex}"
               class="page-annotation-line ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}"
-              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;--arrow-color:${escapeAttribute(pageAnnotationArrowColor(annotation))};--arrow-width:${Number(annotation.arrowWidth ?? 0.9)};--arrow-width-px:${Number(annotation.arrowWidth ?? 0.9)}px;--arrow-angle:${pageAnnotationAngle(annotation)}deg"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;z-index:${zIndex};--arrow-color:${escapeAttribute(pageAnnotationArrowColor(annotation))};--arrow-width:${Number(annotation.arrowWidth ?? 0.9)};--arrow-width-px:${Number(annotation.arrowWidth ?? 0.9)}px;--arrow-angle:${pageAnnotationAngle(annotation)}deg"
             ></span>
-          `).join('')}
-          ${page.annotations.map((annotation, annotationIndex) => `
+          `;
+          }).join('')}
+          ${page.annotations.map((annotation, annotationIndex) => {
+            const zIndex = 30 + annotationIndex;
+            return `
             <span
               data-page-annotation-arrow-head="${environmentIndex}-${pageIndex}-${annotationIndex}"
               data-environment-index="${environmentIndex}"
               data-page-index="${pageIndex}"
               data-annotation-index="${annotationIndex}"
               class="page-annotation-arrow-head"
-              style="left:${Number(annotation.toX ?? 20)}%;top:${Number(annotation.toY ?? 20)}%;--arrow-color:${escapeAttribute(pageAnnotationArrowColor(annotation))};--arrow-angle:${pageAnnotationAngle(annotation)}deg"
+              style="left:${Number(annotation.toX ?? 20)}%;top:${Number(annotation.toY ?? 20)}%;z-index:${zIndex};--arrow-color:${escapeAttribute(pageAnnotationArrowColor(annotation))};--arrow-angle:${pageAnnotationAngle(annotation)}deg"
             ></span>
-          `).join('')}
-          ${page.annotations.map((annotation, annotationIndex) => `
+          `;
+          }).join('')}
+          ${page.annotations.map((annotation, annotationIndex) => {
+            const zIndex = 30 + annotationIndex;
+            return `
             <span
               data-page-annotation-toolbar
               data-environment-index="${environmentIndex}"
               data-page-index="${pageIndex}"
               data-annotation-index="${annotationIndex}"
               class="page-annotation-toolbar"
-              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;z-index:${zIndex + 15}"
             >
               <input type="color" title="Cor do texto" value="${escapeAttribute(pageAnnotationTextColor(annotation))}" data-page-annotation-style="textColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
               <input type="color" title="Cor da seta" value="${escapeAttribute(pageAnnotationArrowColor(annotation))}" data-page-annotation-style="arrowColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
@@ -3018,7 +3269,7 @@
               data-page-index="${pageIndex}"
               data-annotation-index="${annotationIndex}"
               class="page-arrow-point ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}"
-              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;z-index:${zIndex + 20}"
             ></span>` : ''}
             <span
               data-page-annotation-text="${environmentIndex}-${pageIndex}-${annotationIndex}"
@@ -3027,7 +3278,7 @@
               data-annotation-index="${annotationIndex}"
               class="page-annotation-text"
               contenteditable="${isEditablePreview ? 'true' : 'false'}"
-              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;${pageAnnotationTextPlacementStyle(annotation)};--text-color:${escapeAttribute(pageAnnotationTextColor(annotation))};--text-size:${Number(annotation.fontSize ?? 15)}px;--text-shadow:${annotation.textShadow === 'none' ? 'none' : '0 1px 4px rgba(0,0,0,.65)'};--text-stroke:${annotation.textBorder ? `.35px ${escapeAttribute(pageAnnotationArrowColor(annotation))}` : '0 transparent'}"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;z-index:${zIndex + 20};${pageAnnotationTextPlacementStyle(annotation)};--text-color:${escapeAttribute(pageAnnotationTextColor(annotation))};--text-size:${Number(annotation.fontSize ?? 15)}px;--text-shadow:${annotation.textShadow === 'none' ? 'none' : '0 1px 4px rgba(0,0,0,.65)'};--text-stroke:${annotation.textBorder ? `.35px ${escapeAttribute(pageAnnotationArrowColor(annotation))}` : '0 transparent'}"
             >${escapeHTML(annotation.text || 'Texto da seta')}</span>
             ${isEditablePreview ? `<span
               data-page-annotation-head="${environmentIndex}-${pageIndex}-${annotationIndex}"
@@ -3036,9 +3287,10 @@
               data-page-index="${pageIndex}"
               data-annotation-index="${annotationIndex}"
               class="page-arrow-point ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}"
-              style="left:${Number(annotation.toX ?? 20)}%;top:${Number(annotation.toY ?? 20)}%"
+              style="left:${Number(annotation.toX ?? 20)}%;top:${Number(annotation.toY ?? 20)}%;z-index:${zIndex + 20}"
             ></span>` : ''}
-          `).join('')}
+          `;
+          }).join('')}
         `;
       }
 
