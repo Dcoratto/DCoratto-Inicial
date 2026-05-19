@@ -357,7 +357,7 @@
 
       .page-annotation-line {
         stroke: var(--arrow-color, #111);
-        stroke-width: var(--arrow-width, 3);
+        stroke-width: var(--arrow-width, 1.4);
       }
 
       .page-annotation-text {
@@ -366,13 +366,68 @@
         min-width: 120px;
         max-width: 260px;
         color: var(--text-color, #111);
-        font-family: Georgia, serif;
-        font-size: var(--text-size, 18px);
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: var(--text-size, 15px);
         line-height: 1.25;
+        letter-spacing: .02em;
         outline: 0;
         pointer-events: auto;
-        text-shadow: 0 1px 0 rgba(255,255,255,.75);
+        text-shadow: var(--text-shadow, 0 1px 0 rgba(255,255,255,.75));
+        -webkit-text-stroke: var(--text-stroke, 0 transparent);
         transform: translate(-6px, -50%);
+      }
+
+      .page-annotation-text.is-selected {
+        outline: 1px solid rgba(124,70,255,.7);
+        outline-offset: 3px;
+      }
+
+      .page-annotation-toolbar {
+        position: absolute;
+        z-index: 45;
+        display: none;
+        align-items: center;
+        gap: 6px;
+        transform: translate(-6px, calc(-100% - 12px));
+        border: 1px solid rgba(17,17,17,.14);
+        border-radius: 999px;
+        background: rgba(255,255,255,.96);
+        box-shadow: 0 10px 30px rgba(0,0,0,.14);
+        padding: 6px 8px;
+        pointer-events: auto;
+      }
+
+      .page-annotation-toolbar.is-selected { display: flex; }
+
+      .page-annotation-toolbar input[type="color"] {
+        width: 28px;
+        height: 26px;
+        border: 0;
+        padding: 0;
+        background: transparent;
+      }
+
+      .page-annotation-toolbar input[type="number"] {
+        width: 48px;
+        border: 1px solid rgba(17,17,17,.16);
+        border-radius: 7px;
+        padding: 5px;
+        font-size: 11px;
+      }
+
+      .page-annotation-toolbar button {
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: #111;
+        padding: 6px 8px;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .page-annotation-toolbar button.active {
+        background: #ece8df;
       }
 
       .page-frames.arrow-draw-mode {
@@ -955,8 +1010,12 @@
 
       documentData = normalizeDocumentData(documentData);
       const selectedFrameKeys = new Set();
+      const selectedPageAnnotationKeys = new Set();
       let frameClipboard = [];
+      let pageAnnotationClipboard = [];
       let arrowDrawMode = null;
+      const annotationDefaultsKey = 'dcoratto.page.annotation.defaults.v1';
+      let pageAnnotationDefaults = loadPageAnnotationDefaults();
 
       const nav = document.getElementById('nav');
       const root = document.getElementById('document');
@@ -971,28 +1030,28 @@
 
       document.addEventListener('keydown', (event) => {
         const target = event.target;
-        if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+        if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
         if (event.key === 'Escape') {
           closeLightbox();
           clearFrameSelection();
           closeFrameContextMenu();
         }
-        if ((event.key === 'Delete' || event.key === 'Backspace') && isEditablePreview && selectedFrameKeys.size) {
+        if ((event.key === 'Delete' || event.key === 'Backspace') && isEditablePreview && (selectedFrameKeys.size || selectedPageAnnotationKeys.size)) {
           event.preventDefault();
-          deleteSelectedFrames();
+          deleteSelectedElements();
         }
         if (!isEditablePreview) return;
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
           event.preventDefault();
-          copySelectedFrames();
+          copySelectedElements();
         }
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') {
           event.preventDefault();
-          pasteCopiedFrames();
+          pasteCopiedElements();
         }
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
           event.preventDefault();
-          duplicateSelectedFrames();
+          duplicateSelectedElements();
         }
       });
 
@@ -1038,6 +1097,34 @@
         };
       }
 
+      function loadPageAnnotationDefaults() {
+        try {
+          return {
+            arrowColor: '#111111',
+            textColor: '#111111',
+            fontSize: 15,
+            arrowWidth: 1.4,
+            textShadow: 'soft',
+            textBorder: false,
+            ...(JSON.parse(localStorage.getItem(annotationDefaultsKey) || 'null') || {}),
+          };
+        } catch {
+          return { arrowColor: '#111111', textColor: '#111111', fontSize: 15, arrowWidth: 1.4, textShadow: 'soft', textBorder: false };
+        }
+      }
+
+      function savePageAnnotationDefaults(annotation) {
+        pageAnnotationDefaults = {
+          arrowColor: annotation.arrowColor || '#111111',
+          textColor: annotation.textColor || '#111111',
+          fontSize: Number(annotation.fontSize ?? 15),
+          arrowWidth: Number(annotation.arrowWidth ?? 1.4),
+          textShadow: annotation.textShadow || 'soft',
+          textBorder: Boolean(annotation.textBorder),
+        };
+        localStorage.setItem(annotationDefaultsKey, JSON.stringify(pageAnnotationDefaults));
+      }
+
       function renderDocument() {
         renderLogo();
         nav.innerHTML = documentData.environments.map((environment) => `
@@ -1065,7 +1152,10 @@
       function renderCover() {
         const environmentsCount = documentData.environments.length;
         const photosCount = documentData.environments.reduce((total, environment) => {
-          const pagePhotos = (environment.pages || []).reduce((sum, page) => sum + normalizePhotos(page.photos).length, 0);
+          const pagePhotos = (environment.pages || []).reduce((sum, page) => {
+            const framePhotos = Array.isArray(page.frames) ? page.frames.filter(frame => frame.photo).length : 0;
+            return sum + framePhotos;
+          }, 0);
           return total + normalizePhotos(environment.photos).length + pagePhotos;
         }, 0);
 
@@ -1092,7 +1182,7 @@
       }
 
       function bindDocumentEvents() {
-        applyFrameSelectionClasses();
+        applyElementSelectionClasses();
 
         document.querySelectorAll('[data-lightbox-src]').forEach((button) => {
           button.addEventListener('click', () => {
@@ -1284,11 +1374,41 @@
         });
 
         document.querySelectorAll('[data-page-annotation-text]').forEach((node) => {
+          node.addEventListener('pointerdown', (event) => {
+            event.stopPropagation();
+            selectSinglePageAnnotation(pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex));
+          });
           node.addEventListener('input', () => {
             const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
             if (!annotation) return;
             annotation.text = node.textContent.trim() || 'Texto da seta';
+            savePageAnnotationDefaults(annotation);
             persistWithoutRender();
+          });
+        });
+
+        document.querySelectorAll('[data-page-annotation-style]').forEach((input) => {
+          input.addEventListener('input', () => {
+            const annotation = pageAnnotation(Number(input.dataset.environmentIndex), Number(input.dataset.pageIndex), Number(input.dataset.annotationIndex));
+            if (!annotation) return;
+            const field = input.dataset.pageAnnotationStyle;
+            if (field === 'fontSize' || field === 'arrowWidth') annotation[field] = Number(input.value);
+            else annotation[field] = input.value;
+            savePageAnnotationDefaults(annotation);
+            persistAndRender();
+          });
+        });
+
+        document.querySelectorAll('[data-page-annotation-toggle]').forEach((button) => {
+          button.addEventListener('click', () => {
+            const annotation = pageAnnotation(Number(button.dataset.environmentIndex), Number(button.dataset.pageIndex), Number(button.dataset.annotationIndex));
+            if (!annotation) return;
+            const field = button.dataset.pageAnnotationToggle;
+            annotation[field] = field === 'textShadow'
+              ? (annotation.textShadow === 'soft' ? 'none' : 'soft')
+              : !annotation[field];
+            savePageAnnotationDefaults(annotation);
+            persistAndRender();
           });
         });
 
@@ -1366,19 +1486,22 @@
 
       function selectSingleFrame(key) {
         selectedFrameKeys.clear();
+        selectedPageAnnotationKeys.clear();
         selectedFrameKeys.add(key);
-        applyFrameSelectionClasses();
+        applyElementSelectionClasses();
       }
 
       function toggleFrameSelection(key) {
         if (selectedFrameKeys.has(key)) selectedFrameKeys.delete(key);
         else selectedFrameKeys.add(key);
-        applyFrameSelectionClasses();
+        selectedPageAnnotationKeys.clear();
+        applyElementSelectionClasses();
       }
 
       function clearFrameSelection() {
         selectedFrameKeys.clear();
-        applyFrameSelectionClasses();
+        selectedPageAnnotationKeys.clear();
+        applyElementSelectionClasses();
       }
 
       function ensureFrameButtonSelection(node) {
@@ -1386,10 +1509,29 @@
         if (!selectedFrameKeys.has(key)) selectSingleFrame(key);
       }
 
-      function applyFrameSelectionClasses() {
+      function pageAnnotationKey(environmentIndex, pageIndex, annotationIndex) {
+        return `page-ann:${environmentIndex}:${pageIndex}:${annotationIndex}`;
+      }
+
+      function selectSinglePageAnnotation(key) {
+        selectedFrameKeys.clear();
+        selectedPageAnnotationKeys.clear();
+        selectedPageAnnotationKeys.add(key);
+        applyElementSelectionClasses();
+      }
+
+      function applyElementSelectionClasses() {
         document.querySelectorAll('[data-draggable-frame]').forEach((node) => {
           const key = frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex);
           node.classList.toggle('is-selected', selectedFrameKeys.has(key));
+        });
+        document.querySelectorAll('[data-page-annotation-text]').forEach((node) => {
+          const key = pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex);
+          node.classList.toggle('is-selected', selectedPageAnnotationKeys.has(key));
+        });
+        document.querySelectorAll('[data-page-annotation-toolbar]').forEach((node) => {
+          const key = pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex);
+          node.classList.toggle('is-selected', selectedPageAnnotationKeys.has(key));
         });
       }
 
@@ -1411,12 +1553,49 @@
         persistAndRender();
       }
 
+      function deleteSelectedPageAnnotations() {
+        const grouped = new Map();
+        selectedPageAnnotationKeys.forEach((key) => {
+          const [, environmentIndex, pageIndex, annotationIndex] = key.split(':').map((value, index) => index ? Number(value) : value);
+          const groupKey = `${environmentIndex}:${pageIndex}`;
+          if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+          grouped.get(groupKey).push(annotationIndex);
+        });
+        grouped.forEach((indexes, groupKey) => {
+          const [environmentIndex, pageIndex] = groupKey.split(':').map(Number);
+          const page = environmentPage(environmentIndex, pageIndex);
+          if (!page || !Array.isArray(page.annotations)) return;
+          indexes.sort((a, b) => b - a).forEach((index) => page.annotations.splice(index, 1));
+        });
+        selectedPageAnnotationKeys.clear();
+      }
+
+      function deleteSelectedElements() {
+        if (selectedFrameKeys.size) deleteSelectedFrames();
+        else {
+          deleteSelectedPageAnnotations();
+          persistAndRender();
+        }
+      }
+
       function selectedFrameRefs() {
         return [...selectedFrameKeys].map((key) => {
           const [environmentIndex, pageIndex, frameIndex] = key.split(':').map(Number);
           const page = environmentPage(environmentIndex, pageIndex);
           const frame = pageFrame(environmentIndex, pageIndex, frameIndex);
           return page && frame ? { key, environmentIndex, pageIndex, frameIndex, page, frame } : null;
+        }).filter(Boolean);
+      }
+
+      function selectedPageAnnotationRefs() {
+        return [...selectedPageAnnotationKeys].map((key) => {
+          const [, environmentIndexRaw, pageIndexRaw, annotationIndexRaw] = key.split(':');
+          const environmentIndex = Number(environmentIndexRaw);
+          const pageIndex = Number(pageIndexRaw);
+          const annotationIndex = Number(annotationIndexRaw);
+          const page = environmentPage(environmentIndex, pageIndex);
+          const annotation = pageAnnotation(environmentIndex, pageIndex, annotationIndex);
+          return page && annotation ? { key, environmentIndex, pageIndex, annotationIndex, page, annotation } : null;
         }).filter(Boolean);
       }
 
@@ -1434,6 +1613,17 @@
         const refs = selectedFrameRefs();
         if (!refs.length) return;
         frameClipboard = refs.map(ref => JSON.parse(JSON.stringify(ref.frame)));
+      }
+
+      function copySelectedPageAnnotations() {
+        const refs = selectedPageAnnotationRefs();
+        if (!refs.length) return;
+        pageAnnotationClipboard = refs.map(ref => JSON.parse(JSON.stringify(ref.annotation)));
+      }
+
+      function copySelectedElements() {
+        if (selectedFrameKeys.size) copySelectedFrames();
+        if (selectedPageAnnotationKeys.size) copySelectedPageAnnotations();
       }
 
       function pasteTargetPage() {
@@ -1455,9 +1645,39 @@
         persistAndRender();
       }
 
+      function pasteCopiedPageAnnotations() {
+        const target = pasteTargetPage();
+        if (!target?.page || !pageAnnotationClipboard.length) return;
+        target.page.annotations = Array.isArray(target.page.annotations) ? target.page.annotations : [];
+        const start = target.page.annotations.length;
+        pageAnnotationClipboard.forEach((annotation, index) => {
+          const clone = JSON.parse(JSON.stringify(annotation));
+          clone.id = `page-ann-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
+          clone.fromX = Math.max(0, Math.min(100, Number(clone.fromX || 0) + 4 + index * 2));
+          clone.fromY = Math.max(0, Math.min(100, Number(clone.fromY || 0) + 4 + index * 2));
+          clone.toX = Math.max(0, Math.min(100, Number(clone.toX || 0) + 4 + index * 2));
+          clone.toY = Math.max(0, Math.min(100, Number(clone.toY || 0) + 4 + index * 2));
+          target.page.annotations.push(clone);
+        });
+        selectedPageAnnotationKeys.clear();
+        selectedFrameKeys.clear();
+        pageAnnotationClipboard.forEach((_, index) => selectedPageAnnotationKeys.add(pageAnnotationKey(target.environmentIndex, target.pageIndex, start + index)));
+        persistAndRender();
+      }
+
+      function pasteCopiedElements() {
+        if (frameClipboard.length) pasteCopiedFrames();
+        else pasteCopiedPageAnnotations();
+      }
+
       function duplicateSelectedFrames() {
         copySelectedFrames();
         pasteCopiedFrames();
+      }
+
+      function duplicateSelectedElements() {
+        copySelectedElements();
+        pasteCopiedElements();
       }
 
       function closeFrameContextMenu() {
@@ -1481,10 +1701,10 @@
         menu.querySelectorAll('button').forEach(button => {
           button.addEventListener('click', () => {
             const action = button.dataset.menuAction;
-            if (action === 'copy') copySelectedFrames();
-            if (action === 'paste') pasteCopiedFrames();
-            if (action === 'duplicate') duplicateSelectedFrames();
-            if (action === 'delete') deleteSelectedFrames();
+            if (action === 'copy') copySelectedElements();
+            if (action === 'paste') pasteCopiedElements();
+            if (action === 'duplicate') duplicateSelectedElements();
+            if (action === 'delete') deleteSelectedElements();
             closeFrameContextMenu();
           });
         });
@@ -1671,10 +1891,7 @@
           fromY: start.y + 8,
           toX: start.x,
           toY: start.y,
-          arrowColor: '#111111',
-          textColor: '#111111',
-          fontSize: 18,
-          arrowWidth: 3,
+          ...pageAnnotationDefaults,
         };
         page.annotations.push(annotation);
         const annotationIndex = page.annotations.length - 1;
@@ -1740,6 +1957,11 @@
           if (handle === 'text' && label) {
             label.style.left = `${point.x}%`;
             label.style.top = `${point.y}%`;
+            const toolbar = pageNode.querySelector(`[data-page-annotation-toolbar][data-environment-index="${node.dataset.environmentIndex}"][data-page-index="${node.dataset.pageIndex}"][data-annotation-index="${node.dataset.annotationIndex}"]`);
+            if (toolbar) {
+              toolbar.style.left = `${point.x}%`;
+              toolbar.style.top = `${point.y}%`;
+            }
           }
           if (handle === 'head' && head) {
             head.style.left = `${point.x}%`;
@@ -1935,10 +2157,25 @@
               `).join('')}
             </defs>
             ${page.annotations.map((annotation, annotationIndex) => `
-              <line data-page-annotation-line="${environmentIndex}-${pageIndex}-${annotationIndex}" class="page-annotation-line" style="--arrow-color:${escapeAttribute(annotation.arrowColor || '#111111')};--arrow-width:${Number(annotation.arrowWidth ?? 3)};marker-end:url(#pageArrowHead-${environmentIndex}-${pageIndex}-${annotationIndex})" x1="${Number(annotation.fromX ?? 30)}%" y1="${Number(annotation.fromY ?? 30)}%" x2="${Number(annotation.toX ?? 20)}%" y2="${Number(annotation.toY ?? 20)}%"></line>
+              <line data-page-annotation-line="${environmentIndex}-${pageIndex}-${annotationIndex}" class="page-annotation-line" style="--arrow-color:${escapeAttribute(annotation.arrowColor || '#111111')};--arrow-width:${Number(annotation.arrowWidth ?? 1.4)};marker-end:url(#pageArrowHead-${environmentIndex}-${pageIndex}-${annotationIndex})" x1="${Number(annotation.fromX ?? 30)}%" y1="${Number(annotation.fromY ?? 30)}%" x2="${Number(annotation.toX ?? 20)}%" y2="${Number(annotation.toY ?? 20)}%"></line>
             `).join('')}
           </svg>
           ${page.annotations.map((annotation, annotationIndex) => `
+            <span
+              data-page-annotation-toolbar
+              data-environment-index="${environmentIndex}"
+              data-page-index="${pageIndex}"
+              data-annotation-index="${annotationIndex}"
+              class="page-annotation-toolbar"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%"
+            >
+              <input type="color" title="Cor do texto" value="${escapeAttribute(annotation.textColor || '#111111')}" data-page-annotation-style="textColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
+              <input type="color" title="Cor da seta" value="${escapeAttribute(annotation.arrowColor || '#111111')}" data-page-annotation-style="arrowColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
+              <input type="number" min="9" max="32" step="1" title="Fonte" value="${Number(annotation.fontSize ?? 15)}" data-page-annotation-style="fontSize" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
+              <input type="number" min="0.6" max="4" step="0.2" title="Seta" value="${Number(annotation.arrowWidth ?? 1.4)}" data-page-annotation-style="arrowWidth" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
+              <button type="button" class="${annotation.textShadow !== 'none' ? 'active' : ''}" data-page-annotation-toggle="textShadow" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">Sombra</button>
+              <button type="button" class="${annotation.textBorder ? 'active' : ''}" data-page-annotation-toggle="textBorder" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">Borda</button>
+            </span>
             <span
               data-page-annotation-text="${environmentIndex}-${pageIndex}-${annotationIndex}"
               data-drag-page-annotation="text"
@@ -1947,7 +2184,7 @@
               data-annotation-index="${annotationIndex}"
               class="page-annotation-text"
               contenteditable="${isEditablePreview ? 'true' : 'false'}"
-              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;--text-color:${escapeAttribute(annotation.textColor || '#111111')};--text-size:${Number(annotation.fontSize ?? 18)}px"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;--text-color:${escapeAttribute(annotation.textColor || '#111111')};--text-size:${Number(annotation.fontSize ?? 15)}px;--text-shadow:${annotation.textShadow === 'none' ? 'none' : '0 1px 3px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.75)'};--text-stroke:${annotation.textBorder ? `.35px ${escapeAttribute(annotation.arrowColor || '#111111')}` : '0 transparent'}"
             >${escapeHTML(annotation.text || 'Texto da seta')}</span>
             ${isEditablePreview ? `<span
               data-page-annotation-head="${environmentIndex}-${pageIndex}-${annotationIndex}"
@@ -1974,14 +2211,7 @@
           });
           return page.frames;
         }
-        return normalizePhotos(page.photos).map((photo, index) => ({
-          id: `frame-${Date.now()}-${index}`,
-          title: photo.title || `Moldura ${index + 1}`,
-          photo: photo.src,
-          shape: 'rounded',
-          ...frameDefaultLayout(index),
-          annotations: [],
-        }));
+        return [];
       }
 
       function renderDocumentFrame(frame, page, frameIndex, environmentIndex, pageIndex) {
