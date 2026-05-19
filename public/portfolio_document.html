@@ -452,10 +452,14 @@
       }
 
       .doc-photo-frame.shape-circle {
+        aspect-ratio: 1 / 1;
+        height: auto !important;
         min-height: 0;
       }
 
       .doc-photo-frame.shape-square {
+        aspect-ratio: 1 / 1;
+        height: auto !important;
         min-height: 0;
       }
 
@@ -1169,6 +1173,140 @@
       }
 
       @media (max-width: 760px) {
+        .topbar {
+          height: 68px;
+          padding: 0 16px;
+        }
+
+        .logo {
+          font-size: 24px;
+        }
+
+        .logo small {
+          margin-left: 52px;
+          font-size: 8px;
+        }
+
+        .cover {
+          min-height: calc(100svh - 68px);
+          padding: 52px 18px;
+        }
+
+        .cover::before {
+          height: 68px;
+          margin-bottom: 36px;
+        }
+
+        .cover h1 {
+          font-size: clamp(44px, 15vw, 72px);
+          line-height: .95;
+          overflow-wrap: anywhere;
+        }
+
+        .cover-stats {
+          margin-top: 42px;
+        }
+
+        .cover-stat {
+          padding: 10px 22px;
+        }
+
+        .environment-page {
+          min-height: auto;
+          padding: 30px 14px 46px;
+        }
+
+        .page-fixed-title {
+          margin-bottom: 14px;
+        }
+
+        .page-fixed-title strong {
+          font-size: clamp(29px, 9vw, 42px);
+          line-height: 1;
+        }
+
+        .page-fixed-title span {
+          margin-top: 6px;
+          font-size: clamp(27px, 8vw, 40px);
+        }
+
+        .environment-page .cover-kicker {
+          margin-bottom: 8px !important;
+          font-size: 10px;
+          letter-spacing: .28em;
+          line-height: 1.8;
+        }
+
+        .page-description {
+          margin-bottom: 18px;
+          font-size: 15px;
+          line-height: 1.45;
+        }
+
+        .page-frames {
+          width: min(100%, 460px);
+          min-height: min(760px, 78svh);
+          margin: 0 auto;
+        }
+
+        .doc-photo-frame.shape-circle,
+        .doc-photo-frame.shape-square {
+          max-width: calc(100% - 12px);
+        }
+
+        .doc-frame-title {
+          left: 12px;
+          bottom: 12px;
+          max-width: calc(100% - 24px);
+          font-size: 9px;
+          line-height: 1.35;
+          overflow-wrap: anywhere;
+        }
+
+        .page-annotation-text {
+          min-width: 82px;
+          max-width: 150px;
+          font-size: clamp(11px, 3.1vw, 14px);
+          line-height: 1.2;
+          overflow-wrap: anywhere;
+        }
+
+        .page-annotation-toolbar,
+        .frame-selection-toolbar,
+        .preview-frame-tools {
+          transform: none;
+          border-radius: 10px;
+          max-width: calc(100vw - 28px);
+          overflow-x: auto;
+        }
+
+        .frame-selection-toolbar {
+          left: 0;
+          top: auto;
+          bottom: calc(100% + 8px);
+        }
+
+        .preview-frame-tools {
+          top: auto;
+          right: 0;
+          bottom: calc(100% + 8px);
+        }
+
+        .frame-selection-toolbar button,
+        .preview-frame-tools button,
+        .preview-frame-tools label,
+        .shape-select {
+          min-height: 34px;
+          padding: 8px 10px;
+          font-size: 9px;
+        }
+
+        .frame-resize-handle,
+        .page-arrow-point {
+          width: 16px;
+          height: 16px;
+        }
+
         .section-heading {
           grid-template-columns: 28px 1fr;
           gap: 16px;
@@ -1930,6 +2068,20 @@
         return Math.atan2(dy, dx) * 180 / Math.PI;
       }
 
+      function pageAnnotationArrowColor(annotation) {
+        const color = String(annotation?.arrowColor || '').toLowerCase();
+        return !color || color === '#111' || color === '#111111' || color === 'black'
+          ? '#d7c2a7'
+          : annotation.arrowColor;
+      }
+
+      function pageAnnotationTextColor(annotation) {
+        const color = String(annotation?.textColor || '').toLowerCase();
+        return !color || color === '#111' || color === '#111111' || color === 'black'
+          ? '#f7f2ea'
+          : annotation.textColor;
+      }
+
       function pageAnnotationLength(annotation, pageNode) {
         const { dx, dy } = pageAnnotationVector(annotation, pageNode);
         return Math.max(1, Math.hypot(dx, dy));
@@ -1964,7 +2116,7 @@
         node.style.left = `${Number(annotation.fromX ?? 0)}%`;
         node.style.top = `${Number(annotation.fromY ?? 0)}%`;
         node.style.width = `${pageAnnotationLength(annotation, pageNode)}px`;
-        node.style.setProperty('--arrow-color', annotation.arrowColor || '#d7c2a7');
+        node.style.setProperty('--arrow-color', pageAnnotationArrowColor(annotation));
         node.style.setProperty('--arrow-width-px', `${Number(annotation.arrowWidth ?? 0.9)}px`);
         node.style.setProperty('--arrow-angle', `${pageAnnotationAngle(annotation, pageNode)}deg`);
       }
@@ -1973,7 +2125,7 @@
         if (!node || !annotation) return;
         node.style.left = `${Number(annotation.toX ?? 0)}%`;
         node.style.top = `${Number(annotation.toY ?? 0)}%`;
-        node.style.setProperty('--arrow-color', annotation.arrowColor || '#d7c2a7');
+        node.style.setProperty('--arrow-color', pageAnnotationArrowColor(annotation));
         node.style.setProperty('--arrow-angle', `${pageAnnotationAngle(annotation, pageNode)}deg`);
       }
 
@@ -2459,11 +2611,11 @@
           selectedPageAnnotationKeys.add(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex));
           line = document.createElement('span');
           line.setAttribute('class', 'page-annotation-line');
-          line.style.setProperty('--arrow-color', annotation.arrowColor);
+          line.style.setProperty('--arrow-color', pageAnnotationArrowColor(annotation));
           line.style.setProperty('--arrow-width-px', `${annotation.arrowWidth}px`);
           arrowHead = document.createElement('span');
           arrowHead.setAttribute('class', 'page-annotation-arrow-head');
-          arrowHead.style.setProperty('--arrow-color', annotation.arrowColor);
+          arrowHead.style.setProperty('--arrow-color', pageAnnotationArrowColor(annotation));
           pageNode.append(line, arrowHead);
         };
 
@@ -2788,7 +2940,7 @@
               data-page-index="${pageIndex}"
               data-annotation-index="${annotationIndex}"
               class="page-annotation-line ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}"
-              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;--arrow-color:${escapeAttribute(annotation.arrowColor || '#d7c2a7')};--arrow-width:${Number(annotation.arrowWidth ?? 0.9)};--arrow-width-px:${Number(annotation.arrowWidth ?? 0.9)}px;--arrow-angle:${pageAnnotationAngle(annotation)}deg"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;--arrow-color:${escapeAttribute(pageAnnotationArrowColor(annotation))};--arrow-width:${Number(annotation.arrowWidth ?? 0.9)};--arrow-width-px:${Number(annotation.arrowWidth ?? 0.9)}px;--arrow-angle:${pageAnnotationAngle(annotation)}deg"
             ></span>
           `).join('')}
           ${page.annotations.map((annotation, annotationIndex) => `
@@ -2798,7 +2950,7 @@
               data-page-index="${pageIndex}"
               data-annotation-index="${annotationIndex}"
               class="page-annotation-arrow-head"
-              style="left:${Number(annotation.toX ?? 20)}%;top:${Number(annotation.toY ?? 20)}%;--arrow-color:${escapeAttribute(annotation.arrowColor || '#d7c2a7')};--arrow-angle:${pageAnnotationAngle(annotation)}deg"
+              style="left:${Number(annotation.toX ?? 20)}%;top:${Number(annotation.toY ?? 20)}%;--arrow-color:${escapeAttribute(pageAnnotationArrowColor(annotation))};--arrow-angle:${pageAnnotationAngle(annotation)}deg"
             ></span>
           `).join('')}
           ${page.annotations.map((annotation, annotationIndex) => `
@@ -2810,8 +2962,8 @@
               class="page-annotation-toolbar"
               style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%"
             >
-              <input type="color" title="Cor do texto" value="${escapeAttribute(annotation.textColor || '#f7f2ea')}" data-page-annotation-style="textColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
-              <input type="color" title="Cor da seta" value="${escapeAttribute(annotation.arrowColor || '#d7c2a7')}" data-page-annotation-style="arrowColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
+              <input type="color" title="Cor do texto" value="${escapeAttribute(pageAnnotationTextColor(annotation))}" data-page-annotation-style="textColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
+              <input type="color" title="Cor da seta" value="${escapeAttribute(pageAnnotationArrowColor(annotation))}" data-page-annotation-style="arrowColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
               <input type="number" min="9" max="32" step="1" title="Fonte" value="${Number(annotation.fontSize ?? 15)}" data-page-annotation-style="fontSize" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
               <input type="number" min="0.4" max="2.5" step="0.1" title="Seta" value="${Number(annotation.arrowWidth ?? 0.9)}" data-page-annotation-style="arrowWidth" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
               <button type="button" class="${annotation.textShadow !== 'none' ? 'active' : ''}" data-page-annotation-toggle="textShadow" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">Sombra</button>
@@ -2833,7 +2985,7 @@
               data-annotation-index="${annotationIndex}"
               class="page-annotation-text"
               contenteditable="${isEditablePreview ? 'true' : 'false'}"
-              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;${pageAnnotationTextPlacementStyle(annotation)};--text-color:${escapeAttribute(annotation.textColor || '#f7f2ea')};--text-size:${Number(annotation.fontSize ?? 15)}px;--text-shadow:${annotation.textShadow === 'none' ? 'none' : '0 1px 4px rgba(0,0,0,.65)'};--text-stroke:${annotation.textBorder ? `.35px ${escapeAttribute(annotation.arrowColor || '#d7c2a7')}` : '0 transparent'}"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;${pageAnnotationTextPlacementStyle(annotation)};--text-color:${escapeAttribute(pageAnnotationTextColor(annotation))};--text-size:${Number(annotation.fontSize ?? 15)}px;--text-shadow:${annotation.textShadow === 'none' ? 'none' : '0 1px 4px rgba(0,0,0,.65)'};--text-stroke:${annotation.textBorder ? `.35px ${escapeAttribute(pageAnnotationArrowColor(annotation))}` : '0 transparent'}"
             >${escapeHTML(annotation.text || 'Texto da seta')}</span>
             ${isEditablePreview ? `<span
               data-page-annotation-head="${environmentIndex}-${pageIndex}-${annotationIndex}"
