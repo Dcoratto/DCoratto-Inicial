@@ -348,21 +348,28 @@
         pointer-events: none;
       }
 
-      .page-annotation-layer {
+      .page-annotation-line {
         position: absolute;
-        inset: 0;
         z-index: 30;
-        pointer-events: none;
+        display: block;
+        width: 1px;
+        height: 14px;
+        cursor: move;
+        pointer-events: auto;
+        transform: translateY(-50%) rotate(var(--arrow-angle, 0deg));
+        transform-origin: 0 50%;
       }
 
-      .page-annotation-line {
-        stroke: var(--arrow-color, #111);
-        stroke-width: var(--arrow-width-px, 1px);
-        stroke-linecap: round;
-        stroke-linejoin: round;
-        vector-effect: non-scaling-stroke;
-        cursor: move;
-        pointer-events: stroke;
+      .page-annotation-line::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: var(--arrow-width-px, 1px);
+        border-radius: 999px;
+        background: var(--arrow-color, #111);
+        transform: translateY(-50%);
       }
 
       .page-annotation-line.is-selected {
@@ -371,7 +378,7 @@
 
       .page-annotation-arrow-head {
         position: absolute;
-        z-index: 30;
+        z-index: 31;
         width: 7px;
         height: 7px;
         background: var(--arrow-color, #111);
@@ -1080,6 +1087,8 @@
         if (event.target === lightbox || event.target.tagName === 'BUTTON') closeLightbox();
       });
 
+      window.addEventListener('resize', updatePageAnnotationGeometry);
+
       document.addEventListener('keydown', (event) => {
         const target = event.target;
         const isTextEditing = target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
@@ -1661,6 +1670,25 @@
         return Math.atan2(dy, dx) * 180 / Math.PI;
       }
 
+      function pageAnnotationLength(annotation, pageNode) {
+        const rect = pageNode?.getBoundingClientRect?.();
+        const width = rect?.width || 1;
+        const height = rect?.height || 1;
+        const dx = (Number(annotation.toX ?? 0) - Number(annotation.fromX ?? 0)) * width / 100;
+        const dy = (Number(annotation.toY ?? 0) - Number(annotation.fromY ?? 0)) * height / 100;
+        return Math.max(1, Math.hypot(dx, dy));
+      }
+
+      function updatePageAnnotationLine(node, annotation, pageNode) {
+        if (!node || !annotation) return;
+        node.style.left = `${Number(annotation.fromX ?? 0)}%`;
+        node.style.top = `${Number(annotation.fromY ?? 0)}%`;
+        node.style.width = `${pageAnnotationLength(annotation, pageNode)}px`;
+        node.style.setProperty('--arrow-color', annotation.arrowColor || '#111111');
+        node.style.setProperty('--arrow-width-px', `${Number(annotation.arrowWidth ?? 0.9)}px`);
+        node.style.setProperty('--arrow-angle', `${pageAnnotationAngle(annotation, pageNode)}deg`);
+      }
+
       function updatePageAnnotationArrowHead(node, annotation, pageNode) {
         if (!node || !annotation) return;
         node.style.left = `${Number(annotation.toX ?? 0)}%`;
@@ -1670,6 +1698,11 @@
       }
 
       function updatePageAnnotationGeometry() {
+        document.querySelectorAll('[data-page-annotation-line]').forEach((node) => {
+          const pageNode = node.closest('[data-page-frames]');
+          const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
+          updatePageAnnotationLine(node, annotation, pageNode);
+        });
         document.querySelectorAll('[data-page-annotation-arrow-head]').forEach((node) => {
           const pageNode = node.closest('[data-page-frames]');
           const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
@@ -2116,32 +2149,31 @@
         selectedFrameKeys.clear();
         selectedPageAnnotationKeys.clear();
         selectedPageAnnotationKeys.add(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex));
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        const line = document.createElement('span');
         line.setAttribute('class', 'page-annotation-line');
         line.style.setProperty('--arrow-color', annotation.arrowColor);
-        line.style.setProperty('--arrow-width', annotation.arrowWidth);
         line.style.setProperty('--arrow-width-px', `${annotation.arrowWidth}px`);
-        line.setAttribute('x1', `${annotation.fromX}%`);
-        line.setAttribute('y1', `${annotation.fromY}%`);
-        line.setAttribute('x2', `${annotation.toX}%`);
-        line.setAttribute('y2', `${annotation.toY}%`);
-        const overlay = pageNode.querySelector('.page-annotation-layer');
-        overlay?.appendChild(line);
+        const arrowHead = document.createElement('span');
+        arrowHead.setAttribute('class', 'page-annotation-arrow-head');
+        arrowHead.style.setProperty('--arrow-color', annotation.arrowColor);
+        pageNode.append(line, arrowHead);
+        updatePageAnnotationLine(line, annotation, pageNode);
+        updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
 
         const move = (pointerEvent) => {
           const end = pagePoint(pointerEvent, pageNode);
           annotation.toX = end.x;
           annotation.toY = end.y;
-          line.setAttribute('x2', `${annotation.toX}%`);
-          line.setAttribute('y2', `${annotation.toY}%`);
+          updatePageAnnotationLine(line, annotation, pageNode);
+          updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
         };
 
         const up = (pointerEvent) => {
           const end = pagePoint(pointerEvent, pageNode);
           annotation.toX = end.x;
           annotation.toY = end.y;
-          line.setAttribute('x2', `${annotation.toX}%`);
-          line.setAttribute('y2', `${annotation.toY}%`);
+          updatePageAnnotationLine(line, annotation, pageNode);
+          updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
           arrowDrawMode = null;
@@ -2188,10 +2220,7 @@
           annotation.fromY = Math.max(0, Math.min(100, initial.fromY + dy));
           annotation.toX = Math.max(0, Math.min(100, initial.toX + dx));
           annotation.toY = Math.max(0, Math.min(100, initial.toY + dy));
-          node.setAttribute('x1', `${annotation.fromX}%`);
-          node.setAttribute('y1', `${annotation.fromY}%`);
-          node.setAttribute('x2', `${annotation.toX}%`);
-          node.setAttribute('y2', `${annotation.toY}%`);
+          updatePageAnnotationLine(node, annotation, pageNode);
           if (label) {
             label.style.left = `${annotation.fromX}%`;
             label.style.top = `${annotation.fromY}%`;
@@ -2244,10 +2273,7 @@
           const head = pageNode.querySelector(`[data-page-annotation-head="${id}"]`);
           const tail = pageNode.querySelector(`[data-page-annotation-tail="${id}"]`);
           const arrowHead = pageNode.querySelector(`[data-page-annotation-arrow-head="${id}"]`);
-          if (line) {
-            line.setAttribute(handle === 'head' ? 'x2' : 'x1', `${point.x}%`);
-            line.setAttribute(handle === 'head' ? 'y2' : 'y1', `${point.y}%`);
-          }
+          updatePageAnnotationLine(line, annotation, pageNode);
           if (handle === 'text' && label) {
             label.style.left = `${point.x}%`;
             label.style.top = `${point.y}%`;
@@ -2449,11 +2475,16 @@
       function renderPageAnnotations(page, environmentIndex, pageIndex) {
         page.annotations = Array.isArray(page.annotations) ? page.annotations : [];
         return `
-          <svg class="page-annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
-            ${page.annotations.map((annotation, annotationIndex) => `
-              <line data-page-annotation-line="${environmentIndex}-${pageIndex}-${annotationIndex}" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}" class="page-annotation-line ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}" style="--arrow-color:${escapeAttribute(annotation.arrowColor || '#111111')};--arrow-width:${Number(annotation.arrowWidth ?? 0.9)};--arrow-width-px:${Number(annotation.arrowWidth ?? 0.9)}px" x1="${Number(annotation.fromX ?? 30)}%" y1="${Number(annotation.fromY ?? 30)}%" x2="${Number(annotation.toX ?? 20)}%" y2="${Number(annotation.toY ?? 20)}%"></line>
-            `).join('')}
-          </svg>
+          ${page.annotations.map((annotation, annotationIndex) => `
+            <span
+              data-page-annotation-line="${environmentIndex}-${pageIndex}-${annotationIndex}"
+              data-environment-index="${environmentIndex}"
+              data-page-index="${pageIndex}"
+              data-annotation-index="${annotationIndex}"
+              class="page-annotation-line ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;--arrow-color:${escapeAttribute(annotation.arrowColor || '#111111')};--arrow-width:${Number(annotation.arrowWidth ?? 0.9)};--arrow-width-px:${Number(annotation.arrowWidth ?? 0.9)}px;--arrow-angle:${pageAnnotationAngle(annotation)}deg"
+            ></span>
+          `).join('')}
           ${page.annotations.map((annotation, annotationIndex) => `
             <span
               data-page-annotation-arrow-head="${environmentIndex}-${pageIndex}-${annotationIndex}"
