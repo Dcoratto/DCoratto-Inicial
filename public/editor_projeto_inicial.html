@@ -80,6 +80,21 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .page-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .page-fields .field-full{grid-column:1/-1}
 .page-photo-preview{width:100%;max-width:240px;aspect-ratio:16/10;object-fit:cover;border:1px solid var(--border);border-radius:3px;background:#11100e}
+.frames-panel{grid-column:1/-1;display:grid;gap:12px;margin-top:4px}
+.frame-card{border:1px solid rgba(184,151,106,.18);background:rgba(0,0,0,.18);border-radius:4px;padding:12px}
+.frame-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.frame-title{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#d9c09b}
+.frame-editor{position:relative;min-height:280px;background:#f6f3ec;border:1px solid rgba(184,151,106,.35);overflow:hidden}
+.frame-editor img{width:100%;height:100%;min-height:280px;object-fit:cover;display:block}
+.frame-editor.empty{display:grid;place-items:center;color:#766957;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+.frame-overlay{position:absolute;inset:0;pointer-events:none}
+.frame-arrow-line{stroke:#111;stroke-width:2;marker-end:url(#arrowHead)}
+.frame-arrow-dot{fill:#111}
+.frame-arrow-label{position:absolute;max-width:180px;color:#111;font-family:Georgia,serif;font-size:15px;line-height:1.25;pointer-events:auto;cursor:move;text-shadow:0 1px 0 rgba(255,255,255,.75)}
+.frame-arrow-target{position:absolute;width:14px;height:14px;border:2px solid #111;border-radius:50%;background:#f6f3ec;transform:translate(-50%,-50%);pointer-events:auto;cursor:grab}
+.annotation-list{display:grid;gap:8px;margin-top:10px}
+.annotation-row{display:grid;grid-template-columns:1fr 86px 86px auto;gap:8px;align-items:center}
+.annotation-row input{min-width:0}
 .check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .check-item{display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.055);color:#fff3df;font-size:12px;font-weight:400;line-height:1.35;padding:10px;border-radius:4px;transition:background .2s,border .2s}
 .check-item:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12)}
@@ -1103,8 +1118,12 @@ function normalizedEnvironmentPages(amb) {
     number: `${String(AMBIENTES.indexOf(amb) + 1).padStart(2, '0')}.${String(index + 1).padStart(2, '0')}`,
     title: page.title || `Página ${index + 1}`,
     description: page.description || '',
-    photos: page.photo ? [{ title: page.title || `Página ${index + 1}`, src: page.photo }] : [],
-    hasData: Boolean(page.title || page.description || page.photo),
+    frames: normalizedPageFrames(page),
+    photos: normalizedPageFrames(page).filter(frame => frame.photo).map((frame, frameIndex) => ({
+      title: frame.title || `${page.title || `Página ${index + 1}`} - Moldura ${frameIndex + 1}`,
+      src: frame.photo,
+    })),
+    hasData: Boolean(page.title || page.description || normalizedPageFrames(page).some(frame => frame.photo || frame.annotations.length)),
   })).filter(page => page.hasData);
 }
 
@@ -1181,7 +1200,42 @@ function environmentPages(ambId) {
   const amb = AMBIENTES.find(item => item.id === ambId);
   if (!amb) return [];
   amb.pages = Array.isArray(amb.pages) ? amb.pages : [];
+  amb.pages.forEach(page => ensurePageFrames(page));
   return amb.pages;
+}
+
+function ensurePageFrames(page) {
+  if (!page) return [];
+  if (!Array.isArray(page.frames)) {
+    page.frames = page.photo ? [{
+      id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+      title: page.title || 'Moldura 1',
+      photo: page.photo,
+      annotations: [],
+    }] : [];
+  }
+  page.frames.forEach(frame => {
+    frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
+    frame.title ||= 'Moldura';
+    frame.photo ||= '';
+  });
+  return page.frames;
+}
+
+function normalizedPageFrames(page) {
+  return ensurePageFrames(page).map((frame, frameIndex) => ({
+    id: frame.id,
+    title: frame.title || `Moldura ${frameIndex + 1}`,
+    photo: frame.photo || '',
+    annotations: (frame.annotations || []).map(annotation => ({
+      id: annotation.id,
+      text: annotation.text || '',
+      fromX: Number(annotation.fromX ?? 18),
+      fromY: Number(annotation.fromY ?? 18),
+      toX: Number(annotation.toX ?? 58),
+      toY: Number(annotation.toY ?? 48),
+    })).filter(annotation => annotation.text),
+  }));
 }
 
 function addEnvironmentPage(ambId) {
@@ -1193,10 +1247,187 @@ function addEnvironmentPage(ambId) {
     title: `Página ${pages.length + 1}`,
     description: '',
     photo: '',
+    frames: [],
   };
   pages.push(page);
   renderAmbientes();
   syncPreviewDocument('environment_page_added');
+}
+
+function addPageFrame(ambId, pageId) {
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  if (!page) return;
+  const frames = ensurePageFrames(page);
+  frames.push({
+    id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+    title: `Moldura ${frames.length + 1}`,
+    photo: '',
+    annotations: [],
+  });
+  renderAmbientes();
+  syncPreviewDocument('environment_page_frame_added');
+}
+
+function removePageFrame(ambId, pageId, frameId) {
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  if (!page || !confirm('Remover esta moldura da página?')) return;
+  page.frames = ensurePageFrames(page).filter(frame => frame.id !== frameId);
+  renderAmbientes();
+  syncPreviewDocument('environment_page_frame_removed');
+}
+
+function updatePageFrame(ambId, pageId, frameId, field, value) {
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  const frame = ensurePageFrames(page).find(item => item.id === frameId);
+  if (!frame) return;
+  frame[field] = value;
+  syncPreviewDocument('environment_page_frame_updated');
+}
+
+async function handleFramePhotoUpload(ambId, pageId, frameId, input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  const frame = ensurePageFrames(page).find(item => item.id === frameId);
+  if (!frame) return;
+  frame.photo = await fileToDataURL(file);
+  renderAmbientes();
+  syncPreviewDocument('environment_page_frame_photo_uploaded');
+}
+
+function addFrameAnnotation(ambId, pageId, frameId) {
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  const frame = ensurePageFrames(page).find(item => item.id === frameId);
+  if (!frame) return;
+  frame.annotations.push({
+    id: `ann-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+    text: 'Texto da seta',
+    fromX: 18,
+    fromY: 18 + Math.min(frame.annotations.length * 10, 48),
+    toX: 58,
+    toY: 46,
+  });
+  renderAmbientes();
+  syncPreviewDocument('environment_page_annotation_added');
+}
+
+function removeFrameAnnotation(ambId, pageId, frameId, annotationId) {
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  const frame = ensurePageFrames(page).find(item => item.id === frameId);
+  if (!frame) return;
+  frame.annotations = frame.annotations.filter(annotation => annotation.id !== annotationId);
+  renderAmbientes();
+  syncPreviewDocument('environment_page_annotation_removed');
+}
+
+function updateFrameAnnotation(ambId, pageId, frameId, annotationId, field, value) {
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  const frame = ensurePageFrames(page).find(item => item.id === frameId);
+  const annotation = frame?.annotations.find(item => item.id === annotationId);
+  if (!annotation) return;
+  annotation[field] = field === 'text' ? value : Math.max(0, Math.min(100, Number(value)));
+  syncPreviewDocument('environment_page_annotation_updated');
+}
+
+function startAnnotationDrag(event, ambId, pageId, frameId, annotationId, handle) {
+  event.preventDefault();
+  const editor = event.currentTarget.closest('.frame-editor');
+  if (!editor) return;
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  const frame = ensurePageFrames(page).find(item => item.id === frameId);
+  const annotation = frame?.annotations.find(item => item.id === annotationId);
+  if (!annotation) return;
+  const move = pointerEvent => {
+    const rect = editor.getBoundingClientRect();
+    const x = Math.max(0, Math.min(100, ((pointerEvent.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(0, Math.min(100, ((pointerEvent.clientY - rect.top) / rect.height) * 100));
+    annotation[handle === 'label' ? 'fromX' : 'toX'] = x;
+    annotation[handle === 'label' ? 'fromY' : 'toY'] = y;
+    const line = editor.querySelector(`[data-ann-line="${annotationId}"]`);
+    const target = editor.querySelector(`[data-ann-target="${annotationId}"]`);
+    const label = editor.querySelector(`[data-ann-label="${annotationId}"]`);
+    if (handle === 'label') {
+      if (line) { line.setAttribute('x1', `${x}%`); line.setAttribute('y1', `${y}%`); }
+      if (label) { label.style.left = `${x}%`; label.style.top = `${y}%`; }
+    } else {
+      if (line) { line.setAttribute('x2', `${x}%`); line.setAttribute('y2', `${y}%`); }
+      if (target) { target.style.left = `${x}%`; target.style.top = `${y}%`; }
+    }
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    syncPreviewDocument('environment_page_annotation_dragged');
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
+function renderFrameEditor(ambId, pageId, frame) {
+  const annotations = frame.annotations || [];
+  return `
+    <div class="frame-editor ${frame.photo ? '' : 'empty'}">
+      ${frame.photo ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || 'Moldura')}">` : 'Envie uma foto para esta moldura'}
+      <svg class="frame-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <defs>
+          <marker id="arrowHead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 Z" fill="#111"></path>
+          </marker>
+        </defs>
+        ${annotations.map(annotation => `
+          <line data-ann-line="${escapeAttribute(annotation.id)}" class="frame-arrow-line" x1="${Number(annotation.fromX ?? 18)}%" y1="${Number(annotation.fromY ?? 18)}%" x2="${Number(annotation.toX ?? 58)}%" y2="${Number(annotation.toY ?? 48)}%"></line>
+        `).join('')}
+      </svg>
+      ${annotations.map(annotation => `
+        <div data-ann-label="${escapeAttribute(annotation.id)}" class="frame-arrow-label" style="left:${Number(annotation.fromX ?? 18)}%;top:${Number(annotation.fromY ?? 18)}%" onpointerdown="startAnnotationDrag(event,'${escapeJS(ambId)}','${escapeJS(pageId)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','label')">${escapeHTML(annotation.text || '')}</div>
+        <div data-ann-target="${escapeAttribute(annotation.id)}" class="frame-arrow-target" style="left:${Number(annotation.toX ?? 58)}%;top:${Number(annotation.toY ?? 48)}%" onpointerdown="startAnnotationDrag(event,'${escapeJS(ambId)}','${escapeJS(pageId)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','target')"></div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderPageFrames(ambId, page) {
+  const frames = ensurePageFrames(page);
+  return `
+    <div class="frames-panel">
+      <div class="pages-head" style="margin-bottom:0">
+        <span class="color-picker-label" style="margin-bottom:0">Molduras de foto e setas</span>
+        <button class="ghost-btn" type="button" onclick="addPageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}')">Adicionar moldura</button>
+      </div>
+      ${frames.length ? frames.map((frame, frameIndex) => `
+        <div class="frame-card">
+          <div class="frame-head">
+            <span class="frame-title">Moldura ${String(frameIndex + 1).padStart(2, '0')}</span>
+            <div class="amb-actions">
+              <button class="ghost-btn" type="button" onclick="addFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}')">Adicionar seta</button>
+              <button class="amb-remove" type="button" onclick="removePageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}')">Remover moldura</button>
+            </div>
+          </div>
+          <div class="page-fields">
+            <div class="field-group">
+              <label>Título da moldura</label>
+              <input type="text" value="${escapeAttribute(frame.title || '')}" oninput="updatePageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','title',this.value)">
+            </div>
+            <div class="field-group">
+              <label>Foto da moldura</label>
+              <input type="file" accept="image/*" onchange="handleFramePhotoUpload('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}',this)">
+            </div>
+          </div>
+          ${renderFrameEditor(ambId, page.id, frame)}
+          <div class="annotation-list">
+            ${(frame.annotations || []).map(annotation => `
+              <div class="annotation-row">
+                <input type="text" value="${escapeAttribute(annotation.text || '')}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','text',this.value)" placeholder="Texto da seta">
+                <input type="number" min="0" max="100" value="${Number(annotation.fromX ?? 18)}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','fromX',this.value)" title="Texto X">
+                <input type="number" min="0" max="100" value="${Number(annotation.toX ?? 58)}" oninput="updateFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}','toX',this.value)" title="Alvo X">
+                <button class="amb-remove" type="button" onclick="removeFrameAnnotation('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}','${escapeJS(annotation.id)}')">Remover</button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('') : '<div class="amb-summary">Nenhuma moldura cadastrada nesta página.</div>'}
+    </div>
+  `;
 }
 
 function removeEnvironmentPage(ambId, pageId) {
@@ -1244,15 +1475,11 @@ function renderEnvironmentPages(amb) {
                 <label>Título da página</label>
                 <input type="text" value="${escapeAttribute(page.title || '')}" oninput="updateEnvironmentPage('${escapeJS(amb.id)}','${escapeJS(page.id)}','title',this.value)">
               </div>
-              <div class="field-group">
-                <label>Imagem da página</label>
-                <input type="file" accept="image/*" onchange="handlePagePhotoUpload('${escapeJS(amb.id)}','${escapeJS(page.id)}',this)">
-              </div>
               <div class="field-group field-full">
                 <label>Detalhes do ambiente</label>
                 <input type="text" placeholder="Ex: vista interna, detalhe construtivo, ferragens, marcenaria..." value="${escapeAttribute(page.description || '')}" oninput="updateEnvironmentPage('${escapeJS(amb.id)}','${escapeJS(page.id)}','description',this.value)">
               </div>
-              ${page.photo ? `<img class="page-photo-preview" src="${escapeAttribute(page.photo)}" alt="${escapeAttribute(page.title || 'Página do ambiente')}">` : '<div class="amb-summary">Sem imagem cadastrada nesta página.</div>'}
+              ${renderPageFrames(amb.id, page)}
             </div>
           </div>
         `).join('') : '<div class="amb-summary">Nenhuma página adicional cadastrada para este ambiente.</div>'}
