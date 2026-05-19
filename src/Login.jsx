@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { isSupabaseConfigured, supabase } from './supabaseClient';
 
 export function Login({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
@@ -8,15 +7,6 @@ export function Login({ onLoginSuccess }) {
   async function handleLogin(event) {
     event.preventDefault();
     if (email.trim() === 'dcorattoinovacao@gmail.com' && password === 'sob_medida') {
-      if (isSupabaseConfigured && supabase) {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-        if (error) {
-          console.warn('Login local liberado, mas o Supabase Auth recusou a sessão.', error);
-        }
-      }
       onLoginSuccess();
       return;
     }

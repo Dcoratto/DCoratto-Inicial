@@ -1588,6 +1588,8 @@ function mergePreviewDocument(preview) {
   preview.environments.forEach((previewEnvironment, index) => {
     const amb = AMBIENTES[index] || AMBIENTES.find(item => item.name === previewEnvironment.title);
     if (!amb) return;
+    const coverPhoto = Array.isArray(previewEnvironment.photos) ? previewEnvironment.photos[0] : null;
+    if (coverPhoto?.src) amb.img = coverPhoto.src;
     amb.pages = Array.isArray(previewEnvironment.pages)
       ? previewEnvironment.pages.map(page => ({
         id: page.id || `page-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,

@@ -1647,10 +1647,16 @@
           input.addEventListener('change', async () => {
             const environment = documentData.environments[Number(input.dataset.environmentIndex)];
             const files = Array.from(input.files || []);
-            const photos = await Promise.all(files.map((file, offset) => readPhoto(file, environment.photos.length + offset)));
-            environment.photos.push(...photos);
+            if (!environment || !files.length) return;
+            environment.photos = Array.isArray(environment.photos) ? environment.photos : [];
+            const shouldReplaceCover = environment.photos.length <= 1 && isDefaultEnvironmentPhoto(environment.photos[0]);
+            const photoStartIndex = shouldReplaceCover ? 0 : environment.photos.length;
+            const photos = await Promise.all(files.map((file, offset) => readPhoto(file, photoStartIndex + offset)));
+            if (shouldReplaceCover) environment.photos = photos;
+            else environment.photos.push(...photos);
             environment.layout = suggestDefaultLayout(environment.photos.length);
             persistAndRender();
+            input.value = '';
           });
         });
 
@@ -3013,6 +3019,15 @@
           });
           reader.readAsDataURL(file);
         });
+      }
+
+      function isDefaultEnvironmentPhoto(photo) {
+        const src = String(photo?.src || '');
+        const title = String(photo?.title || '').toLowerCase();
+        return !src
+          || src === fallbackImage
+          || (src.startsWith('data:image/svg+xml') && (src.includes('AMBIENTE') || src.includes('IMAGEM%20DO%20AMBIENTE')))
+          || (title.includes('imagem do ambiente') && src.startsWith('data:image/svg+xml'));
       }
 
       function persistAndRender() {

@@ -22,6 +22,8 @@ function App() {
 
     async function loadRemoteSettings() {
       if (!isSupabaseConfigured || !supabase) return;
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData?.session?.access_token) return;
       const { data, error } = await supabase
         .from('editor_settings')
         .select('payload')

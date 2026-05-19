@@ -36,6 +36,10 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
     createdAt: new Date().toISOString(),
   };
 
+  if (saveHtml && preview?.environments) {
+    return publishClientHtmlWithServer(payload);
+  }
+
   if (!isSupabaseConfigured || !supabase) {
     enqueue(payload);
     return { source: 'local-queue', projectId: getActiveProjectId() };
@@ -189,6 +193,39 @@ async function writeEvent(event) {
   }
 
   return { source: 'supabase', projectId };
+}
+
+async function publishClientHtmlWithServer(event) {
+  const projectId = getActiveProjectId();
+  const response = await fetch('/api/client-links', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId,
+      actor: event.actor,
+      draft: event.draft,
+      preview: event.preview,
+      eventId: event.id,
+      createdAt: event.createdAt,
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok || !result?.publicUrl) {
+    throw new Error(result?.error || 'Nao foi possivel gerar o link persistente do cliente.');
+  }
+
+  return {
+    source: result.source || 'server',
+    projectId: result.projectId || projectId,
+    htmlVersion: {
+      storage_path: result.storagePath || '',
+      data: {
+        publicUrl: result.publicUrl,
+        storageError: result.storageError || '',
+      },
+    },
+  };
 }
 
 async function persistEnvironmentPages(projectId, environments, environmentPayloads) {
