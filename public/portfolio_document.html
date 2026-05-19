@@ -1019,7 +1019,9 @@
 
       const storageKey = 'dcoratto.portfolio.document.v1';
       const isEditablePreview = new URLSearchParams(window.location.search).has('preview');
-      let documentData = JSON.parse(localStorage.getItem(storageKey) || 'null') || {
+      let documentData = window.__DCORATTO_PORTFOLIO_DOCUMENT__
+        || JSON.parse(localStorage.getItem(storageKey) || 'null')
+        || {
         client: {
           name: 'CLIENTE MODELO',
           address: '',

@@ -141,6 +141,9 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .preview-actions{display:flex;align-items:center;gap:10px}
 .preview-frame{width:100%;flex:1;border:0;background:#080706}
 .preview-status{font-size:10px;color:#c7b596;letter-spacing:.08em;margin-right:auto}
+.preview-client-link{margin-top:7px;font-size:11px;letter-spacing:.04em;color:#e7d3b5;max-width:min(62vw,780px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preview-client-link a{color:#d6b47c;text-decoration:underline;text-underline-offset:3px}
+.preview-client-link button{margin-left:8px;border:1px solid var(--border);background:rgba(184,151,106,.12);color:#f2dec0;border-radius:999px;padding:4px 8px;font-size:9px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer}
 .preview-close{position:absolute;top:16px;right:20px;font-size:24px;color:var(--muted);cursor:pointer;background:none;border:none}
 .preview-close:hover{color:var(--gold)}
 
@@ -243,6 +246,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
       <div>
         <div class="preview-title">Preview HTML do cliente</div>
         <div class="preview-status" id="previewStatus">Revise a apresentação antes de gerar o link.</div>
+        <div class="preview-client-link" id="previewClientLink" hidden></div>
       </div>
       <div class="preview-actions">
         <button class="ghost-btn" type="button" onclick="refreshHtmlPreview()">Atualizar preview</button>
@@ -1551,6 +1555,18 @@ window.addEventListener('message', event => {
     postEditorEvent('portfolio_sync', { draft, preview: event.data.preview });
     return;
   }
+  if (event.data?.type === 'dcoratto:client-link') {
+    const status = document.getElementById('previewStatus');
+    if (event.data.ok && event.data.publicUrl) {
+      if (status) status.textContent = 'Link persistente gerado com sucesso. Use o link abaixo para enviar ao cliente.';
+      showClientLink(event.data.publicUrl);
+    } else if (status) {
+      status.textContent = event.data.source === 'local-queue'
+        ? 'Sem confirmação do banco agora. O evento ficou na fila local; gere novamente quando a sessão do Supabase estiver ativa.'
+        : `Nao foi possivel gerar o link persistente: ${event.data.error || 'erro desconhecido'}`;
+    }
+    return;
+  }
   if (event.data?.type !== 'dcoratto:apply-settings') return;
   const incoming = event.data.settings || {};
   editorSettings = {
@@ -1613,6 +1629,27 @@ function safeSetLocalStorage(key, value) {
   }
 }
 
+function showClientLink(url) {
+  const box = document.getElementById('previewClientLink');
+  if (!box) return;
+  box.hidden = false;
+  box.innerHTML = `
+    Link persistente do cliente:
+    <a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(url)}</a>
+    <button type="button" onclick="copyClientLink('${escapeJS(url)}')">Copiar</button>
+  `;
+}
+
+async function copyClientLink(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    const status = document.getElementById('previewStatus');
+    if (status) status.textContent = 'Link copiado. Ele permanece salvo no banco e no Storage.';
+  } catch {
+    prompt('Copie o link do cliente:', url);
+  }
+}
+
 ['clientName', 'contractNum', 'endereco'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', syncPreviewDocument);
 });
@@ -1635,10 +1672,15 @@ function openHtmlPreview() {
 }
 
 function publishClientHtml() {
+  const linkBox = document.getElementById('previewClientLink');
+  if (linkBox) {
+    linkBox.hidden = true;
+    linkBox.innerHTML = '';
+  }
   syncPreviewDocument('generate_project_initial');
   openHtmlPreview();
   const status = document.getElementById('previewStatus');
-  if (status) status.textContent = 'HTML enviado para salvar e gerar o link do cliente. Aguarde a confirmação do banco.';
+  if (status) status.textContent = 'Gerando link persistente do cliente. Aguarde a confirmação do banco.';
 }
 
 function closePreview() {

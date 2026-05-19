@@ -53,6 +53,25 @@ function App() {
         preview,
         settings,
         saveHtml: action === 'generate_project_initial',
+      }).then((result) => {
+        if (action !== 'generate_project_initial') return;
+        iframeRef.current?.contentWindow?.postMessage({
+          type: 'dcoratto:client-link',
+          ok: Boolean(result?.htmlVersion?.data?.publicUrl),
+          projectId: result?.projectId || null,
+          publicUrl: result?.htmlVersion?.data?.publicUrl || '',
+          storagePath: result?.htmlVersion?.storage_path || '',
+          source: result?.source || '',
+          error: result?.error ? String(result.error?.message || result.error) : result?.htmlVersion?.data?.storageError || '',
+        }, window.location.origin);
+      }).catch((error) => {
+        if (action !== 'generate_project_initial') return;
+        iframeRef.current?.contentWindow?.postMessage({
+          type: 'dcoratto:client-link',
+          ok: false,
+          publicUrl: '',
+          error: String(error?.message || error),
+        }, window.location.origin);
       });
     }
 

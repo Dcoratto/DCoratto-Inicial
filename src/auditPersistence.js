@@ -184,7 +184,8 @@ async function writeEvent(event) {
   }, { onConflict: 'event_id' });
 
   if (event.saveHtml && preview.environments) {
-    await saveSharedHtml(projectId, preview, event.actor);
+    const htmlVersion = await saveSharedHtml(projectId, preview, event.actor);
+    return { source: 'supabase', projectId, htmlVersion };
   }
 
   return { source: 'supabase', projectId };
@@ -228,7 +229,8 @@ async function persistEnvironmentPages(projectId, environments, environmentPaylo
 async function saveSharedHtml(projectId, preview, actor) {
   const versionNumber = await nextHtmlVersionNumber(projectId);
   const html = await buildStandaloneHtml(preview);
-  const storagePath = `${projectId}/cliente/projeto-inicial-v${String(versionNumber).padStart(3, '0')}.html`;
+  const shareSlug = `${slugify(preview.client?.name || 'cliente')}-${String(versionNumber).padStart(3, '0')}-${crypto.randomUUID().slice(0, 8)}`;
+  const storagePath = `${projectId}/cliente/${shareSlug}.html`;
   let publicUrl = '';
   let storageError = null;
 
@@ -261,6 +263,7 @@ async function saveSharedHtml(projectId, preview, actor) {
       shared_with_client: true,
       shared_at: new Date().toISOString(),
       created_by: actor?.email || '',
+      share_slug: shareSlug,
       data: {
         publicUrl,
         storageError,
@@ -277,9 +280,26 @@ async function saveSharedHtml(projectId, preview, actor) {
 async function buildStandaloneHtml(preview) {
   const response = await fetch('/portfolio_document.html', { cache: 'no-store' });
   const template = await response.text();
-  const serialized = JSON.stringify(JSON.stringify(preview));
-  const bootstrap = `<script>localStorage.setItem('dcoratto.portfolio.document.v1', ${serialized});</script>`;
-  return template.replace('</head>', `${bootstrap}</head>`);
+  const serialized = JSON.stringify(preview)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  const hardening = `
+    <meta name="robots" content="noindex,nofollow,noarchive">
+    <meta name="referrer" content="no-referrer">
+    <script>
+      window.__DCORATTO_PORTFOLIO_DOCUMENT__ = ${serialized};
+      window.__DCORATTO_CLIENT_VIEW__ = true;
+      document.addEventListener('contextmenu', function(event) { event.preventDefault(); });
+      document.addEventListener('keydown', function(event) {
+        const key = String(event.key || '').toLowerCase();
+        if (event.key === 'F12' || ((event.ctrlKey || event.metaKey) && event.shiftKey && ['i','j','c'].includes(key)) || ((event.ctrlKey || event.metaKey) && key === 'u')) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+    </script>`;
+  return template.replace('</head>', `${hardening}</head>`);
 }
 
 async function nextHtmlVersionNumber(projectId) {
@@ -331,6 +351,16 @@ function compactQueuedEvent(event) {
     saveHtml: Boolean(event.saveHtml),
     createdAt: event.createdAt,
   });
+}
+
+function slugify(value) {
+  return String(value || 'cliente')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 48) || 'cliente';
 }
 
 function stripLargeLocalAssets(value) {
