@@ -1567,6 +1567,10 @@ window.addEventListener('message', event => {
     }
     return;
   }
+  if (event.data?.type === 'dcoratto:hydrate-document') {
+    applyHydratedDocument(event.data);
+    return;
+  }
   if (event.data?.type !== 'dcoratto:apply-settings') return;
   const incoming = event.data.settings || {};
   editorSettings = {
@@ -1582,6 +1586,110 @@ window.addEventListener('message', event => {
   renderAmbientes();
   syncPreviewDocument('settings_loaded');
 });
+
+function applyHydratedDocument(payload = {}) {
+  const incomingSettings = payload.settings || null;
+  const incomingDraft = payload.draft || null;
+  const incomingPreview = payload.preview || null;
+
+  if (incomingSettings) {
+    editorSettings = {
+      ...editorSettings,
+      ...incomingSettings,
+      logo: incomingSettings.logo || editorSettings.logo || DEFAULT_LOGO,
+      catalogItems: Array.isArray(incomingSettings.catalogItems) ? incomingSettings.catalogItems : editorSettings.catalogItems,
+      observations: Array.isArray(incomingSettings.observations) ? incomingSettings.observations : editorSettings.observations,
+      materialOptions: normalizeMaterialOptions(incomingSettings.materialOptions || editorSettings.materialOptions),
+    };
+    safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
+  }
+
+  if (incomingDraft) {
+    builderDraft = incomingDraft;
+    AMBIENTES = Array.isArray(incomingDraft.ambientes)
+      ? incomingDraft.ambientes.map(amb => ({ ...amb, pages: Array.isArray(amb.pages) ? amb.pages : [] }))
+      : [];
+    resetBuilderState(incomingDraft.state || {});
+    safeSetLocalStorage(BUILDER_STORAGE_KEY, JSON.stringify(incomingDraft));
+  } else if (incomingPreview?.environments?.length && !AMBIENTES.length) {
+    rebuildBuilderFromPreview(incomingPreview);
+  }
+
+  if (incomingPreview) {
+    mergePreviewDocument(incomingPreview);
+    safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(incomingPreview));
+  }
+
+  applyEditorSettings();
+  pruneUnavailableColors();
+  renderAmbientes();
+  if (incomingDraft || incomingPreview) {
+    syncPreviewDocument('remote_document_loaded');
+  }
+}
+
+function resetBuilderState(incomingState = {}) {
+  Object.keys(state).forEach(key => delete state[key]);
+  AMBIENTES.forEach(amb => {
+    state[amb.id] = {
+      ...emptyEnvironmentState(),
+      ...(incomingState[amb.id] || {}),
+      tampon: incomingState[amb.id]?.tampon || [],
+      porta: incomingState[amb.id]?.porta || [],
+      puxador: incomingState[amb.id]?.puxador || [],
+      corredica: incomingState[amb.id]?.corredica || [],
+      cores: incomingState[amb.id]?.cores || [],
+      obs: incomingState[amb.id]?.obs || [],
+      obsExtra: incomingState[amb.id]?.obsExtra || '',
+    };
+  });
+}
+
+function rebuildBuilderFromPreview(preview) {
+  AMBIENTES = (preview.environments || []).map((environment, index) => {
+    const id = uniqueEnvironmentId(environment.title || `ambiente-${index + 1}`, index);
+    return {
+      id,
+      name: environment.title || `Ambiente ${index + 1}`,
+      img: environment.photos?.[0]?.src || DEFAULT_AMBIENTE_IMG,
+      pages: Array.isArray(environment.pages) ? environment.pages : [],
+    };
+  });
+  const incomingState = {};
+  AMBIENTES.forEach((amb, index) => {
+    const environment = preview.environments[index] || {};
+    incomingState[amb.id] = {
+      tampon: splitSpec(environment.specs?.tamponamentos),
+      porta: splitSpec(environment.specs?.portas),
+      puxador: splitSpec(environment.specs?.puxadores),
+      corredica: splitSpec(environment.specs?.corredicas),
+      cores: Array.isArray(environment.colors) ? environment.colors : [],
+      obs: Array.isArray(environment.notes) ? environment.notes : [],
+      obsExtra: '',
+    };
+  });
+  resetBuilderState(incomingState);
+}
+
+function splitSpec(value) {
+  return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+}
+
+function uniqueEnvironmentId(name, index) {
+  const base = String(name || `ambiente-${index + 1}`)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || `ambiente-${index + 1}`;
+  let id = base;
+  let suffix = 1;
+  while (AMBIENTES.some(amb => amb.id === id)) {
+    suffix += 1;
+    id = `${base}-${suffix}`;
+  }
+  return id;
+}
 
 function mergePreviewDocument(preview) {
   if (!preview?.environments) return;

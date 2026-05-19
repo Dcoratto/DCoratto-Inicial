@@ -1,26 +1,40 @@
 import React, { useEffect, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Login } from './Login'
-import { persistEditorEvent, flushOfflineQueue } from './auditPersistence'
+import { persistEditorEvent, flushOfflineQueue, loadLatestEditorState } from './auditPersistence'
 import { isSupabaseConfigured, supabase } from './supabaseClient'
 import './styles.css'
 
 function App() {
   const [isLogged, setIsLogged] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [remoteSettings, setRemoteSettings] = useState(null);
+  const [remoteDocument, setRemoteDocument] = useState(null);
   const iframeRef = useRef(null);
   const actor = { email: 'dcorattoinovacao@gmail.com' };
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-05-19-crud-config-v1";
+  const SYSTEM_VERSION = "2026-05-19-remote-persistence-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
     if (!isLogged) return undefined;
+    let cancelled = false;
+    setIsBootstrapping(true);
 
     flushOfflineQueue().catch((error) => console.warn('Falha ao limpar fila offline:', error));
 
-    async function loadRemoteSettings() {
+    async function bootstrapRemoteState() {
+      try {
+        const remote = await loadLatestEditorState(actor);
+        if (cancelled) return;
+        hydrateBrowserStorage(remote);
+        setRemoteDocument(remote);
+        if (remote?.settings) setRemoteSettings(remote.settings);
+      } catch (error) {
+        console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
+      }
+
       if (!isSupabaseConfigured || !supabase) return;
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData?.session?.access_token) return;
@@ -31,11 +45,19 @@ function App() {
         .maybeSingle();
 
       if (!error && data?.payload) {
+        if (cancelled) return;
         setRemoteSettings(data.payload);
+        hydrateBrowserStorage({ settings: data.payload });
       }
     }
 
-    loadRemoteSettings();
+    bootstrapRemoteState()
+      .finally(() => {
+        if (!cancelled) setIsBootstrapping(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isLogged]);
 
   useEffect(() => {
@@ -81,20 +103,39 @@ function App() {
     return () => window.removeEventListener('message', handleMessage);
   }, [isLogged]);
 
-  function sendSettingsToEditor() {
-    if (!remoteSettings) return;
+  function sendStateToEditor() {
+    if (remoteSettings) {
+      iframeRef.current?.contentWindow?.postMessage({
+        type: 'dcoratto:apply-settings',
+        settings: remoteSettings,
+      }, window.location.origin);
+    }
     iframeRef.current?.contentWindow?.postMessage({
-      type: 'dcoratto:apply-settings',
+      type: 'dcoratto:hydrate-document',
+      draft: remoteDocument?.draft || null,
+      preview: remoteDocument?.preview || null,
       settings: remoteSettings,
+      projectId: remoteDocument?.projectId || null,
     }, window.location.origin);
   }
 
   useEffect(() => {
-    if (isLogged) sendSettingsToEditor();
-  }, [isLogged, remoteSettings]);
+    if (isLogged && !isBootstrapping) sendStateToEditor();
+  }, [isLogged, isBootstrapping, remoteSettings, remoteDocument]);
 
   if (!isLogged) {
     return <Login onLoginSuccess={() => setIsLogged(true)} />;
+  }
+
+  if (isBootstrapping) {
+    return (
+      <div className="app-loading">
+        <div>
+          <span>D'CORATTO</span>
+          <strong>Carregando rascunho persistente...</strong>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -102,7 +143,7 @@ function App() {
       <iframe
         ref={iframeRef}
         src={editorUrl}
-        onLoad={sendSettingsToEditor}
+        onLoad={sendStateToEditor}
         style={{ width: '100%', height: '100%', border: 'none' }}
         title="DCoratto Sistema"
       />
@@ -115,3 +156,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>
 )
+
+function hydrateBrowserStorage(remote) {
+  try {
+    if (remote?.draft) localStorage.setItem('dcoratto.builder.document.v1', JSON.stringify(remote.draft));
+    if (remote?.preview) localStorage.setItem('dcoratto.portfolio.document.v1', JSON.stringify(remote.preview));
+    if (remote?.settings) localStorage.setItem('dcoratto.editor.settings.v1', JSON.stringify(remote.settings));
+  } catch (error) {
+    console.warn('Nao foi possivel preparar o cache local do editor.', error);
+  }
+}

@@ -16,6 +16,37 @@ body {
   font-family: 'Montserrat', Arial, sans-serif;
 }
 
+.app-loading {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 32%, rgba(184, 151, 106, .16), transparent 34%),
+    #080807;
+  color: #f5f0e8;
+}
+
+.app-loading div {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+
+.app-loading span {
+  color: #b8976a;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .32em;
+}
+
+.app-loading strong {
+  color: #f5f0e8;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 34px;
+  font-weight: 300;
+}
+
 .legacy-shell {
   display: grid;
   grid-template-rows: 52px 1fr;

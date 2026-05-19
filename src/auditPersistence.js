@@ -16,6 +16,11 @@ export function getActiveProjectId() {
   return id;
 }
 
+export function setActiveProjectId(id) {
+  if (!id) return;
+  localStorage.setItem(PROJECT_ID_KEY, id);
+}
+
 export function readOfflineQueue() {
   try {
     return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
@@ -37,7 +42,19 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
   };
 
   if (saveHtml && preview?.environments) {
-    return publishClientHtmlWithServer(payload);
+    const result = await publishClientHtmlWithServer(payload);
+    if (result?.projectId) setActiveProjectId(result.projectId);
+    return result;
+  }
+
+  if (draft || preview || settings) {
+    try {
+      const result = await persistEditorEventWithServer(payload);
+      if (result?.projectId) setActiveProjectId(result.projectId);
+      return result;
+    } catch (error) {
+      console.warn('Persistencia pelo servidor indisponivel; tentando fallback.', error);
+    }
   }
 
   if (!isSupabaseConfigured || !supabase) {
@@ -59,6 +76,46 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
     enqueue(payload);
     return { source: 'local-queue', projectId: getActiveProjectId(), error };
   }
+}
+
+export async function loadLatestEditorState(actor) {
+  const params = new URLSearchParams();
+  if (actor?.email) params.set('actor', actor.email);
+  const response = await fetch(`/api/editor-state/latest?${params.toString()}`, {
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result?.error || 'Nao foi possivel carregar o rascunho remoto.');
+  }
+  const result = await response.json();
+  if (result?.projectId) setActiveProjectId(result.projectId);
+  return result;
+}
+
+async function persistEditorEventWithServer(event) {
+  const response = await fetch('/api/editor-events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: getActiveProjectId(),
+      actor: event.actor,
+      action: event.action,
+      draft: event.draft,
+      preview: event.preview,
+      settings: event.settings,
+      eventId: event.id,
+      createdAt: event.createdAt,
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result?.error || 'Servidor recusou a persistencia do editor.');
+  }
+  return {
+    source: result.source || 'server-supabase',
+    projectId: result.projectId || getActiveProjectId(),
+  };
 }
 
 export async function flushOfflineQueue() {

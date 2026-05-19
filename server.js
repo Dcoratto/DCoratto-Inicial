@@ -39,6 +39,16 @@ createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/editor-events') {
+    await handleEditorEventRequest(request, response);
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/editor-state/latest') {
+    await handleLatestEditorStateRequest(url, response);
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname.startsWith('/cliente/')) {
     await handleClientHtmlRequest(url, response);
     return;
@@ -145,6 +155,81 @@ async function handleClientLinkRequest(request, response) {
   }
 }
 
+async function handleEditorEventRequest(request, response) {
+  try {
+    if (!supabaseServer) {
+      sendJson(response, 503, {
+        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para persistir o editor.',
+      });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    const projectId = safeId(body.projectId) || crypto.randomUUID();
+    await persistEditorState({
+      projectId,
+      actor: body.actor,
+      action: body.action,
+      draft: body.draft,
+      preview: body.preview,
+      settings: body.settings,
+      eventId: body.eventId,
+      createdAt: body.createdAt,
+    });
+
+    sendJson(response, 200, {
+      ok: true,
+      source: 'server-supabase',
+      projectId,
+    });
+  } catch (error) {
+    sendJson(response, 500, {
+      error: String(error?.message || error),
+    });
+  }
+}
+
+async function handleLatestEditorStateRequest(url, response) {
+  try {
+    if (!supabaseServer) {
+      sendJson(response, 503, {
+        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar o rascunho.',
+      });
+      return;
+    }
+
+    const { data: projects, error: projectError } = await supabaseServer
+      .from('document_projects')
+      .select('id, data, updated_at')
+      .eq('document_type', 'projeto_inicial')
+      .order('updated_at', { ascending: false })
+      .limit(12);
+    if (projectError) throw projectError;
+    const project = (projects || []).find(item => hasPersistableContent(item?.data?.draft, item?.data?.preview)) || null;
+
+    const { data: settingsRow, error: settingsError } = await supabaseServer
+      .from('editor_settings')
+      .select('payload')
+      .eq('settings_key', 'default')
+      .maybeSingle();
+    if (settingsError) console.warn('Nao foi possivel carregar configuracoes remotas.', settingsError);
+
+    sendJson(response, 200, {
+      ok: true,
+      source: 'server-supabase',
+      projectId: project?.id || null,
+      updatedAt: project?.updated_at || null,
+      draft: project?.data?.draft || null,
+      preview: project?.data?.preview || null,
+      settings: settingsRow?.payload || null,
+    });
+  } catch (error) {
+    sendJson(response, 500, {
+      error: String(error?.message || error),
+    });
+  }
+}
+
 async function handleClientHtmlRequest(url, response) {
   try {
     if (!supabaseServer) {
@@ -205,6 +290,9 @@ async function loadClientHtml({ projectId, shareSlug }) {
   const byShareSlug = await findHtmlVersionByShareSlug(shareSlug);
   if (byShareSlug) return byShareSlug;
 
+  const byDataShareSlug = await findHtmlVersionByDataShareSlug(shareSlug);
+  if (byDataShareSlug) return byDataShareSlug;
+
   return '';
 }
 
@@ -231,6 +319,21 @@ async function findHtmlVersionByShareSlug(shareSlug) {
   return data?.html_content || '';
 }
 
+async function findHtmlVersionByDataShareSlug(shareSlug) {
+  const { data, error } = await supabaseServer
+    .from('document_html_versions')
+    .select('html_content')
+    .filter('data->>shareSlug', 'eq', shareSlug)
+    .eq('shared_with_client', true)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) {
+    console.warn('Nao foi possivel buscar HTML por data.shareSlug.', error);
+    return '';
+  }
+  return data?.[0]?.html_content || '';
+}
+
 async function downloadHtmlFromStorage(storagePath) {
   const { data, error } = await supabaseServer.storage
     .from(htmlBucket)
@@ -244,7 +347,7 @@ async function readJsonBody(request) {
   let total = 0;
   for await (const chunk of request) {
     total += chunk.length;
-    if (total > 12_000_000) throw new Error('O HTML ficou grande demais para publicar. Reduza imagens muito pesadas.');
+    if (total > 50_000_000) throw new Error('O projeto ficou grande demais para persistir. Reduza imagens muito pesadas.');
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
@@ -253,14 +356,73 @@ async function readJsonBody(request) {
 async function ensureHtmlBucket() {
   const { data: buckets, error: listError } = await supabaseServer.storage.listBuckets();
   if (listError) throw listError;
-  if (buckets?.some((bucket) => bucket.name === htmlBucket || bucket.id === htmlBucket)) return;
+  if (buckets?.some((bucket) => bucket.name === htmlBucket || bucket.id === htmlBucket)) {
+    if (typeof supabaseServer.storage.updateBucket === 'function') {
+      await supabaseServer.storage.updateBucket(htmlBucket, {
+        public: true,
+        fileSizeLimit: 52_428_800,
+        allowedMimeTypes: ['text/html'],
+      }).catch((error) => console.warn('Nao foi possivel atualizar o bucket HTML.', error));
+    }
+    return;
+  }
 
   const { error } = await supabaseServer.storage.createBucket(htmlBucket, {
     public: true,
-    fileSizeLimit: 10_485_760,
+    fileSizeLimit: 52_428_800,
     allowedMimeTypes: ['text/html'],
   });
   if (error) throw error;
+}
+
+async function persistEditorState({ projectId, actor, action, draft, preview, settings, eventId, createdAt }) {
+  if (settings) {
+    const { error } = await supabaseServer
+      .from('editor_settings')
+      .upsert({
+        settings_key: 'default',
+        payload: settings,
+        updated_by: actor?.email || '',
+      }, { onConflict: 'settings_key' });
+    if (error) throw error;
+  }
+
+  if (!hasPersistableContent(draft, preview)) return;
+
+  const client = preview?.client || {};
+  const projectPayload = {
+    id: projectId,
+    title: preview?.projectType || 'Projeto Inicial',
+    client_name: client.name || draft?.fields?.clientName || '',
+    contract_number: client.contractNumber || draft?.fields?.contractNum || '',
+    factory: Array.isArray(client.manufacturers) ? client.manufacturers.join(' + ') : '',
+    address: client.address || draft?.fields?.endereco || '',
+    document_type: 'projeto_inicial',
+    status: 'draft',
+    data: {
+      draft: draft || null,
+      preview: preview || null,
+      actor: actor || null,
+      lastAction: action || 'autosave',
+      lastEventId: eventId || null,
+      lastEventAt: createdAt || new Date().toISOString(),
+    },
+  };
+
+  const { error } = await supabaseServer
+    .from('document_projects')
+    .upsert(projectPayload, { onConflict: 'id' });
+  if (error) throw error;
+}
+
+function hasPersistableContent(draft, preview) {
+  const hasPreviewContent = Array.isArray(preview?.environments) && preview.environments.length > 0;
+  const hasAmbientes = Array.isArray(draft?.ambientes) && draft.ambientes.length > 0;
+  const hasFields = Object.values(draft?.fields || {}).some((value) => {
+    if (Array.isArray(value)) return value.length > 0;
+    return Boolean(String(value || '').trim());
+  });
+  return hasPreviewContent || hasAmbientes || hasFields;
 }
 
 async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt }) {
