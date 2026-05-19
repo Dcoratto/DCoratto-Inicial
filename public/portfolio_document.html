@@ -1507,9 +1507,32 @@
 
       window.addEventListener('resize', updatePageAnnotationGeometry);
 
+      let lastClickTime = 0;
+      let lastClickTarget = null;
+      
       document.addEventListener('pointerdown', (event) => {
         if (!isEditablePreview) return;
         if (event.target.closest('button, input, textarea, select, a, [contenteditable="true"], .doc-photo-frame, .page-annotation-text, .page-annotation-toolbar, .page-annotation-line, .page-arrow-point, .frame-context-menu, .preview-frame-tools, .frame-selection-toolbar')) return;
+        
+        // Duplo clique desativa arrow draw mode
+        const now = Date.now();
+        const isDoubleClick = (now - lastClickTime < 300) && (lastClickTarget === event.target);
+        if (isDoubleClick && arrowDrawMode) {
+          arrowDrawMode = null;
+          applyArrowDrawMode();
+          lastClickTime = 0;
+          return;
+        }
+        lastClickTime = now;
+        lastClickTarget = event.target;
+        
+        // Clique em área vazia desativa arrow draw mode
+        if (arrowDrawMode) {
+          arrowDrawMode = null;
+          applyArrowDrawMode();
+          return;
+        }
+        
         clearFrameSelection();
       });
 
@@ -2755,10 +2778,14 @@
 
       function startPreviewFrameDrag(event) {
         if (!isEditablePreview) return;
+        // Se modo de desenho de setas está ativo, não permitir arrastar frames
+        if (arrowDrawMode && Number(event.currentTarget.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(event.currentTarget.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         if (event.target.closest('.preview-frame-tools, .frame-selection-toolbar, .annotation-edit-row, [data-drag-annotation], [data-resize-frame]')) return;
         event.preventDefault();
         const node = event.currentTarget;
         const key = frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex);
+        // Não selecionar frame se estamos em qualquer modo de seta
+        if (arrowDrawMode) return;
         if (event.shiftKey || event.ctrlKey || event.metaKey) toggleFrameSelection(key);
         else if (!selectedFrameKeys.has(key)) selectSingleFrame(key);
         if (event.target.closest('[data-editable-frame-image]')) return;
@@ -2798,9 +2825,11 @@
 
       function startPreviewFrameResize(event) {
         if (!isEditablePreview) return;
+        // Se modo de desenho de setas está ativo, não permitir redimensionar frames
+        const node = event.currentTarget.closest('.doc-photo-frame');
+        if (arrowDrawMode && Number(node?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(node?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         event.preventDefault();
         event.stopPropagation();
-        const node = event.currentTarget.closest('.doc-photo-frame');
         const frame = pageFrame(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.frameIndex));
         const canvas = node?.closest('.page-frames');
         if (!frame || !canvas || !node) return;
@@ -3076,6 +3105,8 @@
       function startFrameImagePan(event) {
         if (!isEditablePreview) return;
         const frameNode = event.currentTarget.closest('.doc-photo-frame');
+        // Se modo de desenho de setas está ativo, não permitir mover a imagem
+        if (arrowDrawMode && Number(frameNode?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(frameNode?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         const frame = pageFrame(Number(frameNode?.dataset.environmentIndex), Number(frameNode?.dataset.pageIndex), Number(frameNode?.dataset.frameIndex));
         if (!frame || !frame.editImage) return;
         event.preventDefault();
