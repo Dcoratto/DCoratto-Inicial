@@ -402,7 +402,8 @@
         pointer-events: auto;
         text-shadow: var(--text-shadow, 0 1px 0 rgba(255,255,255,.75));
         -webkit-text-stroke: var(--text-stroke, 0 transparent);
-        transform: translate(8px, -50%);
+        text-align: var(--text-align, left);
+        transform: translate(var(--text-offset-x, 8px), var(--text-offset-y, -50%));
       }
 
       .page-annotation-text.is-selected {
@@ -1089,6 +1090,12 @@
 
       window.addEventListener('resize', updatePageAnnotationGeometry);
 
+      document.addEventListener('pointerdown', (event) => {
+        if (!isEditablePreview) return;
+        if (event.target.closest('button, input, textarea, select, a, [contenteditable="true"], .doc-photo-frame, .page-annotation-text, .page-annotation-toolbar, .page-annotation-line, .page-arrow-point, .frame-context-menu, .preview-frame-tools, .frame-selection-toolbar')) return;
+        clearFrameSelection();
+      });
+
       document.addEventListener('keydown', (event) => {
         const target = event.target;
         const isTextEditing = target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
@@ -1107,6 +1114,8 @@
         if (isTextEditing) return;
         if (event.key === 'Escape') {
           closeLightbox();
+          arrowDrawMode = null;
+          applyArrowDrawMode();
           clearFrameSelection();
           closeFrameContextMenu();
         }
@@ -1661,22 +1670,48 @@
         };
       }
 
-      function pageAnnotationAngle(annotation, pageNode = null) {
+      function pageAnnotationVector(annotation, pageNode = null) {
         const rect = pageNode?.getBoundingClientRect?.();
-        const scaleX = rect?.width || 1;
-        const scaleY = rect?.height || 1;
-        const dx = (Number(annotation.toX ?? 0) - Number(annotation.fromX ?? 0)) * scaleX;
-        const dy = (Number(annotation.toY ?? 0) - Number(annotation.fromY ?? 0)) * scaleY;
+        const width = rect?.width || 1;
+        const height = rect?.height || 1;
+        return {
+          dx: (Number(annotation.toX ?? 0) - Number(annotation.fromX ?? 0)) * width / 100,
+          dy: (Number(annotation.toY ?? 0) - Number(annotation.fromY ?? 0)) * height / 100,
+        };
+      }
+
+      function pageAnnotationAngle(annotation, pageNode = null) {
+        const { dx, dy } = pageAnnotationVector(annotation, pageNode);
         return Math.atan2(dy, dx) * 180 / Math.PI;
       }
 
       function pageAnnotationLength(annotation, pageNode) {
-        const rect = pageNode?.getBoundingClientRect?.();
-        const width = rect?.width || 1;
-        const height = rect?.height || 1;
-        const dx = (Number(annotation.toX ?? 0) - Number(annotation.fromX ?? 0)) * width / 100;
-        const dy = (Number(annotation.toY ?? 0) - Number(annotation.fromY ?? 0)) * height / 100;
+        const { dx, dy } = pageAnnotationVector(annotation, pageNode);
         return Math.max(1, Math.hypot(dx, dy));
+      }
+
+      function pageAnnotationTextPlacement(annotation, pageNode = null) {
+        const { dx, dy } = pageAnnotationVector(annotation, pageNode);
+        const horizontal = Math.abs(dx) >= Math.abs(dy) * 1.15;
+        const vertical = Math.abs(dy) >= Math.abs(dx) * 1.15;
+
+        if (horizontal) {
+          return dx >= 0
+            ? { x: 'calc(-100% - 10px)', y: '-50%', align: 'right' }
+            : { x: '10px', y: '-50%', align: 'left' };
+        }
+
+        if (vertical) {
+          return dy >= 0
+            ? { x: '-50%', y: 'calc(-100% - 10px)', align: 'center' }
+            : { x: '-50%', y: '10px', align: 'center' };
+        }
+
+        return {
+          x: dx >= 0 ? 'calc(-100% - 10px)' : '10px',
+          y: dy >= 0 ? 'calc(-100% - 8px)' : '8px',
+          align: dx >= 0 ? 'right' : 'left',
+        };
       }
 
       function updatePageAnnotationLine(node, annotation, pageNode) {
@@ -1697,6 +1732,21 @@
         node.style.setProperty('--arrow-angle', `${pageAnnotationAngle(annotation, pageNode)}deg`);
       }
 
+      function updatePageAnnotationText(node, annotation, pageNode) {
+        if (!node || !annotation) return;
+        const placement = pageAnnotationTextPlacement(annotation, pageNode);
+        node.style.left = `${Number(annotation.fromX ?? 0)}%`;
+        node.style.top = `${Number(annotation.fromY ?? 0)}%`;
+        node.style.setProperty('--text-offset-x', placement.x);
+        node.style.setProperty('--text-offset-y', placement.y);
+        node.style.setProperty('--text-align', placement.align);
+      }
+
+      function pageAnnotationTextPlacementStyle(annotation) {
+        const placement = pageAnnotationTextPlacement(annotation);
+        return `--text-offset-x:${placement.x};--text-offset-y:${placement.y};--text-align:${placement.align}`;
+      }
+
       function updatePageAnnotationGeometry() {
         document.querySelectorAll('[data-page-annotation-line]').forEach((node) => {
           const pageNode = node.closest('[data-page-frames]');
@@ -1707,6 +1757,11 @@
           const pageNode = node.closest('[data-page-frames]');
           const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
           updatePageAnnotationArrowHead(node, annotation, pageNode);
+        });
+        document.querySelectorAll('[data-page-annotation-text]').forEach((node) => {
+          const pageNode = node.closest('[data-page-frames]');
+          const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
+          updatePageAnnotationText(node, annotation, pageNode);
         });
       }
 
@@ -2176,13 +2231,7 @@
           updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
-          arrowDrawMode = null;
           persistAndRender();
-          requestAnimationFrame(() => {
-            const label = document.querySelector(`[data-page-annotation-text="${environmentIndex}-${pageIndex}-${annotationIndex}"]`);
-            label?.focus();
-            document.getSelection()?.selectAllChildren(label);
-          });
         };
 
         window.addEventListener('pointermove', move);
@@ -2222,8 +2271,7 @@
           annotation.toY = Math.max(0, Math.min(100, initial.toY + dy));
           updatePageAnnotationLine(node, annotation, pageNode);
           if (label) {
-            label.style.left = `${annotation.fromX}%`;
-            label.style.top = `${annotation.fromY}%`;
+            updatePageAnnotationText(label, annotation, pageNode);
           }
           if (tail) {
             tail.style.left = `${annotation.fromX}%`;
@@ -2275,8 +2323,7 @@
           const arrowHead = pageNode.querySelector(`[data-page-annotation-arrow-head="${id}"]`);
           updatePageAnnotationLine(line, annotation, pageNode);
           if (handle === 'text' && label) {
-            label.style.left = `${point.x}%`;
-            label.style.top = `${point.y}%`;
+            updatePageAnnotationText(label, annotation, pageNode);
             if (tail) {
               tail.style.left = `${point.x}%`;
               tail.style.top = `${point.y}%`;
@@ -2292,6 +2339,7 @@
             head.style.top = `${point.y}%`;
           }
           updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
+          updatePageAnnotationText(label, annotation, pageNode);
         };
 
         const up = () => {
@@ -2527,7 +2575,7 @@
               data-annotation-index="${annotationIndex}"
               class="page-annotation-text"
               contenteditable="${isEditablePreview ? 'true' : 'false'}"
-              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;--text-color:${escapeAttribute(annotation.textColor || '#111111')};--text-size:${Number(annotation.fontSize ?? 15)}px;--text-shadow:${annotation.textShadow === 'none' ? 'none' : '0 1px 3px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.75)'};--text-stroke:${annotation.textBorder ? `.35px ${escapeAttribute(annotation.arrowColor || '#111111')}` : '0 transparent'}"
+              style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;${pageAnnotationTextPlacementStyle(annotation)};--text-color:${escapeAttribute(annotation.textColor || '#111111')};--text-size:${Number(annotation.fontSize ?? 15)}px;--text-shadow:${annotation.textShadow === 'none' ? 'none' : '0 1px 3px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.75)'};--text-stroke:${annotation.textBorder ? `.35px ${escapeAttribute(annotation.arrowColor || '#111111')}` : '0 transparent'}"
             >${escapeHTML(annotation.text || 'Texto da seta')}</span>
             ${isEditablePreview ? `<span
               data-page-annotation-head="${environmentIndex}-${pageIndex}-${annotationIndex}"
