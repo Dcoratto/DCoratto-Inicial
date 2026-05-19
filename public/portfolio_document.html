@@ -35,14 +35,14 @@
       body.lightbox-open { overflow: hidden; }
 
       body.client-intro-open {
-        overflow: hidden;
+        overflow: auto;
       }
 
       .client-intro {
-        position: fixed;
-        inset: 0;
-        z-index: 1000;
+        position: relative;
+        z-index: 1;
         display: none;
+        min-height: 100vh;
         place-items: center;
         overflow: hidden;
         background:
@@ -50,7 +50,7 @@
           radial-gradient(circle at 18% 82%, rgba(215,194,167,.12), transparent 30%),
           linear-gradient(135deg, #070604 0%, #15110c 52%, #050504 100%);
         color: #f8f2e8;
-        cursor: grab;
+        cursor: default;
       }
 
       .client-intro.active {
@@ -58,7 +58,7 @@
       }
 
       .client-intro.is-leaving {
-        animation: introFadeOut .85s ease forwards;
+        animation: none;
       }
 
       .client-intro::before,
@@ -1567,34 +1567,10 @@
       function initClientIntro() {
         if (!isClientView || !clientIntro) return;
         renderIntroLogo();
+        document.body.insertBefore(clientIntro, document.body.firstElementChild);
         clientIntro.classList.add('active');
         document.body.classList.add('client-intro-open');
-
-        let dismissed = false;
-        const dismiss = () => {
-          if (dismissed) return;
-          dismissed = true;
-          clientIntro.classList.add('is-leaving');
-          document.body.classList.remove('client-intro-open');
-          window.removeEventListener('wheel', dismiss);
-          window.removeEventListener('touchmove', dismiss);
-          window.removeEventListener('keydown', handleIntroKey);
-          window.setTimeout(() => {
-            clientIntro.classList.remove('active');
-            clientIntro.setAttribute('aria-hidden', 'true');
-          }, 900);
-        };
-        const handleIntroKey = (event) => {
-          if (['ArrowDown', 'PageDown', ' ', 'Enter', 'Escape'].includes(event.key)) dismiss();
-        };
-
         clientIntro.setAttribute('aria-hidden', 'false');
-        clientIntro.addEventListener('click', dismiss, { once: true });
-        clientIntro.addEventListener('pointerdown', dismiss, { once: true });
-        window.addEventListener('wheel', dismiss, { once: true, passive: true });
-        window.addEventListener('touchmove', dismiss, { once: true, passive: true });
-        window.addEventListener('keydown', handleIntroKey);
-        window.setTimeout(dismiss, 5000);
       }
 
       function renderCover() {
