@@ -141,6 +141,8 @@ async function writeEvent(event) {
       .upsert(environmentPayloads);
 
     if (environmentsError) throw environmentsError;
+
+    await persistEnvironmentPages(projectId, environments, environmentPayloads);
   }
 
   await supabase.from('document_versions').insert({
@@ -162,6 +164,41 @@ async function writeEvent(event) {
   }
 
   return { source: 'supabase', projectId };
+}
+
+async function persistEnvironmentPages(projectId, environments, environmentPayloads) {
+  const { error: deleteError } = await supabase
+    .from('environment_pages')
+    .delete()
+    .eq('project_id', projectId);
+
+  if (deleteError) throw deleteError;
+
+  const pagePayloads = environments.flatMap((environment, environmentIndex) => {
+    const environmentId = environmentPayloads[environmentIndex]?.id;
+    if (!environmentId || !Array.isArray(environment.pages)) return [];
+    return environment.pages.map((page, pageIndex) => {
+      const photo = page.photos?.[0] || {};
+      return {
+        project_id: projectId,
+        environment_id: environmentId,
+        position: pageIndex,
+        title: page.title || `Página ${pageIndex + 1}`,
+        description: page.description || '',
+        image_url: photo.src?.startsWith('http') ? photo.src : null,
+        image_data: photo.src?.startsWith('data:') ? photo.src : null,
+        data: page,
+      };
+    });
+  });
+
+  if (!pagePayloads.length) return;
+
+  const { error: pagesError } = await supabase
+    .from('environment_pages')
+    .insert(pagePayloads);
+
+  if (pagesError) throw pagesError;
 }
 
 async function saveSharedHtml(projectId, preview, actor) {

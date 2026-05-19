@@ -174,6 +174,57 @@
         padding: 34px 60px 76px;
       }
 
+      .environment-page {
+        min-height: calc(100vh - 84px);
+        padding: 54px 60px 76px;
+        border-top: 1px solid var(--line);
+      }
+
+      .page-detail-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 38px;
+        align-items: stretch;
+      }
+
+      .page-detail-image {
+        min-height: 560px;
+        background: #15120f;
+        overflow: hidden;
+        border: 0;
+        padding: 0;
+        color: inherit;
+        cursor: zoom-in;
+      }
+
+      .page-detail-image img {
+        width: 100%;
+        height: 100%;
+        min-height: 560px;
+        object-fit: cover;
+        display: block;
+      }
+
+      .page-detail-copy {
+        border-left: 1px solid var(--line);
+        padding-left: 34px;
+        align-self: center;
+      }
+
+      .page-detail-copy h3 {
+        margin: 0 0 24px;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 46px;
+        font-weight: 300;
+        line-height: 1;
+      }
+
+      .page-detail-copy p {
+        color: rgba(247, 242, 234, .72);
+        font-size: 14px;
+        line-height: 1.8;
+      }
+
       .section-heading {
         display: grid;
         grid-template-columns: 32px minmax(240px, auto) 1fr;
@@ -623,7 +674,8 @@
       function renderCover() {
         const environmentsCount = documentData.environments.length;
         const photosCount = documentData.environments.reduce((total, environment) => {
-          return total + normalizePhotos(environment.photos).length;
+          const pagePhotos = (environment.pages || []).reduce((sum, page) => sum + normalizePhotos(page.photos).length, 0);
+          return total + normalizePhotos(environment.photos).length + pagePhotos;
         }, 0);
 
         return `
@@ -731,6 +783,31 @@
                   ${(environment.notes || []).map((note) => `<p>${escapeHTML(note)}</p>`).join('')}
                 </div>
                 <div class="client-footer">${escapeHTML(documentData.client.address || '')}</div>
+              </aside>
+            </div>
+          </section>
+          ${(environment.pages || []).map((page, pageIndex) => renderEnvironmentPage(environment, page, index, pageIndex)).join('')}
+        `;
+      }
+
+      function renderEnvironmentPage(environment, page, environmentIndex, pageIndex) {
+        const photos = normalizePhotos(page.photos);
+        const mainPhoto = photos[0];
+        const pageNumber = page.number || `${String(environmentIndex + 1).padStart(2, '0')}.${String(pageIndex + 1).padStart(2, '0')}`;
+        return `
+          <section class="environment-page" id="${slug(environment.title)}-${slug(page.title || `pagina-${pageIndex + 1}`)}">
+            <div class="section-heading">
+              <span class="section-number">${escapeHTML(pageNumber)}</span>
+              <h2>${escapeHTML(environment.title)}</h2>
+              <span class="section-line"></span>
+            </div>
+            <div class="page-detail-layout">
+              <button class="page-detail-image" type="button" data-lightbox-src="${escapeAttribute(mainPhoto.src)}" data-lightbox-title="${escapeAttribute(page.title || environment.title)}">
+                <img src="${escapeAttribute(mainPhoto.src)}" alt="${escapeAttribute(page.title || environment.title)}" />
+              </button>
+              <aside class="page-detail-copy">
+                <h3>${escapeHTML(page.title || `Página ${pageIndex + 1}`)}</h3>
+                ${page.description ? `<p>${escapeHTML(page.description)}</p>` : '<p>Detalhes do ambiente.</p>'}
               </aside>
             </div>
           </section>

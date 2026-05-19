@@ -136,6 +136,21 @@ create table if not exists public.environment_notes (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.environment_pages (
+  id uuid primary key default gen_random_uuid(),
+  environment_id uuid not null references public.document_environments(id) on delete cascade,
+  project_id uuid not null references public.document_projects(id) on delete cascade,
+  position integer not null default 0,
+  title text not null default '',
+  description text not null default '',
+  image_url text,
+  image_data text,
+  data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (environment_id, position)
+);
+
 create table if not exists public.document_html_versions (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.document_projects(id) on delete cascade,
@@ -203,6 +218,7 @@ end;
 $$;
 
 create index if not exists document_environments_project_idx on public.document_environments(project_id, position);
+create index if not exists environment_pages_environment_idx on public.environment_pages(environment_id, position);
 create index if not exists environment_photos_environment_idx on public.environment_photos(environment_id, position);
 create index if not exists environment_photos_project_idx on public.environment_photos(project_id, position);
 create index if not exists environment_colors_environment_idx on public.environment_colors(environment_id, position);
@@ -252,6 +268,11 @@ create trigger set_environment_notes_updated_at
 before update on public.environment_notes
 for each row execute function public.set_updated_at();
 
+drop trigger if exists set_environment_pages_updated_at on public.environment_pages;
+create trigger set_environment_pages_updated_at
+before update on public.environment_pages
+for each row execute function public.set_updated_at();
+
 drop trigger if exists set_editor_settings_updated_at on public.editor_settings;
 create trigger set_editor_settings_updated_at
 before update on public.editor_settings
@@ -286,6 +307,7 @@ alter table public.environment_photos enable row level security;
 alter table public.environment_colors enable row level security;
 alter table public.environment_materials enable row level security;
 alter table public.environment_notes enable row level security;
+alter table public.environment_pages enable row level security;
 alter table public.catalog_colors enable row level security;
 alter table public.catalog_options enable row level security;
 alter table public.catalog_materials enable row level security;
@@ -443,6 +465,22 @@ select
             )
             from public.environment_notes en
             where en.environment_id = e.id
+          ), '[]'::jsonb),
+          'pages', coalesce((
+            select jsonb_agg(
+              jsonb_build_object(
+                'id', ep.id,
+                'position', ep.position,
+                'title', ep.title,
+                'description', ep.description,
+                'imageUrl', ep.image_url,
+                'imageData', ep.image_data,
+                'data', ep.data
+              )
+              order by ep.position
+            )
+            from public.environment_pages ep
+            where ep.environment_id = e.id
           ), '[]'::jsonb)
         )
         order by e.position
@@ -550,6 +588,11 @@ drop policy if exists "Authenticated read editor settings" on public.editor_sett
 create policy "Authenticated read editor settings" on public.editor_settings for select using (auth.role() = 'authenticated');
 drop policy if exists "Authenticated write editor settings" on public.editor_settings;
 create policy "Authenticated write editor settings" on public.editor_settings for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "Authenticated read environment pages" on public.environment_pages;
+create policy "Authenticated read environment pages" on public.environment_pages for select using (auth.role() = 'authenticated');
+drop policy if exists "Authenticated write environment pages" on public.environment_pages;
+create policy "Authenticated write environment pages" on public.environment_pages for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 
 drop policy if exists "Public write dcoratto storage" on storage.objects;
 drop policy if exists "Authenticated write dcoratto storage" on storage.objects;

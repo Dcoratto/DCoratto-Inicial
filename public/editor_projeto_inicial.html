@@ -71,6 +71,15 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .amb-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 .amb-fields .field-group{grid-column:auto}
 .amb-fields .field-full{grid-column:1/-1}
+.pages-panel{margin-top:22px;border-top:1px solid var(--border);padding-top:18px}
+.pages-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.pages-list{display:grid;gap:12px}
+.page-card{border:1px solid rgba(184,151,106,.22);background:rgba(255,255,255,.035);border-radius:4px;padding:14px}
+.page-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.page-card-title{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold-l);font-weight:500}
+.page-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.page-fields .field-full{grid-column:1/-1}
+.page-photo-preview{width:100%;max-width:240px;aspect-ratio:16/10;object-fit:cover;border:1px solid var(--border);border-radius:3px;background:#11100e}
 .check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .check-item{display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.055);color:#fff3df;font-size:12px;font-weight:400;line-height:1.35;padding:10px;border-radius:4px;transition:background .2s,border .2s}
 .check-item:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12)}
@@ -674,6 +683,7 @@ const DEFAULT_AMBIENTES = [
 
 const DEFAULT_AMBIENTE_IMG = DEFAULT_AMBIENTES[0].img;
 let AMBIENTES = Array.isArray(builderDraft?.ambientes) ? builderDraft.ambientes : [];
+AMBIENTES = AMBIENTES.map(amb => ({ ...amb, pages: Array.isArray(amb.pages) ? amb.pages : [] }));
 const state = {};
 
 function emptyEnvironmentState() {
@@ -779,7 +789,7 @@ function addEnvironment() {
   const name = prompt('Nome do ambiente', `Ambiente ${nextNumber}`);
   if (!name) return;
   const id = `amb-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
-  AMBIENTES.push({ id, name: name.trim(), img: DEFAULT_AMBIENTE_IMG });
+  AMBIENTES.push({ id, name: name.trim(), img: DEFAULT_AMBIENTE_IMG, pages: [] });
   ensureEnvironmentState(id);
   renderAmbientes();
   syncPreviewDocument();
@@ -861,6 +871,7 @@ function renderCard(amb) {
         </div>
         <div class="obs-options">${buildObsHTML(amb.id)}</div>
       </div>
+      ${renderEnvironmentPages(amb)}
     </div>
   </div>`;
 }
@@ -1068,6 +1079,8 @@ function updateSummary(ambId) {
   if (s.porta.length) parts.push('Porta: '+s.porta.join(', '));
   if (s.puxador.length) parts.push('Puxador: '+s.puxador.join(', '));
   if (s.corredica.length) parts.push('Corrediça: '+s.corredica.join(', '));
+  const pagesCount = environmentPages(ambId).length;
+  if (pagesCount) parts.push(`${pagesCount} página${pagesCount > 1 ? 's' : ''}`);
   const el = document.getElementById('summary-'+ambId);
   if (el) el.textContent = parts.length ? parts.join(' · ') : 'Clique para configurar';
 };
@@ -1075,13 +1088,24 @@ function updateSummary(ambId) {
 function updateProgress() {
   const done = AMBIENTES.filter(a => {
     const s = state[a.id];
-    return s.cores.length > 0 || s.porta.length > 0 || s.tampon.length > 0 || s.puxador.length > 0 || s.corredica.length > 0;
+    return s.cores.length > 0 || s.porta.length > 0 || s.tampon.length > 0 || s.puxador.length > 0 || s.corredica.length > 0 || environmentPages(a.id).length > 0;
   }).length;
   document.getElementById('progressFill').style.width = (AMBIENTES.length ? done/AMBIENTES.length*100 : 0)+'%';
 }
 
 function hasEnvironmentData(s) {
   return s.cores.length || s.porta.length || s.tampon.length || s.puxador.length || s.corredica.length || s.obs.length || s.obsExtra;
+}
+
+function normalizedEnvironmentPages(amb) {
+  return environmentPages(amb.id).map((page, index) => ({
+    id: page.id,
+    number: `${String(AMBIENTES.indexOf(amb) + 1).padStart(2, '0')}.${String(index + 1).padStart(2, '0')}`,
+    title: page.title || `Página ${index + 1}`,
+    description: page.description || '',
+    photos: page.photo ? [{ title: page.title || `Página ${index + 1}`, src: page.photo }] : [],
+    hasData: Boolean(page.title || page.description || page.photo),
+  })).filter(page => page.hasData);
 }
 
 function buildPreviewDocumentData() {
@@ -1104,10 +1128,11 @@ function buildPreviewDocumentData() {
         notes: [...s.obs, s.obsExtra || ''].filter(Boolean),
         layout: 'single',
         photos: [{ title: 'Imagem do ambiente', src: amb.img }],
+        pages: normalizedEnvironmentPages(amb),
         hasData: Boolean(hasEnvironmentData(s)),
       };
     })
-    .filter(environment => environment.hasData);
+    .filter(environment => environment.hasData || environment.pages.length);
 
   return {
     projectType: 'Projeto Inicial',
@@ -1150,6 +1175,90 @@ function postEditorEvent(action, payload = {}) {
     ...payload,
     sentAt: new Date().toISOString(),
   }, window.location.origin);
+}
+
+function environmentPages(ambId) {
+  const amb = AMBIENTES.find(item => item.id === ambId);
+  if (!amb) return [];
+  amb.pages = Array.isArray(amb.pages) ? amb.pages : [];
+  return amb.pages;
+}
+
+function addEnvironmentPage(ambId) {
+  const amb = AMBIENTES.find(item => item.id === ambId);
+  if (!amb) return;
+  const pages = environmentPages(ambId);
+  const page = {
+    id: `page-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+    title: `Página ${pages.length + 1}`,
+    description: '',
+    photo: '',
+  };
+  pages.push(page);
+  renderAmbientes();
+  syncPreviewDocument('environment_page_added');
+}
+
+function removeEnvironmentPage(ambId, pageId) {
+  const amb = AMBIENTES.find(item => item.id === ambId);
+  if (!amb || !confirm('Remover esta página do ambiente?')) return;
+  amb.pages = environmentPages(ambId).filter(page => page.id !== pageId);
+  renderAmbientes();
+  syncPreviewDocument('environment_page_removed');
+}
+
+function updateEnvironmentPage(ambId, pageId, field, value) {
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  if (!page) return;
+  page[field] = value;
+  syncPreviewDocument('environment_page_updated');
+}
+
+async function handlePagePhotoUpload(ambId, pageId, input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const page = environmentPages(ambId).find(item => item.id === pageId);
+  if (!page) return;
+  page.photo = await fileToDataURL(file);
+  renderAmbientes();
+  syncPreviewDocument('environment_page_photo_uploaded');
+}
+
+function renderEnvironmentPages(amb) {
+  const pages = environmentPages(amb.id);
+  return `
+    <div class="pages-panel">
+      <div class="pages-head">
+        <span class="color-picker-label" style="margin-bottom:0">Páginas de detalhe deste ambiente</span>
+        <button class="ghost-btn" type="button" onclick="addEnvironmentPage('${escapeJS(amb.id)}')">Adicionar página</button>
+      </div>
+      <div class="pages-list">
+        ${pages.length ? pages.map((page, index) => `
+          <div class="page-card">
+            <div class="page-card-head">
+              <span class="page-card-title">Página ${String(index + 1).padStart(2, '0')}</span>
+              <button class="amb-remove" type="button" onclick="removeEnvironmentPage('${escapeJS(amb.id)}','${escapeJS(page.id)}')">Remover página</button>
+            </div>
+            <div class="page-fields">
+              <div class="field-group">
+                <label>Título da página</label>
+                <input type="text" value="${escapeAttribute(page.title || '')}" oninput="updateEnvironmentPage('${escapeJS(amb.id)}','${escapeJS(page.id)}','title',this.value)">
+              </div>
+              <div class="field-group">
+                <label>Imagem da página</label>
+                <input type="file" accept="image/*" onchange="handlePagePhotoUpload('${escapeJS(amb.id)}','${escapeJS(page.id)}',this)">
+              </div>
+              <div class="field-group field-full">
+                <label>Detalhes do ambiente</label>
+                <input type="text" placeholder="Ex: vista interna, detalhe construtivo, ferragens, marcenaria..." value="${escapeAttribute(page.description || '')}" oninput="updateEnvironmentPage('${escapeJS(amb.id)}','${escapeJS(page.id)}','description',this.value)">
+              </div>
+              ${page.photo ? `<img class="page-photo-preview" src="${escapeAttribute(page.photo)}" alt="${escapeAttribute(page.title || 'Página do ambiente')}">` : '<div class="amb-summary">Sem imagem cadastrada nesta página.</div>'}
+            </div>
+          </div>
+        `).join('') : '<div class="amb-summary">Nenhuma página adicional cadastrada para este ambiente.</div>'}
+      </div>
+    </div>
+  `;
 }
 
 window.addEventListener('message', event => {
