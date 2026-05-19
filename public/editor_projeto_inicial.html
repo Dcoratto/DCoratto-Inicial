@@ -1134,12 +1134,13 @@ function normalizedEnvironmentPages(amb) {
     number: `${String(AMBIENTES.indexOf(amb) + 1).padStart(2, '0')}.${String(index + 1).padStart(2, '0')}`,
     title: page.title || `Página ${index + 1}`,
     description: page.description || '',
+    annotations: Array.isArray(page.annotations) ? page.annotations : [],
     frames: normalizedPageFrames(page),
     photos: normalizedPageFrames(page).filter(frame => frame.photo).map((frame, frameIndex) => ({
       title: frame.title || `${page.title || `Página ${index + 1}`} - Moldura ${frameIndex + 1}`,
       src: frame.photo,
     })),
-    hasData: Boolean(page.title || page.description || normalizedPageFrames(page).some(frame => frame.photo || frame.annotations.length)),
+    hasData: Boolean(page.title || page.description || (page.annotations || []).length || normalizedPageFrames(page).some(frame => frame.photo || frame.annotations.length)),
   })).filter(page => page.hasData);
 }
 
@@ -1615,6 +1616,7 @@ function mergePreviewDocument(preview) {
         id: page.id || `page-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
         title: page.title || '',
         description: page.description || '',
+        annotations: Array.isArray(page.annotations) ? page.annotations : [],
         frames: Array.isArray(page.frames) ? page.frames.map(frame => ({
           id: frame.id || `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
           title: frame.title || 'Moldura',
