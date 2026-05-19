@@ -99,7 +99,7 @@ async function handleClientLinkRequest(request, response) {
     const shareSlug = `${slugify(preview.client?.name || 'cliente')}-${String(versionNumber).padStart(3, '0')}-${crypto.randomUUID().slice(0, 8)}`;
     const storagePath = `${projectId}/cliente/${shareSlug}.html`;
     const html = await buildStandaloneHtml(preview);
-    const clientUrl = `${requestOrigin(request)}/cliente/${encodeURIComponent(shareSlug)}`;
+    const clientUrl = `${requestOrigin(request)}/cliente/${encodeURIComponent(projectId)}/${encodeURIComponent(shareSlug)}`;
 
     const { error: uploadError } = await supabaseServer.storage
       .from(htmlBucket)
@@ -153,22 +153,16 @@ async function handleClientHtmlRequest(url, response) {
       return;
     }
 
-    const shareSlug = decodeURIComponent(url.pathname.replace(/^\/cliente\//, '')).replace(/^\/+|\/+$/g, '');
-    if (!shareSlug) {
+    const clientLink = parseClientLink(url.pathname);
+    if (!clientLink.shareSlug) {
       response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       response.end('Link do cliente nao encontrado.');
       return;
     }
 
-    const { data, error } = await supabaseServer
-      .from('document_html_versions')
-      .select('html_content, title')
-      .eq('share_slug', shareSlug)
-      .eq('shared_with_client', true)
-      .maybeSingle();
+    const html = await loadClientHtml(clientLink);
 
-    if (error) throw error;
-    if (!data?.html_content) {
+    if (!html) {
       response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       response.end('HTML do cliente nao encontrado.');
       return;
@@ -179,11 +173,70 @@ async function handleClientHtmlRequest(url, response) {
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'X-Content-Type-Options': 'nosniff',
     });
-    response.end(data.html_content);
+    response.end(html);
   } catch (error) {
     response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
     response.end(`Nao foi possivel abrir o HTML do cliente: ${String(error?.message || error)}`);
   }
+}
+
+function parseClientLink(pathname) {
+  const parts = pathname
+    .replace(/^\/cliente\/?/, '')
+    .split('/')
+    .map(part => decodeURIComponent(part).trim())
+    .filter(Boolean);
+  if (parts.length >= 2 && safeId(parts[0])) {
+    return { projectId: parts[0], shareSlug: parts[1] };
+  }
+  return { projectId: '', shareSlug: parts[0] || '' };
+}
+
+async function loadClientHtml({ projectId, shareSlug }) {
+  if (projectId) {
+    const storagePath = `${projectId}/cliente/${shareSlug}.html`;
+    const byStoragePath = await findHtmlVersionByStoragePath(storagePath);
+    if (byStoragePath) return byStoragePath;
+
+    const downloaded = await downloadHtmlFromStorage(storagePath);
+    if (downloaded) return downloaded;
+  }
+
+  const byShareSlug = await findHtmlVersionByShareSlug(shareSlug);
+  if (byShareSlug) return byShareSlug;
+
+  return '';
+}
+
+async function findHtmlVersionByStoragePath(storagePath) {
+  const { data, error } = await supabaseServer
+    .from('document_html_versions')
+    .select('html_content')
+    .eq('storage_path', storagePath)
+    .eq('shared_with_client', true)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.html_content || '';
+}
+
+async function findHtmlVersionByShareSlug(shareSlug) {
+  const { data, error } = await supabaseServer
+    .from('document_html_versions')
+    .select('html_content')
+    .eq('share_slug', shareSlug)
+    .eq('shared_with_client', true)
+    .maybeSingle();
+  if (error?.code === '42703') return '';
+  if (error) throw error;
+  return data?.html_content || '';
+}
+
+async function downloadHtmlFromStorage(storagePath) {
+  const { data, error } = await supabaseServer.storage
+    .from(htmlBucket)
+    .download(storagePath);
+  if (error) return '';
+  return data?.text ? data.text() : '';
 }
 
 async function readJsonBody(request) {
@@ -228,22 +281,32 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
       });
     if (projectError) throw projectError;
 
+    const htmlPayload = {
+      project_id: projectId,
+      version_number: versionNumber,
+      title: `Projeto Inicial - ${client.name || 'Cliente'}`,
+      html_content: html,
+      storage_bucket: htmlBucket,
+      storage_path: storagePath,
+      is_current: true,
+      shared_with_client: true,
+      shared_at: new Date().toISOString(),
+      created_by: actor?.email || '',
+      share_slug: shareSlug,
+      data: { publicUrl, storagePublicUrl, client, shareSlug },
+    };
+
     const { error: htmlError } = await supabaseServer
       .from('document_html_versions')
-      .insert({
-        project_id: projectId,
-        version_number: versionNumber,
-        title: `Projeto Inicial - ${client.name || 'Cliente'}`,
-        html_content: html,
-        storage_bucket: htmlBucket,
-        storage_path: storagePath,
-        is_current: true,
-        shared_with_client: true,
-        shared_at: new Date().toISOString(),
-        created_by: actor?.email || '',
-        share_slug: shareSlug,
-        data: { publicUrl, storagePublicUrl, client },
-      });
+      .insert(htmlPayload);
+    if (htmlError?.code === '42703') {
+      const { share_slug: _shareSlug, ...payloadWithoutShareSlug } = htmlPayload;
+      const { error: retryError } = await supabaseServer
+        .from('document_html_versions')
+        .insert(payloadWithoutShareSlug);
+      if (retryError) throw retryError;
+      return {};
+    }
     if (htmlError) throw htmlError;
 
     return {};
