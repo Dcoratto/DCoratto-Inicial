@@ -80,21 +80,7 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .page-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .page-fields .field-full{grid-column:1/-1}
 .page-photo-preview{width:100%;max-width:240px;aspect-ratio:16/10;object-fit:cover;border:1px solid var(--border);border-radius:3px;background:#11100e}
-.frames-panel{grid-column:1/-1;display:grid;gap:12px;margin-top:4px}
-.frame-card{border:1px solid rgba(184,151,106,.18);background:rgba(0,0,0,.18);border-radius:4px;padding:12px}
-.frame-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
-.frame-title{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#d9c09b}
-.frame-editor{position:relative;min-height:280px;background:#f6f3ec;border:1px solid rgba(184,151,106,.35);overflow:hidden}
-.frame-editor img{width:100%;height:100%;min-height:280px;object-fit:cover;display:block}
-.frame-editor.empty{display:grid;place-items:center;color:#766957;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
-.frame-overlay{position:absolute;inset:0;pointer-events:none}
-.frame-arrow-line{stroke:#111;stroke-width:2;marker-end:url(#arrowHead)}
-.frame-arrow-dot{fill:#111}
-.frame-arrow-label{position:absolute;max-width:180px;color:#111;font-family:Georgia,serif;font-size:15px;line-height:1.25;pointer-events:auto;cursor:move;text-shadow:0 1px 0 rgba(255,255,255,.75)}
-.frame-arrow-target{position:absolute;width:14px;height:14px;border:2px solid #111;border-radius:50%;background:#f6f3ec;transform:translate(-50%,-50%);pointer-events:auto;cursor:grab}
-.annotation-list{display:grid;gap:8px;margin-top:10px}
-.annotation-row{display:grid;grid-template-columns:1fr 86px 86px auto;gap:8px;align-items:center}
-.annotation-row input{min-width:0}
+.preview-edit-note{grid-column:1/-1;border:1px dashed rgba(184,151,106,.35);padding:12px;color:#d7c2a7;font-size:11px;letter-spacing:.08em;line-height:1.5}
 .check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .check-item{display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.055);color:#fff3df;font-size:12px;font-weight:400;line-height:1.35;padding:10px;border-radius:4px;transition:background .2s,border .2s}
 .check-item:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12)}
@@ -1211,6 +1197,7 @@ function ensurePageFrames(page) {
       id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
       title: page.title || 'Moldura 1',
       photo: page.photo,
+      shape: 'rounded',
       annotations: [],
     }] : [];
   }
@@ -1218,6 +1205,7 @@ function ensurePageFrames(page) {
     frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
     frame.title ||= 'Moldura';
     frame.photo ||= '';
+    frame.shape ||= 'rounded';
   });
   return page.frames;
 }
@@ -1227,6 +1215,7 @@ function normalizedPageFrames(page) {
     id: frame.id,
     title: frame.title || `Moldura ${frameIndex + 1}`,
     photo: frame.photo || '',
+    shape: frame.shape || 'rounded',
     annotations: (frame.annotations || []).map(annotation => ({
       id: annotation.id,
       text: annotation.text || '',
@@ -1262,6 +1251,7 @@ function addPageFrame(ambId, pageId) {
     id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
     title: `Moldura ${frames.length + 1}`,
     photo: '',
+    shape: 'rounded',
     annotations: [],
   });
   renderAmbientes();
@@ -1479,7 +1469,7 @@ function renderEnvironmentPages(amb) {
                 <label>Detalhes do ambiente</label>
                 <input type="text" placeholder="Ex: vista interna, detalhe construtivo, ferragens, marcenaria..." value="${escapeAttribute(page.description || '')}" oninput="updateEnvironmentPage('${escapeJS(amb.id)}','${escapeJS(page.id)}','description',this.value)">
               </div>
-              ${renderPageFrames(amb.id, page)}
+              <div class="preview-edit-note">As molduras, formatos, fotos e setas desta página são personalizados diretamente no Preview HTML, para que você edite olhando o documento final.</div>
             </div>
           </div>
         `).join('') : '<div class="amb-summary">Nenhuma página adicional cadastrada para este ambiente.</div>'}
@@ -1490,6 +1480,12 @@ function renderEnvironmentPages(amb) {
 
 window.addEventListener('message', event => {
   if (event.origin !== window.location.origin) return;
+  if (event.data?.type === 'dcoratto:editor-state' && event.data?.action === 'portfolio_sync') {
+    mergePreviewDocument(event.data.preview);
+    const draft = saveBuilderDraft();
+    postEditorEvent('portfolio_sync', { draft, preview: event.data.preview });
+    return;
+  }
   if (event.data?.type !== 'dcoratto:apply-settings') return;
   const incoming = event.data.settings || {};
   editorSettings = {
@@ -1505,6 +1501,28 @@ window.addEventListener('message', event => {
   renderAmbientes();
   syncPreviewDocument('settings_loaded');
 });
+
+function mergePreviewDocument(preview) {
+  if (!preview?.environments) return;
+  preview.environments.forEach((previewEnvironment, index) => {
+    const amb = AMBIENTES[index] || AMBIENTES.find(item => item.name === previewEnvironment.title);
+    if (!amb) return;
+    amb.pages = Array.isArray(previewEnvironment.pages)
+      ? previewEnvironment.pages.map(page => ({
+        id: page.id || `page-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+        title: page.title || '',
+        description: page.description || '',
+        frames: Array.isArray(page.frames) ? page.frames.map(frame => ({
+          id: frame.id || `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+          title: frame.title || 'Moldura',
+          photo: frame.photo || '',
+          shape: frame.shape || 'rounded',
+          annotations: Array.isArray(frame.annotations) ? frame.annotations : [],
+        })) : [],
+      }))
+      : environmentPages(amb.id);
+  });
+}
 
 function syncPreviewDocument(action = 'editor_sync') {
   const draft = saveBuilderDraft();
