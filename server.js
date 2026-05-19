@@ -39,6 +39,11 @@ createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && url.pathname.startsWith('/cliente/')) {
+    await handleClientHtmlRequest(url, response);
+    return;
+  }
+
   const requestedPath = decodeURIComponent(url.pathname);
   const safePath = normalize(requestedPath).replace(/^(\.\.[/\\])+/, '');
   let filePath = resolve(join(root, safePath));
@@ -94,6 +99,7 @@ async function handleClientLinkRequest(request, response) {
     const shareSlug = `${slugify(preview.client?.name || 'cliente')}-${String(versionNumber).padStart(3, '0')}-${crypto.randomUUID().slice(0, 8)}`;
     const storagePath = `${projectId}/cliente/${shareSlug}.html`;
     const html = await buildStandaloneHtml(preview);
+    const clientUrl = `${requestOrigin(request)}/cliente/${encodeURIComponent(shareSlug)}`;
 
     const { error: uploadError } = await supabaseServer.storage
       .from(htmlBucket)
@@ -106,13 +112,14 @@ async function handleClientLinkRequest(request, response) {
     if (uploadError) throw uploadError;
 
     const { data: publicData } = supabaseServer.storage.from(htmlBucket).getPublicUrl(storagePath);
-    const publicUrl = publicData?.publicUrl || '';
+    const storagePublicUrl = publicData?.publicUrl || '';
     const dbResult = await persistHtmlVersion({
       projectId,
       versionNumber,
       shareSlug,
       storagePath,
-      publicUrl,
+      publicUrl: clientUrl,
+      storagePublicUrl,
       html,
       preview,
       actor: body.actor,
@@ -125,7 +132,8 @@ async function handleClientLinkRequest(request, response) {
       ok: true,
       source: 'server-supabase',
       projectId,
-      publicUrl,
+      publicUrl: clientUrl,
+      storagePublicUrl,
       storagePath,
       shareSlug,
       dbWarning: dbResult.warning || '',
@@ -134,6 +142,47 @@ async function handleClientLinkRequest(request, response) {
     sendJson(response, 500, {
       error: String(error?.message || error),
     });
+  }
+}
+
+async function handleClientHtmlRequest(url, response) {
+  try {
+    if (!supabaseServer) {
+      response.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+      response.end('Servidor sem SUPABASE_SERVICE_ROLE_KEY para carregar o HTML do cliente.');
+      return;
+    }
+
+    const shareSlug = decodeURIComponent(url.pathname.replace(/^\/cliente\//, '')).replace(/^\/+|\/+$/g, '');
+    if (!shareSlug) {
+      response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      response.end('Link do cliente nao encontrado.');
+      return;
+    }
+
+    const { data, error } = await supabaseServer
+      .from('document_html_versions')
+      .select('html_content, title')
+      .eq('share_slug', shareSlug)
+      .eq('shared_with_client', true)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data?.html_content) {
+      response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      response.end('HTML do cliente nao encontrado.');
+      return;
+    }
+
+    response.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    response.end(data.html_content);
+  } catch (error) {
+    response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    response.end(`Nao foi possivel abrir o HTML do cliente: ${String(error?.message || error)}`);
   }
 }
 
@@ -161,7 +210,7 @@ async function ensureHtmlBucket() {
   if (error) throw error;
 }
 
-async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, html, preview, actor, draft, eventId, createdAt }) {
+async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt }) {
   try {
     const client = preview.client || {};
     const { error: projectError } = await supabaseServer
@@ -193,7 +242,7 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
         shared_at: new Date().toISOString(),
         created_by: actor?.email || '',
         share_slug: shareSlug,
-        data: { publicUrl, client },
+        data: { publicUrl, storagePublicUrl, client },
       });
     if (htmlError) throw htmlError;
 
@@ -252,6 +301,12 @@ function sendJson(response, status, payload) {
     'Cache-Control': 'no-store',
   });
   response.end(JSON.stringify(payload));
+}
+
+function requestOrigin(request) {
+  const host = request.headers['x-forwarded-host'] || request.headers.host || `localhost:${port}`;
+  const proto = request.headers['x-forwarded-proto'] || (String(host).startsWith('localhost') ? 'http' : 'https');
+  return `${proto}://${host}`;
 }
 
 function slugify(value) {

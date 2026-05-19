@@ -222,6 +222,7 @@ async function publishClientHtmlWithServer(event) {
       storage_path: result.storagePath || '',
       data: {
         publicUrl: result.publicUrl,
+        storagePublicUrl: result.storagePublicUrl || '',
         storageError: result.storageError || '',
       },
     },
