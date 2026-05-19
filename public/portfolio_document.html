@@ -2190,32 +2190,42 @@
         if (!page) return;
         page.annotations = Array.isArray(page.annotations) ? page.annotations : [];
         const start = pagePoint(event, pageNode);
-        const annotation = {
-          id: `page-ann-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
-          text: 'Texto da seta',
-          fromX: start.x,
-          fromY: start.y,
-          toX: start.x,
-          toY: start.y,
-          ...pageAnnotationDefaults,
+        const startClient = { x: event.clientX, y: event.clientY };
+        const dragThreshold = 3;
+        let annotation = null;
+        let line = null;
+        let arrowHead = null;
+
+        clearFrameSelection();
+
+        const ensureDraftAnnotation = () => {
+          if (annotation) return;
+          annotation = {
+            id: `page-ann-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+            text: 'Texto da seta',
+            fromX: start.x,
+            fromY: start.y,
+            toX: start.x,
+            toY: start.y,
+            ...pageAnnotationDefaults,
+          };
+          page.annotations.push(annotation);
+          const annotationIndex = page.annotations.length - 1;
+          selectedPageAnnotationKeys.add(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex));
+          line = document.createElement('span');
+          line.setAttribute('class', 'page-annotation-line');
+          line.style.setProperty('--arrow-color', annotation.arrowColor);
+          line.style.setProperty('--arrow-width-px', `${annotation.arrowWidth}px`);
+          arrowHead = document.createElement('span');
+          arrowHead.setAttribute('class', 'page-annotation-arrow-head');
+          arrowHead.style.setProperty('--arrow-color', annotation.arrowColor);
+          pageNode.append(line, arrowHead);
         };
-        page.annotations.push(annotation);
-        const annotationIndex = page.annotations.length - 1;
-        selectedFrameKeys.clear();
-        selectedPageAnnotationKeys.clear();
-        selectedPageAnnotationKeys.add(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex));
-        const line = document.createElement('span');
-        line.setAttribute('class', 'page-annotation-line');
-        line.style.setProperty('--arrow-color', annotation.arrowColor);
-        line.style.setProperty('--arrow-width-px', `${annotation.arrowWidth}px`);
-        const arrowHead = document.createElement('span');
-        arrowHead.setAttribute('class', 'page-annotation-arrow-head');
-        arrowHead.style.setProperty('--arrow-color', annotation.arrowColor);
-        pageNode.append(line, arrowHead);
-        updatePageAnnotationLine(line, annotation, pageNode);
-        updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
 
         const move = (pointerEvent) => {
+          const distance = Math.hypot(pointerEvent.clientX - startClient.x, pointerEvent.clientY - startClient.y);
+          if (distance < dragThreshold) return;
+          ensureDraftAnnotation();
           const end = pagePoint(pointerEvent, pageNode);
           annotation.fromX = end.x;
           annotation.fromY = end.y;
@@ -2224,13 +2234,16 @@
         };
 
         const up = (pointerEvent) => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          const distance = Math.hypot(pointerEvent.clientX - startClient.x, pointerEvent.clientY - startClient.y);
+          if (!annotation && distance < dragThreshold) return;
+          ensureDraftAnnotation();
           const end = pagePoint(pointerEvent, pageNode);
           annotation.fromX = end.x;
           annotation.fromY = end.y;
           updatePageAnnotationLine(line, annotation, pageNode);
           updatePageAnnotationArrowHead(arrowHead, annotation, pageNode);
-          window.removeEventListener('pointermove', move);
-          window.removeEventListener('pointerup', up);
           persistAndRender();
         };
 
