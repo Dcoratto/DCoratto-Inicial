@@ -34,6 +34,201 @@
 
       body.lightbox-open { overflow: hidden; }
 
+      body.client-intro-open {
+        overflow: hidden;
+      }
+
+      .client-intro {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: none;
+        place-items: center;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% 30%, rgba(184,151,106,.24), transparent 34%),
+          radial-gradient(circle at 18% 82%, rgba(215,194,167,.12), transparent 30%),
+          linear-gradient(135deg, #070604 0%, #15110c 52%, #050504 100%);
+        color: #f8f2e8;
+        cursor: grab;
+      }
+
+      .client-intro.active {
+        display: grid;
+      }
+
+      .client-intro.is-leaving {
+        animation: introFadeOut .85s ease forwards;
+      }
+
+      .client-intro::before,
+      .client-intro::after {
+        content: "";
+        position: absolute;
+        width: 54vmax;
+        height: 54vmax;
+        border: 1px solid rgba(184,151,106,.14);
+        border-radius: 50%;
+        animation: introOrb 5s ease-in-out infinite alternate;
+      }
+
+      .client-intro::before {
+        left: -20vmax;
+        top: -24vmax;
+      }
+
+      .client-intro::after {
+        right: -22vmax;
+        bottom: -26vmax;
+        animation-delay: .8s;
+      }
+
+      .client-intro-card {
+        position: relative;
+        z-index: 2;
+        display: grid;
+        width: min(860px, calc(100vw - 42px));
+        justify-items: center;
+        gap: 22px;
+        text-align: center;
+        transform: translateY(14px);
+      }
+
+      .client-intro-text {
+        margin: 0;
+        max-width: 780px;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: clamp(29px, 4.2vw, 62px);
+        font-weight: 300;
+        line-height: 1.04;
+        letter-spacing: .015em;
+        opacity: 0;
+        animation: introTextIn 1.35s ease .15s forwards;
+      }
+
+      .client-intro-text span {
+        display: block;
+        margin-top: 18px;
+        color: rgba(248,242,232,.76);
+        font-family: 'Montserrat', sans-serif;
+        font-size: clamp(12px, 1.4vw, 17px);
+        font-weight: 300;
+        letter-spacing: .08em;
+        line-height: 1.7;
+        text-transform: uppercase;
+      }
+
+      .client-intro-logo {
+        display: grid;
+        min-height: 58px;
+        place-items: center;
+        opacity: 0;
+        transform: translateY(8px) scale(.96);
+        animation: introLogoIn .9s ease 1.85s forwards;
+      }
+
+      .client-intro-logo img {
+        max-width: 154px;
+        max-height: 54px;
+        object-fit: contain;
+      }
+
+      .client-intro-logo div {
+        color: #f8f2e8;
+        font-size: 32px;
+        letter-spacing: -.04em;
+        line-height: .85;
+      }
+
+      .client-intro-logo small {
+        display: block;
+        margin-left: 66px;
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: .02em;
+      }
+
+      .client-intro-gesture {
+        display: grid;
+        justify-items: center;
+        gap: 10px;
+        margin-top: 8px;
+        color: rgba(215,194,167,.86);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: .18em;
+        opacity: 0;
+        text-transform: uppercase;
+        animation: introGestureIn .7s ease 3s forwards;
+      }
+
+      .client-intro-gesture-icon {
+        position: relative;
+        width: 34px;
+        height: 54px;
+        border: 1px solid rgba(215,194,167,.74);
+        border-radius: 999px;
+      }
+
+      .client-intro-gesture-icon::before {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 10px;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #d7c2a7;
+        transform: translateX(-50%);
+        animation: introScrollHint 1.2s ease-in-out infinite;
+      }
+
+      .client-intro-gesture-icon::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: -19px;
+        width: 9px;
+        height: 9px;
+        border-right: 1px solid rgba(215,194,167,.78);
+        border-bottom: 1px solid rgba(215,194,167,.78);
+        transform: translateX(-50%) rotate(45deg);
+        animation: introArrowHint 1.2s ease-in-out infinite;
+      }
+
+      @keyframes introTextIn {
+        from { opacity: 0; transform: translateY(18px); filter: blur(8px); }
+        to { opacity: 1; transform: translateY(0); filter: blur(0); }
+      }
+
+      @keyframes introLogoIn {
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+
+      @keyframes introGestureIn {
+        to { opacity: 1; }
+      }
+
+      @keyframes introScrollHint {
+        0% { opacity: .35; transform: translate(-50%, 0); }
+        50% { opacity: 1; transform: translate(-50%, 18px); }
+        100% { opacity: .35; transform: translate(-50%, 0); }
+      }
+
+      @keyframes introArrowHint {
+        0%, 100% { opacity: .35; transform: translate(-50%, -2px) rotate(45deg); }
+        50% { opacity: 1; transform: translate(-50%, 6px) rotate(45deg); }
+      }
+
+      @keyframes introOrb {
+        from { transform: scale(.92) rotate(0deg); opacity: .55; }
+        to { transform: scale(1.08) rotate(9deg); opacity: 1; }
+      }
+
+      @keyframes introFadeOut {
+        to { opacity: 0; visibility: hidden; }
+      }
+
       .topbar {
         position: sticky;
         top: 0;
@@ -995,6 +1190,20 @@
 
     <main id="document"></main>
 
+    <div class="client-intro" id="clientIntro" aria-hidden="true">
+      <div class="client-intro-card">
+        <p class="client-intro-text">
+          Seu sonho começa a ganhar forma.
+          <span>Projeto desenvolvido pela D’Coratto Sob Medida com exclusividade, sofisticação e atenção a cada detalhe.</span>
+        </p>
+        <div class="client-intro-logo" id="clientIntroLogo"></div>
+        <div class="client-intro-gesture" aria-hidden="true">
+          <span class="client-intro-gesture-icon"></span>
+          <span>Arraste para ver o projeto da sua obra</span>
+        </div>
+      </div>
+    </div>
+
     <div class="lightbox" id="lightbox" role="dialog" aria-modal="true">
       <button type="button" aria-label="Fechar imagem expandida">×</button>
       <img alt="" />
@@ -1019,6 +1228,7 @@
 
       const storageKey = 'dcoratto.portfolio.document.v1';
       const isEditablePreview = new URLSearchParams(window.location.search).has('preview');
+      const isClientView = Boolean(window.__DCORATTO_CLIENT_VIEW__) && !isEditablePreview;
       let documentData = window.__DCORATTO_PORTFOLIO_DOCUMENT__
         || JSON.parse(localStorage.getItem(storageKey) || 'null')
         || {
@@ -1082,9 +1292,11 @@
       const root = document.getElementById('document');
       const lightbox = document.getElementById('lightbox');
       const lightboxImage = lightbox.querySelector('img');
+      const clientIntro = document.getElementById('clientIntro');
 
       renderDocument();
       resetDocumentHistory();
+      initClientIntro();
 
       lightbox.addEventListener('click', (event) => {
         if (event.target === lightbox || event.target.tagName === 'BUTTON') closeLightbox();
@@ -1334,6 +1546,49 @@
         } else {
           logo.innerHTML = "D'coratto<small>sob medida</small>";
         }
+      }
+
+      function renderIntroLogo() {
+        const logo = document.getElementById('clientIntroLogo');
+        if (!logo) return;
+        if (documentData.branding?.logo) {
+          logo.innerHTML = `<img src="${escapeAttribute(documentData.branding.logo)}" alt="D'Coratto Sob Medida">`;
+        } else {
+          logo.innerHTML = "<div>D'coratto<small>sob medida</small></div>";
+        }
+      }
+
+      function initClientIntro() {
+        if (!isClientView || !clientIntro) return;
+        renderIntroLogo();
+        clientIntro.classList.add('active');
+        document.body.classList.add('client-intro-open');
+
+        let dismissed = false;
+        const dismiss = () => {
+          if (dismissed) return;
+          dismissed = true;
+          clientIntro.classList.add('is-leaving');
+          document.body.classList.remove('client-intro-open');
+          window.removeEventListener('wheel', dismiss);
+          window.removeEventListener('touchmove', dismiss);
+          window.removeEventListener('keydown', handleIntroKey);
+          window.setTimeout(() => {
+            clientIntro.classList.remove('active');
+            clientIntro.setAttribute('aria-hidden', 'true');
+          }, 900);
+        };
+        const handleIntroKey = (event) => {
+          if (['ArrowDown', 'PageDown', ' ', 'Enter', 'Escape'].includes(event.key)) dismiss();
+        };
+
+        clientIntro.setAttribute('aria-hidden', 'false');
+        clientIntro.addEventListener('click', dismiss, { once: true });
+        clientIntro.addEventListener('pointerdown', dismiss, { once: true });
+        window.addEventListener('wheel', dismiss, { once: true, passive: true });
+        window.addEventListener('touchmove', dismiss, { once: true, passive: true });
+        window.addEventListener('keydown', handleIntroKey);
+        window.setTimeout(dismiss, 5000);
       }
 
       function renderCover() {
