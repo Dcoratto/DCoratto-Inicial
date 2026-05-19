@@ -49,6 +49,11 @@ createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/client-history') {
+    await handleClientHistoryRequest(response);
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname.startsWith('/cliente/')) {
     await handleClientHtmlRequest(url, response);
     return;
@@ -222,6 +227,48 @@ async function handleLatestEditorStateRequest(url, response) {
       draft: project?.data?.draft || null,
       preview: project?.data?.preview || null,
       settings: settingsRow?.payload || null,
+    });
+  } catch (error) {
+    sendJson(response, 500, {
+      error: String(error?.message || error),
+    });
+  }
+}
+
+async function handleClientHistoryRequest(response) {
+  try {
+    if (!supabaseServer) {
+      sendJson(response, 503, {
+        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar histórico de clientes.',
+      });
+      return;
+    }
+
+    const { data: versions, error } = await supabaseServer
+      .from('document_html_versions')
+      .select('id, title, share_slug, project_id, created_at, data')
+      .eq('shared_with_client', true)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    
+    if (error) throw error;
+
+    const history = (versions || []).map(v => ({
+      id: v.id,
+      title: v.title,
+      clientName: v.data?.client?.name || 'Cliente',
+      contractNumber: v.data?.client?.contractNumber || '',
+      address: v.data?.client?.address || '',
+      shareSlug: v.share_slug,
+      projectId: v.project_id,
+      createdAt: v.created_at,
+      publicUrl: v.data?.publicUrl || '',
+    }));
+
+    sendJson(response, 200, {
+      ok: true,
+      source: 'server-supabase',
+      history,
     });
   } catch (error) {
     sendJson(response, 500, {

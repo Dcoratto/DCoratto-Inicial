@@ -23,6 +23,20 @@
         --danger: #ff6a55;
       }
 
+      body.client-view {
+        user-select: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+      }
+
+      body.client-view * {
+        user-select: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+      }
+
       html { scroll-behavior: smooth; }
       body {
         margin: 0;
@@ -1412,6 +1426,12 @@
       const storageKey = 'dcoratto.portfolio.document.v1';
       const isEditablePreview = new URLSearchParams(window.location.search).has('preview');
       const isClientView = Boolean(window.__DCORATTO_CLIENT_VIEW__) && !isEditablePreview;
+      
+      // Aplicar classe para desabilitar seleção em client view
+      if (isClientView) {
+        document.body.classList.add('client-view');
+      }
+      
       let documentData = window.__DCORATTO_PORTFOLIO_DOCUMENT__
         || JSON.parse(localStorage.getItem(storageKey) || 'null')
         || {

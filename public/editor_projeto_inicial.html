@@ -168,6 +168,25 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .catalog-item{border:1px solid var(--border);border-radius:4px;background:rgba(0,0,0,.2);overflow:hidden}
 .catalog-thumb{width:100%;aspect-ratio:1/1;background:#111;background-size:cover;background-position:center;border-bottom:1px solid var(--border)}
 .catalog-meta{padding:10px;display:grid;gap:4px}
+
+/* HISTORY */
+.history-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:300;align-items:center;justify-content:center;padding:28px}
+.history-overlay.active{display:flex}
+.history-panel{width:min(900px,96vw);max-height:92vh;overflow:auto;background:var(--dark2);border:1px solid var(--border);border-radius:6px;box-shadow:0 30px 90px rgba(0,0,0,.55)}
+.history-head{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--border);padding:22px 26px}
+.history-head h2{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:300;color:var(--gold-l)}
+.history-body{padding:20px}
+.history-list{display:flex;flex-direction:column;gap:12px}
+.history-item{display:grid;grid-template-columns:1fr 180px;gap:16px;align-items:start;border:1px solid var(--border);border-radius:4px;padding:16px;background:rgba(0,0,0,.2);transition:background .2s}
+.history-item:hover{background:rgba(184,151,106,.08)}
+.history-info{display:flex;flex-direction:column;gap:6px}
+.history-info h3{font-size:13px;font-weight:500;color:var(--gold-l);margin:0}
+.history-info p{font-size:11px;color:var(--muted);margin:0}
+.history-date{font-size:10px;color:#9f917e;letter-spacing:.08em}
+.history-actions{display:flex;flex-direction:column;gap:8px;justify-content:start}
+.history-action{border:1px solid var(--border);background:transparent;color:var(--gold-l);padding:8px 12px;border-radius:2px;font-family:'Montserrat',sans-serif;font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:all .2s}
+.history-action:hover{border-color:var(--gold);background:rgba(184,151,106,.12)}
+.history-empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:13px}
 .catalog-meta strong{font-size:11px;color:var(--cream);line-height:1.25}
 .catalog-meta span{font-size:9px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
 .catalog-meta button{margin-top:6px;justify-self:start}
@@ -199,6 +218,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
   </div>
   <span class="htitle">Editor · Projeto Inicial</span>
   <div class="header-actions">
+    <button class="icon-btn" type="button" onclick="openClientHistory()" title="Histórico de clientes" aria-label="Histórico de clientes">📋</button>
     <button class="icon-btn" type="button" onclick="openSettings()" title="Configurações" aria-label="Configurações">⚙</button>
     <button class="ghost-btn" type="button" onclick="openHtmlPreview()">Preview HTML</button>
     <button class="hbtn" type="button" onclick="publishClientHtml()">Gerar link para cliente</button>
@@ -337,6 +357,21 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
   </div>
 </div>
 
+<!-- HISTORY OVERLAY -->
+<div class="history-overlay" id="historyOverlay">
+  <div class="history-panel">
+    <div class="history-head">
+      <h2>Histórico de Clientes</h2>
+      <button class="settings-close" type="button" onclick="closeClientHistory()" aria-label="Fechar histórico">×</button>
+    </div>
+    <div class="history-body">
+      <div class="history-list" id="historyList">
+        <div class="history-empty">Carregando...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <footer>
   <img id="footerLogo" src="https://dcorattopremium-5am4gqhj.manus.space/manus-storage/logo-transparent_c8b8c4c4.png" alt="D'coratto">
   <span>D'coratto Sob Medida · Editor de Projeto Inicial</span>
@@ -468,6 +503,56 @@ function openSettings() {
 
 function closeSettings() {
   document.getElementById('settingsOverlay').classList.remove('active');
+}
+
+function openClientHistory() {
+  document.getElementById('historyOverlay').classList.add('active');
+  loadClientHistory();
+}
+
+function closeClientHistory() {
+  document.getElementById('historyOverlay').classList.remove('active');
+}
+
+async function loadClientHistory() {
+  const historyList = document.getElementById('historyList');
+  try {
+    const response = await fetch('/api/client-history', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Não foi possível carregar histórico');
+    
+    const result = await response.json();
+    const history = result.history || [];
+    
+    if (history.length === 0) {
+      historyList.innerHTML = '<div class="history-empty">Nenhum cliente com link gerado ainda.</div>';
+      return;
+    }
+    
+    historyList.innerHTML = history.map(item => `
+      <div class="history-item">
+        <div class="history-info">
+          <h3>${escapeHTML(item.clientName)}</h3>
+          <p>Contrato: ${escapeHTML(item.contractNumber || 'Sem número')}</p>
+          <p>Endereço: ${escapeHTML(item.address || 'Sem endereço')}</p>
+          <div class="history-date">${new Date(item.createdAt).toLocaleDateString('pt-BR')} às ${new Date(item.createdAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</div>
+        </div>
+        <div class="history-actions">
+          <button class="history-action" type="button" onclick="copyLinkToClipboard('${item.publicUrl}')">Copiar Link</button>
+          <button class="history-action" type="button" onclick="window.open('${item.publicUrl}', '_blank')">Abrir Preview</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (error) {
+    historyList.innerHTML = `<div class="history-empty">Erro ao carregar histórico: ${escapeHTML(error.message)}</div>`;
+  }
+}
+
+function copyLinkToClipboard(url) {
+  navigator.clipboard.writeText(url).then(() => {
+    alert('Link copiado para a área de transferência!');
+  }).catch(() => {
+    alert('Não foi possível copiar o link.');
+  });
 }
 
 async function addManualCatalogItem() {
