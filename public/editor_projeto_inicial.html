@@ -466,6 +466,49 @@ function normalizeMaterialOptions(options = {}) {
   }));
 }
 
+function catalogItemKey(item) {
+  return [
+    item?.id,
+    item?.type,
+    item?.manufacturer,
+    item?.line,
+    item?.name,
+    item?.quality,
+    item?.textureUrl || item?.hex || '',
+  ].filter(Boolean).join('|').toLowerCase();
+}
+
+function mergeCatalogItems(current = [], incoming = []) {
+  const merged = [];
+  const seen = new Set();
+  [...current, ...incoming].forEach(item => {
+    if (!item || !item.name) return;
+    const key = catalogItemKey(item);
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(item);
+  });
+  return merged;
+}
+
+function mergeEditorSettings(current = {}, incoming = {}) {
+  const currentOptions = normalizeMaterialOptions(current.materialOptions);
+  const incomingOptions = normalizeMaterialOptions(incoming.materialOptions);
+  const materialOptions = Object.fromEntries(Object.keys(DEFAULT_MATERIAL_OPTIONS).map(group => [
+    group,
+    [...new Set([...(currentOptions[group] || []), ...(incomingOptions[group] || [])])],
+  ]));
+
+  return {
+    ...current,
+    ...incoming,
+    logo: incoming.logo || current.logo || DEFAULT_LOGO,
+    catalogItems: mergeCatalogItems(current.catalogItems, incoming.catalogItems),
+    observations: [...new Set([...(current.observations || []), ...(incoming.observations || [])])],
+    materialOptions,
+  };
+}
+
 function loadBuilderDraft() {
   try {
     return JSON.parse(localStorage.getItem(BUILDER_STORAGE_KEY) || 'null') || null;
@@ -475,8 +518,21 @@ function loadBuilderDraft() {
 }
 
 function saveEditorSettings() {
-  localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
+  safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
+  persistSettingsDirectly(editorSettings);
   postEditorEvent('settings_saved', { settings: editorSettings });
+}
+
+async function persistSettingsDirectly(settings) {
+  try {
+    await fetch('/api/editor-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings }),
+    });
+  } catch (error) {
+    console.warn('Nao foi possivel salvar configuracoes compartilhadas agora.', error);
+  }
 }
 
 function manualCatalogItems(type) {
@@ -1683,17 +1739,12 @@ window.addEventListener('message', event => {
   }
   if (event.data?.type !== 'dcoratto:apply-settings') return;
   const incoming = event.data.settings || {};
-  editorSettings = {
-    ...editorSettings,
-    ...incoming,
-    logo: incoming.logo || editorSettings.logo || DEFAULT_LOGO,
-    catalogItems: Array.isArray(incoming.catalogItems) ? incoming.catalogItems : editorSettings.catalogItems,
-    observations: Array.isArray(incoming.observations) ? incoming.observations : editorSettings.observations,
-    materialOptions: normalizeMaterialOptions(incoming.materialOptions || editorSettings.materialOptions),
-  };
-  localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
+  const previousSettings = JSON.stringify(editorSettings);
+  editorSettings = mergeEditorSettings(editorSettings, incoming);
+  safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
   applyEditorSettings();
   renderAmbientes();
+  if (JSON.stringify(editorSettings) !== previousSettings) persistSettingsDirectly(editorSettings);
   syncPreviewDocument('settings_loaded');
 });
 
@@ -1703,15 +1754,10 @@ function applyHydratedDocument(payload = {}) {
   const incomingPreview = payload.preview || null;
 
   if (incomingSettings) {
-    editorSettings = {
-      ...editorSettings,
-      ...incomingSettings,
-      logo: incomingSettings.logo || editorSettings.logo || DEFAULT_LOGO,
-      catalogItems: Array.isArray(incomingSettings.catalogItems) ? incomingSettings.catalogItems : editorSettings.catalogItems,
-      observations: Array.isArray(incomingSettings.observations) ? incomingSettings.observations : editorSettings.observations,
-      materialOptions: normalizeMaterialOptions(incomingSettings.materialOptions || editorSettings.materialOptions),
-    };
+    const previousSettings = JSON.stringify(editorSettings);
+    editorSettings = mergeEditorSettings(editorSettings, incomingSettings);
     safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
+    if (JSON.stringify(editorSettings) !== previousSettings) persistSettingsDirectly(editorSettings);
   }
 
   if (incomingDraft) {
@@ -1873,6 +1919,7 @@ async function copyClientLink(url) {
 ['clientName', 'contractNum', 'endereco'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', syncPreviewDocument);
 });
+persistSettingsDirectly(editorSettings);
 syncPreviewDocument();
 
 // ─── PREVIEW / PUBLICAÇÃO ────────────────────────────────────────────────────

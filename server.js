@@ -49,6 +49,16 @@ createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/editor-settings') {
+    await handleEditorSettingsGet(response);
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/editor-settings') {
+    await handleEditorSettingsPost(request, response);
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/client-history') {
     await handleClientHistoryRequest(response);
     return;
@@ -212,12 +222,12 @@ async function handleLatestEditorStateRequest(url, response) {
     if (projectError) throw projectError;
     const project = (projects || []).find(item => hasPersistableContent(item?.data?.draft, item?.data?.preview)) || null;
 
-    const { data: settingsRow, error: settingsError } = await supabaseServer
-      .from('editor_settings')
-      .select('payload')
-      .eq('settings_key', 'default')
-      .maybeSingle();
-    if (settingsError) console.warn('Nao foi possivel carregar configuracoes remotas.', settingsError);
+    let settings = null;
+    try {
+      settings = await loadSharedEditorSettings();
+    } catch (settingsError) {
+      console.warn('Nao foi possivel carregar configuracoes remotas.', settingsError);
+    }
 
     sendJson(response, 200, {
       ok: true,
@@ -226,12 +236,53 @@ async function handleLatestEditorStateRequest(url, response) {
       updatedAt: project?.updated_at || null,
       draft: project?.data?.draft || null,
       preview: project?.data?.preview || null,
-      settings: settingsRow?.payload || null,
+      settings,
     });
   } catch (error) {
     sendJson(response, 500, {
       error: String(error?.message || error),
     });
+  }
+}
+
+async function handleEditorSettingsGet(response) {
+  try {
+    if (!supabaseServer) {
+      sendJson(response, 503, {
+        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar configuracoes.',
+      });
+      return;
+    }
+
+    const settings = await loadSharedEditorSettings();
+    sendJson(response, 200, {
+      ok: true,
+      source: 'server-supabase',
+      settings,
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: String(error?.message || error) });
+  }
+}
+
+async function handleEditorSettingsPost(request, response) {
+  try {
+    if (!supabaseServer) {
+      sendJson(response, 503, {
+        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para salvar configuracoes.',
+      });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    const settings = await saveSharedEditorSettings(body.settings || {}, body.actor || null);
+    sendJson(response, 200, {
+      ok: true,
+      source: 'server-supabase',
+      settings,
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: String(error?.message || error) });
   }
 }
 
@@ -423,14 +474,7 @@ async function ensureHtmlBucket() {
 
 async function persistEditorState({ projectId, actor, action, draft, preview, settings, eventId, createdAt }) {
   if (settings) {
-    const { error } = await supabaseServer
-      .from('editor_settings')
-      .upsert({
-        settings_key: 'default',
-        payload: settings,
-        updated_by: actor?.email || '',
-      }, { onConflict: 'settings_key' });
-    if (error) throw error;
+    await saveSharedEditorSettings(settings, actor);
   }
 
   if (!hasPersistableContent(draft, preview)) return;
@@ -459,6 +503,72 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
     .from('document_projects')
     .upsert(projectPayload, { onConflict: 'id' });
   if (error) throw error;
+}
+
+async function loadSharedEditorSettings() {
+  const { data, error } = await supabaseServer
+    .from('editor_settings')
+    .select('payload')
+    .eq('settings_key', 'default')
+    .maybeSingle();
+  if (error) throw error;
+  return data?.payload || null;
+}
+
+async function saveSharedEditorSettings(incomingSettings, actor = null) {
+  const currentSettings = await loadSharedEditorSettings();
+  const payload = mergeEditorSettingsPayload(currentSettings, incomingSettings);
+  const { error } = await supabaseServer
+    .from('editor_settings')
+    .upsert({
+      settings_key: 'default',
+      payload,
+      updated_by: actor?.email || '',
+    }, { onConflict: 'settings_key' });
+  if (error) throw error;
+  return payload;
+}
+
+function mergeEditorSettingsPayload(current = {}, incoming = {}) {
+  const currentSettings = current || {};
+  const incomingSettings = incoming || {};
+  return {
+    ...currentSettings,
+    ...incomingSettings,
+    logo: incomingSettings.logo || currentSettings.logo || '',
+    catalogItems: mergeCatalogItemsPayload(currentSettings.catalogItems, incomingSettings.catalogItems),
+    observations: [...new Set([...(currentSettings.observations || []), ...(incomingSettings.observations || [])])],
+    materialOptions: mergeMaterialOptionsPayload(currentSettings.materialOptions, incomingSettings.materialOptions),
+  };
+}
+
+function mergeCatalogItemsPayload(current = [], incoming = []) {
+  const merged = [];
+  const seen = new Set();
+  [...(current || []), ...(incoming || [])].forEach((item) => {
+    if (!item || !item.name) return;
+    const key = [
+      item.id,
+      item.type,
+      item.manufacturer,
+      item.line,
+      item.name,
+      item.quality,
+      item.textureUrl || item.hex || '',
+    ].filter(Boolean).join('|').toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(item);
+  });
+  return merged;
+}
+
+function mergeMaterialOptionsPayload(current = {}, incoming = {}) {
+  const groups = new Set([...Object.keys(current || {}), ...Object.keys(incoming || {})]);
+  return Object.fromEntries([...groups].map(group => [
+    group,
+    [...new Set([...(current?.[group] || []), ...(incoming?.[group] || [])])],
+  ]));
 }
 
 function hasPersistableContent(draft, preview) {
