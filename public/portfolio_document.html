@@ -9,7 +9,7 @@
     <title>D'coratto | Portfolio HTML</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&family=Montserrat:wght@300;400;500;600&family=Allura:wght@400&family=Dancingscript:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400&family=Montserrat:wght@300;400;500;600&family=Allura:wght@400&family=Great+Vibes&display=swap" rel="stylesheet" />
     <style>
       *, *::before, *::after { box-sizing: border-box; }
       :root {
@@ -82,9 +82,8 @@
         place-items: center;
         overflow: hidden;
         background:
-          radial-gradient(circle at 50% 30%, rgba(184,151,106,.24), transparent 34%),
-          radial-gradient(circle at 18% 82%, rgba(215,194,167,.12), transparent 30%),
-          linear-gradient(135deg, #070604 0%, #15110c 52%, #050504 100%);
+          linear-gradient(135deg, rgba(215,194,167,.08), transparent 38%),
+          linear-gradient(180deg, #070604 0%, #15110c 54%, #050504 100%);
         color: #f8f2e8;
         cursor: default;
       }
@@ -101,22 +100,21 @@
       .client-intro::after {
         content: "";
         position: absolute;
-        width: 54vmax;
-        height: 54vmax;
-        border: 1px solid rgba(184,151,106,.14);
-        border-radius: 50%;
-        animation: introOrb 5s ease-in-out infinite alternate;
+        left: 50%;
+        width: min(78vw, 720px);
+        height: 1px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, transparent, rgba(215,194,167,.24), transparent);
+        transform: translateX(-50%);
       }
 
       .client-intro::before {
-        left: -20vmax;
-        top: -24vmax;
+        top: 19vh;
       }
 
       .client-intro::after {
-        right: -22vmax;
-        bottom: -26vmax;
-        animation-delay: .8s;
+        bottom: 18vh;
+        opacity: .64;
       }
 
       .client-intro-card {
@@ -139,7 +137,8 @@
         line-height: 1.04;
         letter-spacing: .015em;
         opacity: 0;
-        animation: introTextIn 2.4s ease .4s forwards;
+        filter: blur(4px);
+        animation: introTextIn 2.2s ease .45s forwards;
       }
 
       .client-intro-text span {
@@ -155,44 +154,74 @@
       }
 
       .client-intro-text .word-forma {
+        position: relative;
         display: inline;
         margin: 0 .12em;
-        font-family: 'Allura', cursive;
-        font-size: 2em;
+        font-family: 'Nickainley', 'Allura', 'Great Vibes', cursive;
+        font-size: 2.28em;
         font-weight: 400;
         font-style: italic;
-        color: #d7c2a7;
-        letter-spacing: -.03em;
+        color: #ead8bf;
+        letter-spacing: 0;
         text-transform: none !important;
         white-space: nowrap;
         opacity: 0;
-        animation: formaHandwriting 3.6s cubic-bezier(.25, .46, .45, .94) 2.8s forwards;
+        clip-path: inset(0 100% 0 0);
+        text-shadow: 0 10px 34px rgba(184,151,106,.18);
+        animation: formaHandwriting 3.1s cubic-bezier(.22, .72, .22, 1) 2.45s forwards;
+      }
+
+      .client-intro-text .word-forma::after {
+        content: "";
+        position: absolute;
+        left: -5%;
+        top: 58%;
+        width: 15%;
+        height: 1px;
+        border-radius: 999px;
+        background: rgba(234,216,191,.78);
+        box-shadow: 0 0 18px rgba(215,194,167,.7);
+        opacity: 0;
+        transform: translateY(-50%) rotate(-5deg);
+        animation: formaPenTrace 3.1s cubic-bezier(.22, .72, .22, 1) 2.45s forwards;
       }
 
       @keyframes formaHandwriting {
         0% {
           opacity: 0;
-          filter: blur(1px);
-          transform: scaleX(0.1);
-          transform-origin: left center;
+          clip-path: inset(0 100% 0 0);
+          filter: blur(1.2px);
         }
-        15% {
-          opacity: 0.3;
-          filter: blur(0.8px);
+        12% {
+          opacity: .72;
         }
-        40% {
-          opacity: 0.7;
-          filter: blur(0.3px);
-        }
-        70% {
+        82% {
           opacity: 1;
+          clip-path: inset(0 0 0 0);
           filter: blur(0);
-          transform: scaleX(0.95);
         }
         100% {
           opacity: 1;
+          clip-path: inset(0 0 0 0);
           filter: blur(0);
-          transform: scaleX(1);
+        }
+      }
+
+      @keyframes formaPenTrace {
+        0% {
+          left: -5%;
+          opacity: 0;
+        }
+        10% {
+          opacity: .9;
+        }
+        82% {
+          left: 94%;
+          opacity: .72;
+        }
+        100% {
+          left: 101%;
+          opacity: 0;
         }
       }
 
@@ -201,8 +230,8 @@
         min-height: 58px;
         place-items: center;
         opacity: 0;
-        transform: translateY(8px1s ease 6.6);
-        animation: introLogoIn 1.2s ease 4.4s forwards;
+        transform: translateY(8px);
+        animation: introLogoIn 1.15s ease 5.55s forwards;
       }
 
       .client-intro-logo img {
@@ -237,7 +266,7 @@
         letter-spacing: .18em;
         opacity: 0;
         text-transform: uppercase;
-        animation: introGestureIn 1s ease 8.6s forwards;
+        animation: introGestureIn 1s ease 7s forwards;
       }
 
       .client-intro-gesture-icon {
@@ -733,6 +762,11 @@
         outline-offset: 4px;
       }
 
+      .page-detail-frame.is-editing-image {
+        cursor: grab;
+        outline-color: rgba(215,194,167,.95);
+      }
+
       .page-detail-frame.drag-over {
         border-color: #f7f2ea;
         box-shadow: 0 0 0 4px rgba(215,194,167,.14), 0 18px 44px rgba(0,0,0,.38);
@@ -743,6 +777,7 @@
         height: 100%;
         object-fit: cover;
         display: block;
+        transform-origin: center;
         pointer-events: none;
         user-select: none;
       }
@@ -1060,6 +1095,14 @@
       .frame-resize-handle[data-resize-frame="s"] { left: 50%; bottom: -7px; transform: translateX(-50%); cursor: ns-resize; }
       .frame-resize-handle[data-resize-frame="sw"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
       .frame-resize-handle[data-resize-frame="w"] { left: -7px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+      .frame-resize-handle[data-resize-detail="nw"] { left: -7px; top: -7px; cursor: nwse-resize; }
+      .frame-resize-handle[data-resize-detail="n"] { left: 50%; top: -7px; transform: translateX(-50%); cursor: ns-resize; }
+      .frame-resize-handle[data-resize-detail="ne"] { right: -7px; top: -7px; cursor: nesw-resize; }
+      .frame-resize-handle[data-resize-detail="e"] { right: -7px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+      .frame-resize-handle[data-resize-detail="se"] { right: -7px; bottom: -7px; cursor: nwse-resize; }
+      .frame-resize-handle[data-resize-detail="s"] { left: 50%; bottom: -7px; transform: translateX(-50%); cursor: ns-resize; }
+      .frame-resize-handle[data-resize-detail="sw"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
+      .frame-resize-handle[data-resize-detail="w"] { left: -7px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
 
       .frame-selection-toolbar {
         position: absolute;
@@ -2174,6 +2217,7 @@
             if (!frame || !file) return;
             const photo = await readPhoto(file, 0);
             frame.photo = photo.src;
+            resetFramePhotoPlacement(frame);
             persistAndRender();
           });
         });
@@ -2391,6 +2435,7 @@
             if (!annotation || !file) return;
             const photo = await readPhoto(file, 0);
             annotation.image = photo.src;
+            resetDetailPhotoPlacement(annotation);
             persistAndRender();
           });
         });
@@ -2648,6 +2693,8 @@
         node.style.setProperty('--detail-height', `${height}%`);
         node.style.setProperty('--detail-border-color', annotation.detailBorderColor || pageAnnotationArrowColor(annotation));
         node.style.setProperty('--detail-border-width', `${Number(annotation.detailBorderWidth ?? 1.2)}px`);
+        node.classList.toggle('is-editing-image', Boolean(annotation.editImage));
+        updatePageDetailImageTransform(node, annotation);
       }
 
       function pageAnnotationLength(annotation, pageNode) {
@@ -2748,10 +2795,46 @@
         return `${environmentIndex}:${pageIndex}:${frameIndex}`;
       }
 
-      function selectSingleFrame(key) {
+      function isImageEditException(except, type, environmentIndex, pageIndex, itemIndex) {
+        if (!except || except.type !== type) return false;
+        const key = type === 'frame'
+          ? frameKey(environmentIndex, pageIndex, itemIndex)
+          : pageAnnotationKey(environmentIndex, pageIndex, itemIndex);
+        if (except.key) return except.key === key;
+        return Number(except.environmentIndex) === environmentIndex
+          && Number(except.pageIndex) === pageIndex
+          && Number(except.itemIndex) === itemIndex;
+      }
+
+      function clearImageEditModes(except = null) {
+        let changed = false;
+        (documentData.environments || []).forEach((environment, environmentIndex) => {
+          (environment.pages || []).forEach((page, pageIndex) => {
+            (page.frames || []).forEach((frame, frameIndex) => {
+              if (!frame?.editImage || isImageEditException(except, 'frame', environmentIndex, pageIndex, frameIndex)) return;
+              frame.editImage = false;
+              changed = true;
+            });
+            (page.annotations || []).forEach((annotation, annotationIndex) => {
+              if (!annotation?.editImage || isImageEditException(except, 'detail', environmentIndex, pageIndex, annotationIndex)) return;
+              annotation.editImage = false;
+              changed = true;
+            });
+          });
+        });
+        if (changed) {
+          applyElementSelectionClasses();
+          persistWithoutRender();
+        }
+        return changed;
+      }
+
+      function selectSingleFrame(key, options = {}) {
         selectedFrameKeys.clear();
         selectedPageAnnotationKeys.clear();
+        selectedFreeElementKeys.clear();
         selectedFrameKeys.add(key);
+        if (!options.keepImageEdit) clearImageEditModes({ type: 'frame', key });
         applyElementSelectionClasses();
       }
 
@@ -2759,6 +2842,8 @@
         if (selectedFrameKeys.has(key)) selectedFrameKeys.delete(key);
         else selectedFrameKeys.add(key);
         selectedPageAnnotationKeys.clear();
+        selectedFreeElementKeys.clear();
+        clearImageEditModes();
         applyElementSelectionClasses();
       }
 
@@ -2766,6 +2851,7 @@
         selectedFrameKeys.clear();
         selectedPageAnnotationKeys.clear();
         selectedFreeElementKeys.clear();
+        clearImageEditModes();
         applyElementSelectionClasses();
       }
 
@@ -2778,11 +2864,12 @@
         return `page-ann:${environmentIndex}:${pageIndex}:${annotationIndex}`;
       }
 
-      function selectSinglePageAnnotation(key) {
+      function selectSinglePageAnnotation(key, options = {}) {
         selectedFrameKeys.clear();
         selectedPageAnnotationKeys.clear();
         selectedFreeElementKeys.clear();
         selectedPageAnnotationKeys.add(key);
+        if (!options.keepImageEdit) clearImageEditModes({ type: 'detail', key });
         applyElementSelectionClasses();
       }
 
@@ -2795,13 +2882,16 @@
         selectedPageAnnotationKeys.clear();
         selectedFreeElementKeys.clear();
         selectedFreeElementKeys.add(key);
+        clearImageEditModes();
         applyElementSelectionClasses();
       }
 
       function applyElementSelectionClasses() {
         document.querySelectorAll('[data-draggable-frame]').forEach((node) => {
           const key = frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex);
+          const frame = pageFrame(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.frameIndex));
           node.classList.toggle('is-selected', selectedFrameKeys.has(key));
+          node.classList.toggle('is-editing-image', Boolean(frame?.editImage));
         });
         document.querySelectorAll('[data-page-annotation-text]').forEach((node) => {
           const key = pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex);
@@ -2809,7 +2899,9 @@
         });
         document.querySelectorAll('[data-page-detail-frame]').forEach((node) => {
           const key = pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex);
+          const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
           node.classList.toggle('is-selected', selectedPageAnnotationKeys.has(key));
+          node.classList.toggle('is-editing-image', Boolean(annotation?.editImage));
         });
         document.querySelectorAll('[data-page-annotation-toolbar]').forEach((node) => {
           const key = pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex);
@@ -3628,12 +3720,14 @@
         if (file && file.type.startsWith('image/')) {
           readPhoto(file, 0).then(photo => {
             frame.photo = photo.src;
+            resetFramePhotoPlacement(frame);
             persistAndRender();
           });
           return;
         }
         if (photoSrc && photoSrc.startsWith('data:image')) {
           frame.photo = photoSrc;
+          resetFramePhotoPlacement(frame);
           persistAndRender();
         }
       }
@@ -3650,12 +3744,14 @@
         if (file && file.type.startsWith('image/')) {
           readPhoto(file, 0).then(photo => {
             annotation.image = photo.src;
+            resetDetailPhotoPlacement(annotation);
             persistAndRender();
           });
           return;
         }
         if (photoSrc) {
           annotation.image = photoSrc;
+          resetDetailPhotoPlacement(annotation);
           persistAndRender();
         }
       }
@@ -3700,6 +3796,10 @@
             annotation.detailSize = 16;
             annotation.detailBorderColor = pageAnnotationArrowColor(annotation);
             annotation.detailBorderWidth = 1.2;
+            annotation.imgX = 0;
+            annotation.imgY = 0;
+            annotation.imgScale = 1;
+            annotation.editImage = false;
           }
           page.annotations.push(annotation);
           const annotationIndex = page.annotations.length - 1;
@@ -3876,6 +3976,28 @@
         image.style.transform = `translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
       }
 
+      function updatePageDetailImageTransform(detailNode, annotation) {
+        const image = detailNode?.querySelector('img');
+        if (!image || !annotation) return;
+        image.style.transform = `translate(${Number(annotation.imgX || 0)}%, ${Number(annotation.imgY || 0)}%) scale(${Number(annotation.imgScale || 1)})`;
+      }
+
+      function resetFramePhotoPlacement(frame) {
+        if (!frame) return;
+        frame.imgX = 0;
+        frame.imgY = 0;
+        frame.imgScale = 1;
+        frame.editImage = false;
+      }
+
+      function resetDetailPhotoPlacement(annotation) {
+        if (!annotation) return;
+        annotation.imgX = 0;
+        annotation.imgY = 0;
+        annotation.imgScale = 1;
+        annotation.editImage = false;
+      }
+
       function updateFreeImageTransform(node, element) {
         const image = node?.querySelector('img');
         if (!image || !element) return;
@@ -3891,6 +4013,34 @@
         persistAndRender();
       }
 
+      function activateFrameImageEdit(frameNode) {
+        if (!isEditablePreview || !frameNode) return;
+        const environmentIndex = Number(frameNode.dataset.environmentIndex);
+        const pageIndex = Number(frameNode.dataset.pageIndex);
+        const frameIndex = Number(frameNode.dataset.frameIndex);
+        const frame = pageFrame(environmentIndex, pageIndex, frameIndex);
+        if (!frame?.photo) return;
+        clearImageEditModes({ type: 'frame', environmentIndex, pageIndex, itemIndex: frameIndex });
+        frame.editImage = true;
+        selectSingleFrame(frameKey(environmentIndex, pageIndex, frameIndex), { keepImageEdit: true });
+        applyElementSelectionClasses();
+        persistWithoutRender();
+      }
+
+      function activateDetailImageEdit(detailNode) {
+        if (!isEditablePreview || !detailNode) return;
+        const environmentIndex = Number(detailNode.dataset.environmentIndex);
+        const pageIndex = Number(detailNode.dataset.pageIndex);
+        const annotationIndex = Number(detailNode.dataset.annotationIndex);
+        const annotation = pageAnnotation(environmentIndex, pageIndex, annotationIndex);
+        if (!annotation?.image) return;
+        clearImageEditModes({ type: 'detail', environmentIndex, pageIndex, itemIndex: annotationIndex });
+        annotation.editImage = true;
+        selectSinglePageAnnotation(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex), { keepImageEdit: true });
+        applyElementSelectionClasses();
+        persistWithoutRender();
+      }
+
       function startFrameImagePan(event) {
         if (!isEditablePreview) return;
         const frameNode = event.currentTarget.closest('.doc-photo-frame');
@@ -3900,7 +4050,7 @@
         if (!frame || !frame.editImage) return;
         event.preventDefault();
         event.stopPropagation();
-        selectSingleFrame(frameKey(frameNode.dataset.environmentIndex, frameNode.dataset.pageIndex, frameNode.dataset.frameIndex));
+        selectSingleFrame(frameKey(frameNode.dataset.environmentIndex, frameNode.dataset.pageIndex, frameNode.dataset.frameIndex), { keepImageEdit: true });
         const startX = event.clientX;
         const startY = event.clientY;
         const initial = { x: Number(frame.imgX || 0), y: Number(frame.imgY || 0) };
@@ -4186,6 +4336,7 @@
             const detailHeight = detailShape === 'circle'
               ? detailSize
               : Math.max(6, Math.min(28, Number(annotation.detailHeight ?? detailSize * .68)));
+            const detailImageStyle = `transform:translate(${Number(annotation.imgX || 0)}%, ${Number(annotation.imgY || 0)}%) scale(${Number(annotation.imgScale || 1)})`;
             const detailHandles = isEditablePreview
               ? ['nw','n','ne','e','se','s','sw','w'].map(handle => `<span class="frame-resize-handle" data-resize-detail="${handle}"></span>`).join('')
               : '';
@@ -4236,11 +4387,11 @@
                 data-environment-index="${environmentIndex}"
                 data-page-index="${pageIndex}"
                 data-annotation-index="${annotationIndex}"
-                class="page-detail-frame shape-${escapeAttribute(detailShape)} ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}"
+                class="page-detail-frame shape-${escapeAttribute(detailShape)} ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''} ${annotation.editImage ? 'is-editing-image' : ''}"
                 style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;z-index:${zIndex + 20};--detail-width:${detailSize}%;--detail-height:${detailHeight}%;--detail-border-color:${escapeAttribute(annotation.detailBorderColor || pageAnnotationArrowColor(annotation))};--detail-border-width:${Number(annotation.detailBorderWidth ?? 1.2)}px"
               >
                 <span class="page-detail-clip">
-                  ${annotation.image ? `<img src="${escapeAttribute(annotation.image)}" alt="Detalhe" draggable="false">` : '<span class="page-detail-placeholder">Imagem do detalhe</span>'}
+                  ${annotation.image ? `<img src="${escapeAttribute(annotation.image)}" alt="Detalhe" draggable="false" style="${detailImageStyle}">` : '<span class="page-detail-placeholder">Imagem do detalhe</span>'}
                 </span>
                 ${detailHandles}
               </span>
