@@ -37,6 +37,25 @@
         -ms-user-select: none;
       }
 
+      body.client-view .page-annotation-line,
+      body.client-view .page-annotation-arrow-head,
+      body.client-view .page-annotation-text,
+      body.client-view .page-arrow-point,
+      body.client-view .doc-annotation-line,
+      body.client-view .doc-annotation-text {
+        pointer-events: none !important;
+      }
+
+      body.client-view .page-annotation-toolbar,
+      body.client-view .frame-selection-toolbar,
+      body.client-view .preview-frame-tools,
+      body.client-view .frame-resize-handle,
+      body.client-view .page-arrow-point,
+      body.client-view .frame-context-menu,
+      body.client-view .annotation-edit-row {
+        display: none !important;
+      }
+
       html { scroll-behavior: smooth; }
       body {
         margin: 0;
@@ -1839,6 +1858,17 @@
             document.body.classList.add('lightbox-open');
           });
         });
+
+        if (!isEditablePreview) {
+          root.querySelectorAll('[contenteditable="true"]').forEach((node) => {
+            node.setAttribute('contenteditable', 'false');
+          });
+          selectedFrameKeys.clear();
+          selectedPageAnnotationKeys.clear();
+          arrowDrawMode = null;
+          applyElementSelectionClasses();
+          return;
+        }
 
         document.querySelectorAll('[data-layout]').forEach((button) => {
           button.addEventListener('click', () => {
