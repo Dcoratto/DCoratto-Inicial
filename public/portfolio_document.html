@@ -41,6 +41,7 @@
       body.client-view .page-annotation-arrow-head,
       body.client-view .page-annotation-text,
       body.client-view .page-detail-frame,
+      body.client-view .page-free-element,
       body.client-view .page-arrow-point,
       body.client-view .doc-annotation-line,
       body.client-view .doc-annotation-text {
@@ -53,6 +54,7 @@
       body.client-view .frame-resize-handle,
       body.client-view .page-arrow-point,
       body.client-view .frame-context-menu,
+      body.client-view .free-element-toolbar,
       body.client-view .annotation-edit-row {
         display: none !important;
       }
@@ -749,6 +751,94 @@
         text-align: center;
         text-transform: uppercase;
         padding: 12px;
+      }
+
+      .page-free-element {
+        position: absolute;
+        z-index: 38;
+        min-width: 64px;
+        min-height: 36px;
+        color: #f7f2ea;
+        cursor: move;
+        pointer-events: auto;
+        touch-action: none;
+      }
+
+      .page-free-element.is-selected {
+        outline: 1.5px solid rgba(124,70,255,.92);
+        outline-offset: 4px;
+      }
+
+      .page-free-element.is-cropping {
+        outline-color: rgba(215,194,167,.95);
+      }
+
+      .page-free-element.type-image {
+        overflow: hidden;
+        background: rgba(21,18,15,.72);
+        box-shadow: 0 18px 44px rgba(0,0,0,.34);
+      }
+
+      .page-free-element.type-image img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: cover;
+        transform-origin: center;
+        pointer-events: none;
+        user-select: none;
+      }
+
+      .page-free-element.type-text {
+        max-width: 480px;
+        color: var(--text-color, #f7f2ea);
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: var(--text-size, 22px);
+        line-height: 1.25;
+        text-shadow: 0 1px 4px rgba(0,0,0,.58);
+        white-space: pre-wrap;
+      }
+
+      .page-free-element.type-text.is-selected {
+        background: rgba(17,16,14,.26);
+      }
+
+      .free-element-toolbar {
+        position: absolute;
+        left: 50%;
+        top: -14px;
+        z-index: 48;
+        display: none;
+        align-items: center;
+        gap: 6px;
+        transform: translate(-50%, -100%);
+        border: 1px solid rgba(17,17,17,.14);
+        border-radius: 999px;
+        background: rgba(255,255,255,.96);
+        box-shadow: 0 10px 30px rgba(0,0,0,.16);
+        padding: 6px 8px;
+        color: #111;
+      }
+
+      .page-free-element.is-selected .free-element-toolbar {
+        display: flex;
+      }
+
+      .free-element-toolbar button,
+      .free-element-toolbar input {
+        border: 1px solid rgba(17,17,17,.16);
+        border-radius: 7px;
+        background: #fff;
+        color: #111;
+        padding: 5px 8px;
+        font-family: 'Montserrat', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+      }
+
+      .free-element-toolbar input[type="range"] {
+        width: 96px;
+        padding: 0;
       }
 
       .page-annotation-toolbar {
@@ -1588,9 +1678,12 @@
       documentData = normalizeDocumentData(documentData);
       const selectedFrameKeys = new Set();
       const selectedPageAnnotationKeys = new Set();
+      const selectedFreeElementKeys = new Set();
       let frameClipboard = [];
       let pageAnnotationClipboard = [];
+      let freeElementClipboard = [];
       let arrowDrawMode = null;
+      let lastCanvasPasteTarget = null;
       const historyLimit = 80;
       const undoStack = [];
       const redoStack = [];
@@ -1620,7 +1713,9 @@
       
       document.addEventListener('pointerdown', (event) => {
         if (!isEditablePreview) return;
-        if (event.target.closest('button, input, textarea, select, a, [contenteditable="true"], .doc-photo-frame, .page-annotation-text, .page-detail-frame, .page-annotation-toolbar, .page-annotation-line, .page-arrow-point, .frame-context-menu, .preview-frame-tools, .frame-selection-toolbar')) return;
+        const pageNode = event.target.closest('[data-page-frames]');
+        if (pageNode) lastCanvasPasteTarget = pasteTargetFromEvent(event, pageNode);
+        if (event.target.closest('button, input, textarea, select, a, [contenteditable="true"], .doc-photo-frame, .page-annotation-text, .page-detail-frame, .page-free-element, .page-annotation-toolbar, .page-annotation-line, .page-arrow-point, .frame-context-menu, .preview-frame-tools, .frame-selection-toolbar')) return;
         
         // Duplo clique desativa arrow draw mode
         const now = Date.now();
@@ -1667,7 +1762,7 @@
           clearFrameSelection();
           closeFrameContextMenu();
         }
-        if ((event.key === 'Delete' || event.key === 'Backspace') && isEditablePreview && (selectedFrameKeys.size || selectedPageAnnotationKeys.size)) {
+        if ((event.key === 'Delete' || event.key === 'Backspace') && isEditablePreview && (selectedFrameKeys.size || selectedPageAnnotationKeys.size || selectedFreeElementKeys.size)) {
           event.preventDefault();
           deleteSelectedElements();
         }
@@ -1677,8 +1772,10 @@
           copySelectedElements();
         }
         if (isModifierShortcut && event.key.toLowerCase() === 'v') {
-          event.preventDefault();
-          pasteCopiedElements();
+          if (frameClipboard.length || pageAnnotationClipboard.length || freeElementClipboard.length) {
+            event.preventDefault();
+            pasteCopiedElements();
+          }
         }
         if (isModifierShortcut && event.key.toLowerCase() === 'd') {
           event.preventDefault();
@@ -1688,6 +1785,38 @@
 
       document.addEventListener('click', (event) => {
         if (!event.target.closest('.frame-context-menu, [data-open-frame-menu]')) closeFrameContextMenu();
+      });
+
+      document.addEventListener('paste', (event) => {
+        if (!isEditablePreview) return;
+        const target = event.target;
+        if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+        const pasteTarget = lastCanvasPasteTarget || defaultPasteTargetPage();
+        if (!pasteTarget?.page) return;
+        const items = Array.from(event.clipboardData?.items || []);
+        const imageItem = items.find(item => item.type.startsWith('image/'));
+        if (imageItem) {
+          event.preventDefault();
+          const file = imageItem.getAsFile();
+          if (!file) return;
+          readPhoto(file, 0).then(photo => addFreeElement(pasteTarget, {
+            type: 'image',
+            src: photo.src,
+            width: 22,
+            height: 16,
+          }));
+          return;
+        }
+        const text = event.clipboardData?.getData('text/plain');
+        if (text && text.trim()) {
+          event.preventDefault();
+          addFreeElement(pasteTarget, {
+            type: 'text',
+            text: text.trim(),
+            width: 24,
+            height: 8,
+          });
+        }
       });
 
       window.addEventListener('storage', (event) => {
@@ -2304,6 +2433,47 @@
 
         document.querySelectorAll('[data-page-frames]').forEach((node) => {
           node.addEventListener('pointerdown', startPageArrowDraw);
+          node.addEventListener('contextmenu', (event) => {
+            if (!isEditablePreview) return;
+            if (event.target.closest('button, input, textarea, select, a, [contenteditable="true"], .doc-photo-frame, .page-annotation-text, .page-detail-frame, .page-free-element, .page-annotation-toolbar, .page-annotation-line, .page-arrow-point, .frame-context-menu, .preview-frame-tools, .frame-selection-toolbar')) return;
+            event.preventDefault();
+            lastCanvasPasteTarget = pasteTargetFromEvent(event, node);
+            clearFrameSelection();
+            openCanvasContextMenu(event.clientX, event.clientY);
+          });
+        });
+
+        document.querySelectorAll('[data-free-element]').forEach((node) => {
+          node.addEventListener('pointerdown', startFreeElementDrag);
+          node.addEventListener('contextmenu', (event) => {
+            if (!isEditablePreview) return;
+            event.preventDefault();
+            event.stopPropagation();
+            selectSingleFreeElement(freeElementKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.elementIndex));
+            openCanvasContextMenu(event.clientX, event.clientY);
+          });
+          node.addEventListener('dblclick', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleFreeImageCrop(node);
+          });
+        });
+
+        document.querySelectorAll('[data-free-crop-toggle]').forEach((button) => {
+          button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            toggleFreeImageCrop(button.closest('[data-free-element]'));
+          });
+        });
+
+        document.querySelectorAll('[data-free-crop-zoom]').forEach((input) => {
+          input.addEventListener('input', () => {
+            const element = freeElement(Number(input.dataset.environmentIndex), Number(input.dataset.pageIndex), Number(input.dataset.elementIndex));
+            if (!element) return;
+            element.imgScale = Number(input.value);
+            updateFreeImageTransform(input.closest('[data-free-element]'), element);
+            persistWithoutRender();
+          });
         });
 
         applyArrowDrawMode();
@@ -2336,11 +2506,39 @@
         return page.annotations[annotationIndex] || null;
       }
 
+      function freeElement(environmentIndex, pageIndex, elementIndex) {
+        const page = environmentPage(environmentIndex, pageIndex);
+        if (!page) return null;
+        page.freeElements = Array.isArray(page.freeElements) ? page.freeElements : [];
+        return page.freeElements[elementIndex] || null;
+      }
+
       function pagePoint(event, pageNode) {
         const rect = pageNode.getBoundingClientRect();
         return {
           x: Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
           y: Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)),
+        };
+      }
+
+      function pasteTargetFromEvent(event, pageNode) {
+        if (!pageNode) return null;
+        return {
+          environmentIndex: Number(pageNode.dataset.environmentIndex),
+          pageIndex: Number(pageNode.dataset.pageIndex),
+          page: environmentPage(Number(pageNode.dataset.environmentIndex), Number(pageNode.dataset.pageIndex)),
+          point: pagePoint(event, pageNode),
+        };
+      }
+
+      function defaultPasteTargetPage() {
+        const pageNode = document.querySelector('[data-page-frames]');
+        if (!pageNode) return null;
+        return {
+          environmentIndex: Number(pageNode.dataset.environmentIndex),
+          pageIndex: Number(pageNode.dataset.pageIndex),
+          page: environmentPage(Number(pageNode.dataset.environmentIndex), Number(pageNode.dataset.pageIndex)),
+          point: { x: 50, y: 50 },
         };
       }
 
@@ -2518,6 +2716,7 @@
       function clearFrameSelection() {
         selectedFrameKeys.clear();
         selectedPageAnnotationKeys.clear();
+        selectedFreeElementKeys.clear();
         applyElementSelectionClasses();
       }
 
@@ -2533,7 +2732,20 @@
       function selectSinglePageAnnotation(key) {
         selectedFrameKeys.clear();
         selectedPageAnnotationKeys.clear();
+        selectedFreeElementKeys.clear();
         selectedPageAnnotationKeys.add(key);
+        applyElementSelectionClasses();
+      }
+
+      function freeElementKey(environmentIndex, pageIndex, elementIndex) {
+        return `free:${environmentIndex}:${pageIndex}:${elementIndex}`;
+      }
+
+      function selectSingleFreeElement(key) {
+        selectedFrameKeys.clear();
+        selectedPageAnnotationKeys.clear();
+        selectedFreeElementKeys.clear();
+        selectedFreeElementKeys.add(key);
         applyElementSelectionClasses();
       }
 
@@ -2561,6 +2773,10 @@
         document.querySelectorAll('[data-page-annotation-line]').forEach((node) => {
           const key = pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex);
           node.classList.toggle('is-selected', selectedPageAnnotationKeys.has(key));
+        });
+        document.querySelectorAll('[data-free-element]').forEach((node) => {
+          const key = freeElementKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.elementIndex);
+          node.classList.toggle('is-selected', selectedFreeElementKeys.has(key));
         });
       }
 
@@ -2599,8 +2815,29 @@
         selectedPageAnnotationKeys.clear();
       }
 
+      function deleteSelectedFreeElements() {
+        const grouped = new Map();
+        selectedFreeElementKeys.forEach((key) => {
+          const [, environmentIndex, pageIndex, elementIndex] = key.split(':').map((value, index) => index ? Number(value) : value);
+          const groupKey = `${environmentIndex}:${pageIndex}`;
+          if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+          grouped.get(groupKey).push(elementIndex);
+        });
+        grouped.forEach((indexes, groupKey) => {
+          const [environmentIndex, pageIndex] = groupKey.split(':').map(Number);
+          const page = environmentPage(environmentIndex, pageIndex);
+          if (!page || !Array.isArray(page.freeElements)) return;
+          indexes.sort((a, b) => b - a).forEach((index) => page.freeElements.splice(index, 1));
+        });
+        selectedFreeElementKeys.clear();
+      }
+
       function deleteSelectedElements() {
         if (selectedFrameKeys.size) deleteSelectedFrames();
+        else if (selectedFreeElementKeys.size) {
+          deleteSelectedFreeElements();
+          persistAndRender();
+        }
         else {
           deleteSelectedPageAnnotations();
           persistAndRender();
@@ -2628,6 +2865,18 @@
         }).filter(Boolean);
       }
 
+      function selectedFreeElementRefs() {
+        return [...selectedFreeElementKeys].map((key) => {
+          const [, environmentIndexRaw, pageIndexRaw, elementIndexRaw] = key.split(':');
+          const environmentIndex = Number(environmentIndexRaw);
+          const pageIndex = Number(pageIndexRaw);
+          const elementIndex = Number(elementIndexRaw);
+          const page = environmentPage(environmentIndex, pageIndex);
+          const element = freeElement(environmentIndex, pageIndex, elementIndex);
+          return page && element ? { key, environmentIndex, pageIndex, elementIndex, page, element } : null;
+        }).filter(Boolean);
+      }
+
       function cloneFrame(frame, offset = 3) {
         const clone = JSON.parse(JSON.stringify(frame));
         clone.id = `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
@@ -2643,6 +2892,7 @@
         if (!refs.length) return;
         frameClipboard = refs.map(ref => JSON.parse(JSON.stringify(ref.frame)));
         pageAnnotationClipboard = [];
+        freeElementClipboard = [];
       }
 
       function copySelectedPageAnnotations() {
@@ -2650,11 +2900,21 @@
         if (!refs.length) return;
         pageAnnotationClipboard = refs.map(ref => JSON.parse(JSON.stringify(ref.annotation)));
         frameClipboard = [];
+        freeElementClipboard = [];
+      }
+
+      function copySelectedFreeElements() {
+        const refs = selectedFreeElementRefs();
+        if (!refs.length) return;
+        freeElementClipboard = refs.map(ref => JSON.parse(JSON.stringify(ref.element)));
+        frameClipboard = [];
+        pageAnnotationClipboard = [];
       }
 
       function copySelectedElements() {
         if (selectedFrameKeys.size) copySelectedFrames();
         if (selectedPageAnnotationKeys.size) copySelectedPageAnnotations();
+        if (selectedFreeElementKeys.size) copySelectedFreeElements();
       }
 
       function pasteTargetPage() {
@@ -2662,8 +2922,17 @@
         if (ref?.page) return ref;
         const annotationRef = selectedPageAnnotationRefs()[0];
         if (annotationRef?.page) return annotationRef;
+        const freeRef = selectedFreeElementRefs()[0];
+        if (freeRef?.page) return {
+          ...freeRef,
+          point: {
+            x: Math.max(0, Math.min(96, Number(freeRef.element.x || 50) + 4)),
+            y: Math.max(0, Math.min(96, Number(freeRef.element.y || 50) + 4)),
+          },
+        };
+        if (lastCanvasPasteTarget?.page) return lastCanvasPasteTarget;
         const page = documentData.environments?.[0]?.pages?.[0] || null;
-        return page ? { environmentIndex: 0, pageIndex: 0, page } : null;
+        return page ? { environmentIndex: 0, pageIndex: 0, page, point: { x: 50, y: 50 } } : null;
       }
 
       function pasteCopiedFrames() {
@@ -2698,8 +2967,58 @@
         persistAndRender();
       }
 
+      function addFreeElement(target, element) {
+        if (!target?.page) return;
+        target.page.freeElements = Array.isArray(target.page.freeElements) ? target.page.freeElements : [];
+        const point = target.point || { x: 50, y: 50 };
+        const next = {
+          id: `free-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+          type: element.type || 'text',
+          text: element.text || '',
+          src: element.src || '',
+          x: Math.max(0, Math.min(96, Number(point.x ?? 50))),
+          y: Math.max(0, Math.min(96, Number(point.y ?? 50))),
+          width: Number(element.width || (element.type === 'image' ? 22 : 24)),
+          height: Number(element.height || (element.type === 'image' ? 16 : 8)),
+          fontSize: Number(element.fontSize || 22),
+          textColor: element.textColor || '#f7f2ea',
+          imgScale: Number(element.imgScale || 1),
+          imgX: Number(element.imgX || 0),
+          imgY: Number(element.imgY || 0),
+          cropMode: false,
+        };
+        target.page.freeElements.push(next);
+        selectedFrameKeys.clear();
+        selectedPageAnnotationKeys.clear();
+        selectedFreeElementKeys.clear();
+        selectedFreeElementKeys.add(freeElementKey(target.environmentIndex, target.pageIndex, target.page.freeElements.length - 1));
+        persistAndRender();
+      }
+
+      function pasteCopiedFreeElements() {
+        const target = pasteTargetPage();
+        if (!target?.page || !freeElementClipboard.length) return;
+        target.page.freeElements = Array.isArray(target.page.freeElements) ? target.page.freeElements : [];
+        const start = target.page.freeElements.length;
+        const base = target.point || { x: 50, y: 50 };
+        freeElementClipboard.forEach((element, index) => {
+          const clone = JSON.parse(JSON.stringify(element));
+          clone.id = `free-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
+          clone.x = Math.max(0, Math.min(96, Number(base.x ?? clone.x ?? 50) + index * 2));
+          clone.y = Math.max(0, Math.min(96, Number(base.y ?? clone.y ?? 50) + index * 2));
+          clone.cropMode = false;
+          target.page.freeElements.push(clone);
+        });
+        selectedFrameKeys.clear();
+        selectedPageAnnotationKeys.clear();
+        selectedFreeElementKeys.clear();
+        freeElementClipboard.forEach((_, index) => selectedFreeElementKeys.add(freeElementKey(target.environmentIndex, target.pageIndex, start + index)));
+        persistAndRender();
+      }
+
       function pasteCopiedElements() {
-        if (pageAnnotationClipboard.length) pasteCopiedPageAnnotations();
+        if (freeElementClipboard.length) pasteCopiedFreeElements();
+        else if (pageAnnotationClipboard.length) pasteCopiedPageAnnotations();
         else pasteCopiedFrames();
       }
 
@@ -2899,6 +3218,66 @@
         menu.style.left = `${Math.min(window.innerWidth - 280, clientX)}px`;
         menu.style.top = `${Math.min(window.innerHeight - 230, clientY)}px`;
         menu.classList.add('active');
+      }
+
+      function openCanvasContextMenu(clientX, clientY) {
+        let menu = document.getElementById('frameContextMenu');
+        if (!menu) {
+          menu = document.createElement('div');
+          menu.id = 'frameContextMenu';
+          menu.className = 'frame-context-menu';
+          document.body.appendChild(menu);
+        }
+
+        const hasSelection = selectedFrameKeys.size || selectedPageAnnotationKeys.size || selectedFreeElementKeys.size;
+        const hasInternalClipboard = frameClipboard.length || pageAnnotationClipboard.length || freeElementClipboard.length;
+        menu.innerHTML = `
+          ${hasSelection ? '<button type="button" data-menu-action="copy"><span>⧉</span><span>Copiar</span><kbd>Ctrl+C</kbd></button>' : ''}
+          ${hasInternalClipboard ? '<button type="button" data-menu-action="paste"><span>▣</span><span>Colar elemento</span><kbd>Ctrl+V</kbd></button>' : ''}
+          <button type="button" data-menu-action="paste-system"><span>▤</span><span>Colar da area de transferencia</span><kbd>Ctrl+V</kbd></button>
+          ${hasSelection ? '<button type="button" data-menu-action="duplicate"><span>⊞</span><span>Duplicar</span><kbd>Ctrl+D</kbd></button>' : ''}
+          ${hasSelection ? '<button type="button" data-menu-action="delete"><span>⌫</span><span>Excluir</span><kbd>Del</kbd></button>' : ''}
+        `;
+        menu.querySelectorAll('button').forEach(button => {
+          button.addEventListener('click', async () => {
+            const action = button.dataset.menuAction;
+            if (action === 'copy') copySelectedElements();
+            if (action === 'paste') pasteCopiedElements();
+            if (action === 'paste-system') await pasteSystemClipboard();
+            if (action === 'duplicate') duplicateSelectedElements();
+            if (action === 'delete') deleteSelectedElements();
+            closeFrameContextMenu();
+          });
+        });
+        menu.style.left = `${Math.min(window.innerWidth - 280, clientX)}px`;
+        menu.style.top = `${Math.min(window.innerHeight - 230, clientY)}px`;
+        menu.classList.add('active');
+      }
+
+      async function pasteSystemClipboard() {
+        const target = lastCanvasPasteTarget || defaultPasteTargetPage();
+        if (!target?.page || !navigator.clipboard) return;
+        try {
+          if (navigator.clipboard.read) {
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+              const imageType = item.types.find(type => type.startsWith('image/'));
+              if (imageType) {
+                const blob = await item.getType(imageType);
+                const file = new File([blob], 'clipboard-image.png', { type: imageType });
+                const photo = await readPhoto(file, 0);
+                addFreeElement(target, { type: 'image', src: photo.src, width: 22, height: 16 });
+                return;
+              }
+            }
+          }
+          const text = await navigator.clipboard.readText();
+          if (text && text.trim()) {
+            addFreeElement(target, { type: 'text', text: text.trim(), width: 24, height: 8 });
+          }
+        } catch (error) {
+          console.warn('Nao foi possivel ler a area de transferencia. Use Ctrl+V na pagina.', error);
+        }
       }
 
       function bringPageAnnotationForward() {
@@ -3163,7 +3542,7 @@
 
       function startPageArrowDraw(event) {
         if (!isEditablePreview || !arrowDrawMode) return;
-        if (event.target.closest('.preview-frame-tools, .frame-selection-toolbar, .page-annotation-toolbar, .page-detail-frame, [data-page-annotation-line], [data-resize-frame], [data-drag-page-annotation], [contenteditable="true"]')) return;
+        if (event.target.closest('.preview-frame-tools, .frame-selection-toolbar, .page-annotation-toolbar, .page-detail-frame, .page-free-element, [data-page-annotation-line], [data-resize-frame], [data-drag-page-annotation], [contenteditable="true"]')) return;
         const pageNode = event.currentTarget;
         const environmentIndex = Number(pageNode.dataset.environmentIndex);
         const pageIndex = Number(pageNode.dataset.pageIndex);
@@ -3373,6 +3752,21 @@
         image.style.transform = `translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
       }
 
+      function updateFreeImageTransform(node, element) {
+        const image = node?.querySelector('img');
+        if (!image || !element) return;
+        image.style.transform = `translate(${Number(element.imgX || 0)}%, ${Number(element.imgY || 0)}%) scale(${Number(element.imgScale || 1)})`;
+      }
+
+      function toggleFreeImageCrop(node) {
+        if (!isEditablePreview || !node) return;
+        const element = freeElement(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.elementIndex));
+        if (!element || element.type !== 'image') return;
+        element.cropMode = !element.cropMode;
+        selectSingleFreeElement(freeElementKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.elementIndex));
+        persistAndRender();
+      }
+
       function startFrameImagePan(event) {
         if (!isEditablePreview) return;
         const frameNode = event.currentTarget.closest('.doc-photo-frame');
@@ -3400,6 +3794,55 @@
           persistWithoutRender();
         };
 
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      }
+
+      function startFreeElementDrag(event) {
+        if (!isEditablePreview) return;
+        if (event.target.closest('.free-element-toolbar')) return;
+        const node = event.currentTarget;
+        const pageNode = node.closest('[data-page-frames]');
+        const element = freeElement(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.elementIndex));
+        if (!pageNode || !element) return;
+        event.preventDefault();
+        event.stopPropagation();
+        selectSingleFreeElement(freeElementKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.elementIndex));
+
+        if (element.type === 'image' && element.cropMode && event.detail !== 2) {
+          const startX = event.clientX;
+          const startY = event.clientY;
+          const rect = node.getBoundingClientRect();
+          const initial = { x: Number(element.imgX || 0), y: Number(element.imgY || 0) };
+          const moveCrop = (pointerEvent) => {
+            element.imgX = Math.max(-100, Math.min(100, initial.x + ((pointerEvent.clientX - startX) / rect.width) * 100));
+            element.imgY = Math.max(-100, Math.min(100, initial.y + ((pointerEvent.clientY - startY) / rect.height) * 100));
+            updateFreeImageTransform(node, element);
+          };
+          const upCrop = () => {
+            window.removeEventListener('pointermove', moveCrop);
+            window.removeEventListener('pointerup', upCrop);
+            persistWithoutRender();
+          };
+          window.addEventListener('pointermove', moveCrop);
+          window.addEventListener('pointerup', upCrop);
+          return;
+        }
+
+        const start = pagePoint(event, pageNode);
+        const initial = { x: Number(element.x || 0), y: Number(element.y || 0) };
+        const move = (pointerEvent) => {
+          const point = pagePoint(pointerEvent, pageNode);
+          element.x = Math.max(0, Math.min(96, initial.x + point.x - start.x));
+          element.y = Math.max(0, Math.min(96, initial.y + point.y - start.y));
+          node.style.left = `${element.x}%`;
+          node.style.top = `${element.y}%`;
+        };
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          persistWithoutRender();
+        };
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
       }
@@ -3533,9 +3976,52 @@
             <div class="page-frames" data-page-frames data-environment-index="${environmentIndex}" data-page-index="${pageIndex}">
               ${frames.map((frame, frameIndex) => renderDocumentFrame(frame, page, frameIndex, environmentIndex, pageIndex)).join('')}
               ${renderPageAnnotations(page, environmentIndex, pageIndex)}
+              ${renderFreeElements(page, environmentIndex, pageIndex)}
             </div>
           </section>
         `;
+      }
+
+      function renderFreeElements(page, environmentIndex, pageIndex) {
+        page.freeElements = Array.isArray(page.freeElements) ? page.freeElements : [];
+        return page.freeElements.map((element, elementIndex) => {
+          const key = freeElementKey(environmentIndex, pageIndex, elementIndex);
+          const selected = selectedFreeElementKeys.has(key);
+          const type = element.type === 'image' ? 'image' : 'text';
+          const style = [
+            `left:${Number(element.x ?? 50)}%`,
+            `top:${Number(element.y ?? 50)}%`,
+            `width:${Number(element.width ?? (type === 'image' ? 22 : 24))}%`,
+            `height:${Number(element.height ?? (type === 'image' ? 16 : 8))}%`,
+            `--text-color:${escapeAttribute(element.textColor || '#f7f2ea')}`,
+            `--text-size:${Number(element.fontSize || 22)}px`,
+          ].join(';');
+          const imageStyle = `transform:translate(${Number(element.imgX || 0)}%, ${Number(element.imgY || 0)}%) scale(${Number(element.imgScale || 1)})`;
+          return `
+            <div
+              data-free-element="${environmentIndex}-${pageIndex}-${elementIndex}"
+              data-environment-index="${environmentIndex}"
+              data-page-index="${pageIndex}"
+              data-element-index="${elementIndex}"
+              class="page-free-element type-${type} ${selected ? 'is-selected' : ''} ${element.cropMode ? 'is-cropping' : ''}"
+              style="${style}"
+            >
+              ${isEditablePreview ? `
+                <span class="free-element-toolbar">
+                  ${type === 'image' ? `
+                    <button type="button" data-free-crop-toggle data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-element-index="${elementIndex}">${element.cropMode ? 'Concluir' : 'Recortar'}</button>
+                    <input type="range" min="1" max="3" step="0.05" value="${Number(element.imgScale || 1)}" data-free-crop-zoom data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-element-index="${elementIndex}">
+                  ` : `
+                    <button type="button" data-free-crop-toggle data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-element-index="${elementIndex}">Texto</button>
+                  `}
+                </span>
+              ` : ''}
+              ${type === 'image'
+                ? `<img src="${escapeAttribute(element.src || fallbackImage)}" alt="Imagem colada" draggable="false" style="${imageStyle}">`
+                : `${escapeHTML(element.text || 'Texto')}`}
+            </div>
+          `;
+        }).join('');
       }
 
       function renderPageAnnotations(page, environmentIndex, pageIndex) {
