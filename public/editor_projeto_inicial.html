@@ -150,21 +150,33 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 /* SETTINGS */
 .settings-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:300;align-items:center;justify-content:center;padding:28px}
 .settings-overlay.active{display:flex}
-.settings-panel{width:min(1080px,96vw);max-height:92vh;overflow:auto;background:var(--dark2);border:1px solid var(--border);border-radius:6px;box-shadow:0 30px 90px rgba(0,0,0,.55)}
-.settings-head{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--border);padding:22px 26px}
+.settings-panel{width:min(1180px,96vw);max-height:92vh;overflow:auto;background:linear-gradient(180deg,#15120f 0%,#100e0c 100%);border:1px solid var(--border);border-radius:8px;box-shadow:0 30px 90px rgba(0,0,0,.55)}
+.settings-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--border);padding:20px 24px;background:rgba(17,15,13,.96);backdrop-filter:blur(10px)}
 .settings-head h2{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:300;color:var(--gold-l)}
-.settings-close{border:0;background:transparent;color:var(--muted);font-size:28px;cursor:pointer}
-.settings-body{display:grid;grid-template-columns:310px 1fr;gap:24px;padding:24px}
-.settings-card{background:rgba(0,0,0,.18);border:1px solid var(--border);border-radius:4px;padding:18px}
-.settings-card h3{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:14px}
-.settings-card .field-group{margin-bottom:12px}
-.file-input{border:1px dashed rgba(184,151,106,.42);padding:12px;border-radius:4px;color:var(--muted);font-size:11px}
-.catalog-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.settings-close{width:34px;height:34px;border:1px solid transparent;background:transparent;color:var(--gold-l);font-size:24px;line-height:1;cursor:pointer;border-radius:50%;display:grid;place-items:center;transition:all .2s}
+.settings-close:hover{border-color:var(--border);background:rgba(184,151,106,.1);color:var(--cream)}
+.settings-body{display:grid;grid-template-columns:minmax(260px,320px) minmax(0,1fr);gap:18px;padding:22px}
+.settings-card{background:rgba(0,0,0,.18);border:1px solid var(--border);border-radius:6px;padding:18px;min-width:0}
+.settings-card h3{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:16px}
+.settings-card .field-group{margin-bottom:0}
+.settings-card .field-group input,.settings-card .field-group select{min-height:40px}
+.settings-card .field-group input[type=file]{padding:9px 10px;color:#dfcfb8}
+.settings-card .field-group input[type=file]::file-selector-button{border:0;background:#ead2ac;color:#14100d;border-radius:2px;padding:7px 10px;margin-right:10px;font-family:'Montserrat',sans-serif;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+.logo-card{display:flex;flex-direction:column;gap:14px}
+.logo-preview{display:grid;place-items:center;aspect-ratio:16/7;min-height:0;border:1px solid var(--border);background:#090807;margin-bottom:0;border-radius:4px;padding:16px}
+.logo-preview img{max-width:100%;max-height:72px;object-fit:contain}
+.logo-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:stretch}
+.logo-actions .file-input,.logo-actions .ghost-btn{width:100%;display:grid;place-items:center;text-align:center}
+.file-input{border:1px dashed rgba(184,151,106,.42);padding:10px 12px;border-radius:4px;color:var(--gold-l);font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;background:rgba(184,151,106,.04);transition:all .2s}
+.file-input:hover{border-color:var(--gold);background:rgba(184,151,106,.1);color:var(--cream)}
+.catalog-card{grid-column:2}
+.catalog-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .catalog-form .field-full{grid-column:1/-1}
-.settings-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
+.settings-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
+.settings-actions.split{justify-content:space-between;align-items:center;border-top:1px solid rgba(184,151,106,.16);padding-top:14px}
 .ghost-btn,.danger-btn{border:1px solid var(--border);background:transparent;color:var(--gold-l);padding:9px 12px;border-radius:2px;font-family:'Montserrat',sans-serif;font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer}
 .danger-btn{color:#ff8a78;border-color:rgba(255,106,85,.35)}
-.catalog-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));gap:12px}
+.catalog-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;max-height:300px;overflow:auto;padding-right:4px}
 .catalog-item{border:1px solid var(--border);border-radius:4px;background:rgba(0,0,0,.2);overflow:hidden}
 .catalog-thumb{width:100%;aspect-ratio:1/1;background:#111;background-size:cover;background-position:center;border-bottom:1px solid var(--border)}
 .catalog-meta{padding:10px;display:grid;gap:4px}
@@ -190,16 +202,28 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .catalog-meta strong{font-size:11px;color:var(--cream);line-height:1.25}
 .catalog-meta span{font-size:9px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
 .catalog-meta button{margin-top:6px;justify-self:start}
-.option-form{display:grid;grid-template-columns:170px 1fr auto;gap:10px;align-items:end;margin-top:18px}
-.option-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:16px}
+.technical-card{grid-column:1/-1}
+.technical-card .settings-note{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.55;max-width:620px}
+.option-form{display:grid;grid-template-columns:220px minmax(220px,1fr) auto;gap:12px;align-items:end;margin-top:2px}
+.option-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:18px;max-height:340px;overflow:auto;padding-right:4px}
 .option-card{border:1px solid rgba(184,151,106,.24);background:rgba(255,255,255,.045);padding:14px;border-radius:4px}
 .option-card strong{display:block;color:var(--cream);font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px}
 .option-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;border-top:1px solid rgba(255,255,255,.1);padding:10px 0;color:#fff4df;font-size:12px;font-weight:400}
 .option-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .option-row button{border:1px solid rgba(184,151,106,.36);background:rgba(0,0,0,.2);color:#e7d3b5;padding:6px 10px;border-radius:3px;cursor:pointer;font-size:11px;letter-spacing:.08em;transition:all .2s}
 .option-row button:hover{border-color:var(--gold);color:var(--gold);background:rgba(184,151,106,.08)}
-.logo-preview{display:grid;place-items:center;min-height:86px;border:1px solid var(--border);background:#090807;margin-bottom:12px}
-.logo-preview img{max-width:220px;max-height:68px;object-fit:contain}
+@media (max-width: 860px){
+  .settings-overlay{padding:0;align-items:stretch}
+  .settings-panel{width:100vw;max-height:100dvh;border-radius:0;border-left:0;border-right:0}
+  .settings-head{padding:16px 18px}
+  .settings-head h2{font-size:26px}
+  .settings-body{grid-template-columns:1fr;padding:16px;gap:14px}
+  .catalog-card,.technical-card{grid-column:1}
+  .catalog-form,.option-form{grid-template-columns:1fr}
+  .settings-actions,.settings-actions.split,.logo-actions{grid-template-columns:1fr;display:grid;justify-content:stretch}
+  .settings-actions .hbtn,.settings-actions .danger-btn,.settings-actions .ghost-btn,.option-form .hbtn{width:100%}
+  .catalog-list,.option-list{max-height:none}
+}
 
 /* PROGRESS */
 .progress-bar{height:3px;background:var(--border);position:sticky;top:64px;z-index:99}
@@ -286,19 +310,19 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
       <button class="settings-close" type="button" onclick="closeSettings()" aria-label="Fechar configurações">×</button>
     </div>
     <div class="settings-body">
-      <aside class="settings-card">
+      <aside class="settings-card logo-card">
         <h3>Logo da empresa</h3>
         <div class="logo-preview"><img id="settingsLogoPreview" alt="Logo atual"></div>
-        <label class="file-input">
-          Enviar logo
-          <input type="file" id="logoUpload" accept="image/*" onchange="handleLogoUpload(this)" style="display:none">
-        </label>
-        <div class="settings-actions">
+        <div class="logo-actions">
+          <label class="file-input">
+            Enviar logo
+            <input type="file" id="logoUpload" accept="image/*" onchange="handleLogoUpload(this)" style="display:none">
+          </label>
           <button class="ghost-btn" type="button" onclick="resetLogo()">Restaurar logo</button>
         </div>
       </aside>
 
-      <section class="settings-card">
+      <section class="settings-card catalog-card">
         <h3>Catálogos manuais</h3>
         <div class="catalog-form">
           <div class="field-group">
@@ -336,21 +360,22 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
             <label>Imagem</label>
             <input type="file" id="catalogImage" accept="image/*">
           </div>
-          <div class="settings-actions field-full">
-            <button class="hbtn" type="button" onclick="addManualCatalogItem()">Adicionar ao catálogo</button>
+          <div class="settings-actions split field-full">
             <button class="danger-btn" type="button" onclick="clearManualCatalogColors()">Excluir cores manuais</button>
+            <button class="hbtn" type="button" onclick="addManualCatalogItem()">Adicionar ao catálogo</button>
           </div>
         </div>
-        <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>      </section>
+        <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>
+      </section>
 
-      <section class="settings-card">
+      <section class="settings-card technical-card">
         <h3>Opções técnicas</h3>
         <div class="option-form">
           <div class="field-group"><label>Grupo</label><select id="optionGroup"><option value="tampon">Tamponamentos</option><option value="porta">Portas</option><option value="puxador">Puxadores</option><option value="corredica">Corrediças</option></select></div>
           <div class="field-group"><label>Opção</label><input type="text" id="optionName" placeholder="Ex: Cava 45°"></div>
           <button class="hbtn" type="button" id="saveMaterialOptionBtn">Salvar</button>
         </div>
-        <p style="font-size:11px;color:var(--muted);margin-top:10px">Adicione, remova ou edite as opções de Tamponamentos, Portas e Corrediças aqui.</p>
+        <p class="settings-note">Adicione, remova ou edite as opções de Tamponamentos, Portas, Puxadores e Corrediças aqui.</p>
         <div class="option-list" id="materialOptionList"></div>
       </section>
     </div>
