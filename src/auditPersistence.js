@@ -9,16 +9,29 @@ const MAX_QUEUE_BYTES = 1_200_000;
 let warnedMissingSession = false;
 
 export function getActiveProjectId() {
-  const existing = localStorage.getItem(PROJECT_ID_KEY);
+  const existing = localStorage.getItem(activeProjectIdKey());
   if (existing) return existing;
   const id = crypto.randomUUID();
-  localStorage.setItem(PROJECT_ID_KEY, id);
+  localStorage.setItem(activeProjectIdKey(), id);
   return id;
 }
 
-export function setActiveProjectId(id) {
+export function setActiveProjectId(id, actor = null) {
   if (!id) return;
-  localStorage.setItem(PROJECT_ID_KEY, id);
+  localStorage.setItem(activeProjectIdKey(actor), id);
+}
+
+function activeProjectIdKey(actor = null) {
+  const email = String(actor?.email || currentActorEmail() || '').trim().toLowerCase();
+  return email ? `${PROJECT_ID_KEY}.${email}` : PROJECT_ID_KEY;
+}
+
+function currentActorEmail() {
+  try {
+    return JSON.parse(sessionStorage.getItem('dcoratto.current.actor.v1') || 'null')?.email || '';
+  } catch {
+    return '';
+  }
 }
 
 export function readOfflineQueue() {
@@ -30,6 +43,7 @@ export function readOfflineQueue() {
 }
 
 export async function persistEditorEvent({ action, actor, draft, preview, settings, saveHtml = false }) {
+  if (actor?.email) sessionStorage.setItem('dcoratto.current.actor.v1', JSON.stringify(actor));
   const payload = {
     id: crypto.randomUUID(),
     action,
@@ -43,14 +57,14 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
 
   if (saveHtml && preview?.environments) {
     const result = await publishClientHtmlWithServer(payload);
-    if (result?.projectId) setActiveProjectId(result.projectId);
+    if (result?.projectId) setActiveProjectId(result.projectId, actor);
     return result;
   }
 
   if (draft || preview || settings) {
     try {
       const result = await persistEditorEventWithServer(payload);
-      if (result?.projectId) setActiveProjectId(result.projectId);
+      if (result?.projectId) setActiveProjectId(result.projectId, actor);
       return result;
     } catch (error) {
       console.warn('Persistencia pelo servidor indisponivel; tentando fallback.', error);
@@ -79,6 +93,7 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
 }
 
 export async function loadLatestEditorState(actor, projectId = '') {
+  if (actor?.email) sessionStorage.setItem('dcoratto.current.actor.v1', JSON.stringify(actor));
   const params = new URLSearchParams();
   if (actor?.email) params.set('actor', actor.email);
   if (projectId) params.set('projectId', projectId);
@@ -90,7 +105,7 @@ export async function loadLatestEditorState(actor, projectId = '') {
     throw new Error(result?.error || 'Nao foi possivel carregar o rascunho remoto.');
   }
   const result = await response.json();
-  if (result?.projectId) setActiveProjectId(result.projectId);
+  if (result?.projectId) setActiveProjectId(result.projectId, actor);
   return result;
 }
 
@@ -188,6 +203,9 @@ async function writeEvent(event) {
     address: client.address || draft.fields?.endereco || '',
     document_type: 'projeto_inicial',
     status: 'draft',
+    owner_email: event.actor?.primaryAccountEmail || 'dcorattoinovacao@gmail.com',
+    created_by: event.actor?.email || '',
+    updated_by: event.actor?.email || '',
     data: {
       actor: event.actor,
       lastAction: event.action,
@@ -195,6 +213,7 @@ async function writeEvent(event) {
       lastEventAt: event.createdAt,
       draft,
       preview,
+      ownerEmail: event.actor?.primaryAccountEmail || 'dcorattoinovacao@gmail.com',
     },
   };
 
@@ -359,6 +378,7 @@ async function saveSharedHtml(projectId, preview, actor) {
       shared_with_client: true,
       shared_at: new Date().toISOString(),
       created_by: actor?.email || '',
+      owner_email: actor?.primaryAccountEmail || 'dcorattoinovacao@gmail.com',
       share_slug: shareSlug,
       data: {
         publicUrl,

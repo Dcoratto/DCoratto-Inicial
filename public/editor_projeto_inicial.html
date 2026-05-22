@@ -80,6 +80,11 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .page-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .page-fields .field-full{grid-column:1/-1}
 .page-photo-preview{width:100%;max-width:240px;aspect-ratio:16/10;object-fit:cover;border:1px solid var(--border);border-radius:3px;background:#11100e}
+.cover-photo-tools{margin-top:16px;border-top:1px solid rgba(184,151,106,.18);padding-top:14px}
+.cover-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px;margin-top:10px}
+.cover-photo-card{position:relative;border:1px solid var(--border);border-radius:3px;overflow:hidden;background:#111}
+.cover-photo-card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block}
+.cover-photo-card button{position:absolute;right:5px;top:5px;border:1px solid rgba(255,106,85,.45);background:rgba(0,0,0,.72);color:#ff9b8d;border-radius:2px;font-size:9px;text-transform:uppercase;letter-spacing:.08em;padding:4px 6px;cursor:pointer}
 .preview-edit-note{grid-column:1/-1;border:1px dashed rgba(184,151,106,.35);padding:12px;color:#d7c2a7;font-size:11px;letter-spacing:.08em;line-height:1.5}
 .frames-panel{grid-column:1/-1;display:grid;gap:14px;margin-top:16px}
 .frame-card{border:1px solid rgba(184,151,106,.24);background:rgba(0,0,0,.16);border-radius:4px;padding:14px}
@@ -189,6 +194,9 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .history-head{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--border);padding:22px 26px}
 .history-head h2{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:300;color:var(--gold-l)}
 .history-body{padding:20px}
+.history-filter{margin-bottom:16px}
+.history-filter input{width:100%;background:rgba(0,0,0,.32);border:1px solid var(--border);border-radius:3px;color:var(--cream);padding:12px 14px;font-family:'Montserrat',sans-serif;font-size:11px;letter-spacing:.08em;text-transform:uppercase;outline:none}
+.history-filter input:focus{border-color:var(--gold);box-shadow:0 0 0 2px rgba(184,151,106,.12)}
 .history-list{display:flex;flex-direction:column;gap:12px}
 .history-item{display:grid;grid-template-columns:1fr 180px;gap:16px;align-items:start;border:1px solid var(--border);border-radius:4px;padding:16px;background:rgba(0,0,0,.2);transition:background .2s}
 .history-item:hover{background:rgba(184,151,106,.08)}
@@ -258,11 +266,11 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
   <div class="cover-grid">
     <div class="field-group">
       <label>Nome do Cliente</label>
-      <input type="text" id="clientName" placeholder="Ex: CLIENTE MODELO" value="">
+      <input type="text" id="clientName" placeholder="Ex: CLIENTE MODELO" value="" oninput="syncPreviewDocument('cover_client_updated')">
     </div>
     <div class="field-group">
       <label>Nº Contrato</label>
-      <input type="text" id="contractNum" placeholder="Ex: 000000000" value="">
+      <input type="text" id="contractNum" placeholder="Ex: 000000000" value="" oninput="syncPreviewDocument('cover_contract_updated')">
     </div>
     <div class="field-group">
       <label>Fabricante / Promob</label>
@@ -273,7 +281,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
     </div>
     <div class="field-group" style="grid-column:1/-1">
       <label>Endereço da Obra</label>
-      <input type="text" id="endereco" placeholder="Ex: Rua Exemplo, 000 - Cidade/UF" value="">
+      <input type="text" id="endereco" placeholder="Ex: Rua Exemplo, 000 - Cidade/UF" value="" oninput="syncPreviewDocument('cover_address_updated')">
     </div>
   </div>
 </div>
@@ -393,6 +401,9 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
       <button class="settings-close" type="button" onclick="closeClientHistory()" aria-label="Fechar histórico">×</button>
     </div>
     <div class="history-body">
+      <div class="history-filter">
+        <input type="search" id="historySearch" placeholder="Buscar por cliente, contrato ou projetista" oninput="renderClientHistory()">
+      </div>
       <div class="history-list" id="historyList">
         <div class="history-empty">Carregando...</div>
       </div>
@@ -449,6 +460,7 @@ let editorSettings = loadEditorSettings();
 let builderDraft = loadBuilderDraft();
 let editingMaterialOption = null;
 let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
+let clientHistoryItems = [];
 
 function loadEditorSettings() {
   try {
@@ -630,6 +642,8 @@ function closeSettings() {
 
 function openClientHistory() {
   document.getElementById('historyOverlay').classList.add('active');
+  const search = document.getElementById('historySearch');
+  if (search) search.value = '';
   loadClientHistory();
 }
 
@@ -644,31 +658,60 @@ async function loadClientHistory() {
     if (!response.ok) throw new Error('Não foi possível carregar histórico');
     
     const result = await response.json();
-    const history = result.history || [];
-    
-    if (history.length === 0) {
-      historyList.innerHTML = '<div class="history-empty">Nenhum cliente com link gerado ainda.</div>';
-      return;
-    }
-    
-    historyList.innerHTML = history.map(item => `
+    clientHistoryItems = result.history || [];
+    renderClientHistory();
+  } catch (error) {
+    historyList.innerHTML = `<div class="history-empty">Erro ao carregar histórico: ${escapeHTML(error.message)}</div>`;
+  }
+}
+
+function renderClientHistory() {
+  const historyList = document.getElementById('historyList');
+  if (!historyList) return;
+  const query = normalizeSearchText(document.getElementById('historySearch')?.value || '');
+  const history = clientHistoryItems.filter(item => {
+    if (!query) return true;
+    return [
+      item.clientName,
+      item.contractNumber || 'Sem número',
+      item.designerName,
+      item.designerEmail,
+    ].some(value => normalizeSearchText(value).includes(query));
+  });
+
+  if (!clientHistoryItems.length) {
+    historyList.innerHTML = '<div class="history-empty">Nenhum cliente com link gerado ainda.</div>';
+    return;
+  }
+
+  if (!history.length) {
+    historyList.innerHTML = '<div class="history-empty">Nenhum histórico encontrado para esta busca.</div>';
+    return;
+  }
+
+  historyList.innerHTML = history.map(item => `
       <div class="history-item">
         <div class="history-info">
           <h3>${escapeHTML(item.clientName)}</h3>
           <p>Contrato: ${escapeHTML(item.contractNumber || 'Sem número')}</p>
           <p>Endereço: ${escapeHTML(item.address || 'Sem endereço')}</p>
+          <p>Projetista: ${escapeHTML(item.designerName || 'Não informado')}</p>
           <div class="history-date">${new Date(item.createdAt).toLocaleDateString('pt-BR')} às ${new Date(item.createdAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</div>
         </div>
         <div class="history-actions">
-          <button class="history-action" type="button" onclick="editProjectFromHistory('${item.projectId}')">Editar Projeto</button>
-          <button class="history-action" type="button" onclick="copyLinkToClipboard('${item.publicUrl}')">Copiar Link</button>
-          <button class="history-action" type="button" onclick="window.open('${item.publicUrl}', '_blank')">${item.isCurrent ? 'Abrir Preview' : 'Abrir Link Antigo'}</button>
+          <button class="history-action" type="button" onclick="editProjectFromHistory('${escapeJS(item.projectId)}')">Editar Projeto</button>
+          <button class="history-action" type="button" onclick="copyLinkToClipboard('${escapeJS(item.publicUrl)}')">Copiar Link</button>
+          <button class="history-action" type="button" onclick="window.open('${escapeJS(item.publicUrl)}', '_blank')">${item.isCurrent ? 'Abrir Preview' : 'Abrir Link Antigo'}</button>
         </div>
       </div>
     `).join('');
-  } catch (error) {
-    historyList.innerHTML = `<div class="history-empty">Erro ao carregar histórico: ${escapeHTML(error.message)}</div>`;
-  }
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 }
 
 function editProjectFromHistory(projectId) {
@@ -940,7 +983,27 @@ const DEFAULT_AMBIENTES = [
 
 const DEFAULT_AMBIENTE_IMG = DEFAULT_AMBIENTES[0].img;
 let AMBIENTES = Array.isArray(builderDraft?.ambientes) ? builderDraft.ambientes : [];
-AMBIENTES = AMBIENTES.map(amb => ({ ...amb, pages: Array.isArray(amb.pages) ? amb.pages : [] }));
+AMBIENTES = AMBIENTES.map(normalizeEnvironment);
+
+function normalizeEnvironment(amb = {}) {
+  const photos = Array.isArray(amb.photos)
+    ? amb.photos.filter(photo => photo?.src)
+    : (amb.img ? [{ title: 'Imagem do ambiente', src: amb.img }] : []);
+  const normalizedPhotos = photos.length ? photos : [{ title: 'Imagem do ambiente', src: DEFAULT_AMBIENTE_IMG }];
+  return {
+    ...amb,
+    img: normalizedPhotos[0]?.src || DEFAULT_AMBIENTE_IMG,
+    photos: normalizedPhotos,
+    pages: Array.isArray(amb.pages) ? amb.pages : [],
+  };
+}
+
+function environmentCoverPhotos(amb) {
+  const normalized = normalizeEnvironment(amb);
+  amb.img = normalized.img;
+  amb.photos = normalized.photos;
+  return amb.photos;
+}
 const state = {};
 
 function emptyEnvironmentState() {
@@ -1050,7 +1113,7 @@ function addEnvironment() {
   const name = prompt('Nome do ambiente', `Ambiente ${nextNumber}`);
   if (!name) return;
   const id = `amb-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
-  AMBIENTES.push({ id, name: name.trim(), img: DEFAULT_AMBIENTE_IMG, pages: [] });
+  AMBIENTES.push(normalizeEnvironment({ id, name: name.trim(), img: DEFAULT_AMBIENTE_IMG, pages: [] }));
   ensureEnvironmentState(id);
   renderAmbientes();
   syncPreviewDocument();
@@ -1077,6 +1140,7 @@ function renameEnvironment(ambId, value) {
 
 function renderCard(amb) {
   const s = ensureEnvironmentState(amb.id);
+  const coverPhotos = environmentCoverPhotos(amb);
   return `
   <div class="amb-card" id="card-${escapeAttribute(amb.id)}">
     <div class="amb-header" onclick="toggleCard('${escapeJS(amb.id)}')">
@@ -1127,6 +1191,24 @@ function renderCard(amb) {
         <div class="selected-colors" id="selcolors-${amb.id}"></div>
       </div>
 
+      <div class="cover-photo-tools">
+        <div class="pages-head" style="margin-bottom:0">
+          <span class="color-picker-label" style="margin-bottom:0">Fotos da capa deste ambiente</span>
+          <label class="ghost-btn" style="display:inline-flex;align-items:center;cursor:pointer">
+            Adicionar fotos
+            <input type="file" accept="image/*" multiple onchange="handleCoverPhotosUpload('${escapeJS(amb.id)}',this)" style="display:none">
+          </label>
+        </div>
+        <div class="cover-photo-grid">
+          ${coverPhotos.map((photo, photoIndex) => `
+            <div class="cover-photo-card">
+              <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.title || amb.name)}">
+              ${coverPhotos.length > 1 ? `<button type="button" onclick="removeCoverPhoto('${escapeJS(amb.id)}',${photoIndex})">Remover</button>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
       <div style="margin-top:16px">
         <div class="obs-tools">
           <span class="color-picker-label" style="margin-bottom:0">Observações do projeto</span>
@@ -1147,6 +1229,37 @@ function renderAmbientes() {
   hydrateBuilderControls();
   updateProgress();
 }
+
+async function handleCoverPhotosUpload(ambId, input) {
+  const files = Array.from(input.files || []).filter(file => file.type.startsWith('image/'));
+  if (!files.length) return;
+  const amb = AMBIENTES.find(item => item.id === ambId);
+  if (!amb) return;
+  const existing = environmentCoverPhotos(amb).filter(photo => photo.src && photo.src !== DEFAULT_AMBIENTE_IMG);
+  const uploaded = [];
+  for (const file of files) {
+    uploaded.push({
+      title: file.name ? file.name.replace(/\.[^.]+$/, '') : `Foto ${existing.length + uploaded.length + 1}`,
+      src: await fileToDataURL(file),
+    });
+  }
+  amb.photos = [...existing, ...uploaded];
+  amb.img = amb.photos[0]?.src || DEFAULT_AMBIENTE_IMG;
+  input.value = '';
+  renderAmbientes();
+  syncPreviewDocument('environment_cover_photos_uploaded');
+}
+
+function removeCoverPhoto(ambId, photoIndex) {
+  const amb = AMBIENTES.find(item => item.id === ambId);
+  if (!amb) return;
+  const photos = environmentCoverPhotos(amb).filter((_, index) => index !== photoIndex);
+  amb.photos = photos.length ? photos : [{ title: 'Imagem do ambiente', src: DEFAULT_AMBIENTE_IMG }];
+  amb.img = amb.photos[0]?.src || DEFAULT_AMBIENTE_IMG;
+  renderAmbientes();
+  syncPreviewDocument('environment_cover_photo_removed');
+}
+
 applyEditorSettings();
 pruneUnavailableColors();
 saveBuilderDraft();
@@ -1398,6 +1511,12 @@ function buildPreviewDocumentData() {
   const environments = AMBIENTES
     .map((amb, index) => {
       const s = state[amb.id];
+      const coverPhotos = environmentCoverPhotos(amb)
+        .filter(photo => photo?.src)
+        .map((photo, photoIndex) => ({
+          title: photo.title || `Imagem do ambiente ${photoIndex + 1}`,
+          src: photo.src,
+        }));
       return {
         number: String(index + 1).padStart(2, '0'),
         title: amb.name,
@@ -1410,9 +1529,9 @@ function buildPreviewDocumentData() {
         colors: s.cores,
         notes: [...s.obs, s.obsExtra || ''].filter(Boolean),
         layout: 'single',
-        photos: [{ title: 'Imagem do ambiente', src: amb.img }],
+        photos: coverPhotos,
         pages: normalizedEnvironmentPages(amb),
-        hasData: Boolean(hasEnvironmentData(s)),
+        hasData: Boolean(hasEnvironmentData(s) || coverPhotos.some(photo => photo.src && photo.src !== DEFAULT_AMBIENTE_IMG)),
       };
     })
     .filter(environment => environment.hasData || environment.pages.length);
@@ -1442,7 +1561,7 @@ function saveBuilderDraft() {
       endereco: document.getElementById('endereco').value || '',
       factories: selectedFactories(),
     },
-    ambientes: AMBIENTES,
+    ambientes: AMBIENTES.map(normalizeEnvironment),
     state,
     updatedAt: new Date().toISOString(),
   };
@@ -1485,7 +1604,7 @@ function ensurePageFrames(page) {
   }
   page.frames.forEach((frame, frameIndex) => {
     const layout = frameDefaultLayout(frameIndex);
-    frame.annotations = [];
+    frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
     frame.title ||= 'Moldura';
     frame.photo ||= '';
     frame.shape ||= 'rounded';
@@ -1532,7 +1651,7 @@ function normalizedPageFrames(page) {
     imgX: Number(frame.imgX ?? 0),
     imgY: Number(frame.imgY ?? 0),
     editImage: Boolean(frame.editImage),
-    annotations: [],
+    annotations: Array.isArray(frame.annotations) ? frame.annotations : [],
   }));
 }
 
@@ -1840,7 +1959,7 @@ function applyHydratedDocument(payload = {}) {
   if (incomingDraft) {
     builderDraft = incomingDraft;
     AMBIENTES = Array.isArray(incomingDraft.ambientes)
-      ? incomingDraft.ambientes.map(amb => ({ ...amb, pages: Array.isArray(amb.pages) ? amb.pages : [] }))
+      ? incomingDraft.ambientes.map(normalizeEnvironment)
       : [];
     resetBuilderState(incomingDraft.state || {});
     safeSetLocalStorage(BUILDER_STORAGE_KEY, JSON.stringify(incomingDraft));
@@ -1885,6 +2004,9 @@ function rebuildBuilderFromPreview(preview) {
       id,
       name: environment.title || `Ambiente ${index + 1}`,
       img: environment.photos?.[0]?.src || DEFAULT_AMBIENTE_IMG,
+      photos: Array.isArray(environment.photos) && environment.photos.length
+        ? environment.photos
+        : [{ title: 'Imagem do ambiente', src: environment.photos?.[0]?.src || DEFAULT_AMBIENTE_IMG }],
       pages: Array.isArray(environment.pages) ? environment.pages : [],
     };
   });
@@ -1929,8 +2051,13 @@ function mergePreviewDocument(preview) {
   preview.environments.forEach((previewEnvironment, index) => {
     const amb = AMBIENTES[index] || AMBIENTES.find(item => item.name === previewEnvironment.title);
     if (!amb) return;
-    const coverPhoto = Array.isArray(previewEnvironment.photos) ? previewEnvironment.photos[0] : null;
-    if (coverPhoto?.src) amb.img = coverPhoto.src;
+    const coverPhotos = Array.isArray(previewEnvironment.photos)
+      ? previewEnvironment.photos.filter(photo => photo?.src)
+      : [];
+    if (coverPhotos.length) {
+      amb.photos = coverPhotos;
+      amb.img = coverPhotos[0].src;
+    }
     amb.pages = Array.isArray(previewEnvironment.pages)
       ? previewEnvironment.pages.map(page => ({
         id: page.id || `page-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
@@ -1950,7 +2077,7 @@ function mergePreviewDocument(preview) {
           imgX: frame.imgX,
           imgY: frame.imgY,
           editImage: Boolean(frame.editImage),
-          annotations: [],
+          annotations: Array.isArray(frame.annotations) ? frame.annotations : [],
         })) : [],
       }))
       : environmentPages(amb.id);
@@ -1963,6 +2090,14 @@ function syncPreviewDocument(action = 'editor_sync') {
   safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
   postEditorEvent(action, { draft, preview });
 }
+
+window.addEventListener('beforeunload', () => {
+  syncPreviewDocument('before_unload_autosave');
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') syncPreviewDocument('visibility_hidden_autosave');
+});
 
 function safeSetLocalStorage(key, value) {
   try {

@@ -203,7 +203,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 function hydrateBrowserStorage(remote) {
   try {
     if (remote?.draft) localStorage.setItem('dcoratto.builder.document.v1', JSON.stringify(remote.draft));
+    else localStorage.removeItem('dcoratto.builder.document.v1');
     if (remote?.preview) localStorage.setItem('dcoratto.portfolio.document.v1', JSON.stringify(remote.preview));
+    else localStorage.removeItem('dcoratto.portfolio.document.v1');
     if (remote?.settings) localStorage.setItem('dcoratto.editor.settings.v1', JSON.stringify(remote.settings));
   } catch (error) {
     console.warn('Nao foi possivel preparar o cache local do editor.', error);

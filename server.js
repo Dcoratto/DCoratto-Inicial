@@ -263,6 +263,7 @@ async function handleLatestEditorStateRequest(url, response) {
     }
 
     const requestedProjectId = safeId(url.searchParams.get('projectId'));
+    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
     let project = null;
     if (requestedProjectId) {
       const { data, error } = await supabaseServer
@@ -277,6 +278,7 @@ async function handleLatestEditorStateRequest(url, response) {
         .from('document_projects')
         .select('id, data, updated_at')
         .eq('document_type', 'projeto_inicial')
+        .eq('updated_by', actorEmail || primaryAccountEmail)
         .order('updated_at', { ascending: false })
         .limit(12);
       if (projectError) throw projectError;
@@ -358,26 +360,31 @@ async function handleClientHistoryRequest(response) {
 
     const { data: versions, error } = await supabaseServer
       .from('document_html_versions')
-      .select('id, title, share_slug, project_id, created_at, data, is_current, replacement_public_url')
+      .select('id, title, share_slug, project_id, created_at, created_by, data, is_current, replacement_public_url')
       .eq('shared_with_client', true)
       .order('created_at', { ascending: false })
       .limit(50);
     
     if (error) throw error;
 
-    const history = (versions || []).map(v => ({
-      id: v.id,
-      title: v.title,
-      clientName: v.data?.client?.name || 'Cliente',
-      contractNumber: v.data?.client?.contractNumber || '',
-      address: v.data?.client?.address || '',
-      shareSlug: v.share_slug,
-      projectId: v.project_id,
-      createdAt: v.created_at,
-      publicUrl: v.data?.publicUrl || '',
-      isCurrent: v.is_current !== false,
-      replacementPublicUrl: v.replacement_public_url || '',
-    }));
+    const history = (versions || []).map((v) => {
+      const designerEmail = normalizeEmail(v.created_by || v.data?.createdBy || v.data?.actor?.email);
+      return {
+        id: v.id,
+        title: v.title,
+        clientName: v.data?.client?.name || 'Cliente',
+        contractNumber: v.data?.client?.contractNumber || '',
+        address: v.data?.client?.address || '',
+        designerEmail,
+        designerName: designerNameFromEmail(designerEmail),
+        shareSlug: v.share_slug,
+        projectId: v.project_id,
+        createdAt: v.created_at,
+        publicUrl: v.data?.publicUrl || '',
+        isCurrent: v.is_current !== false,
+        replacementPublicUrl: v.replacement_public_url || '',
+      };
+    });
 
     sendJson(response, 200, {
       ok: true,
@@ -1081,6 +1088,12 @@ function normalizeAppUser(user = {}) {
     primaryAccountEmail,
     isPrimary: email === primaryAccountEmail,
   };
+}
+
+function designerNameFromEmail(email = '') {
+  const normalizedEmail = normalizeEmail(email);
+  const knownUser = localLoginUsers.find(user => user.email === normalizedEmail);
+  return knownUser?.name || normalizedEmail || 'Não informado';
 }
 
 function escapeHtml(value) {
