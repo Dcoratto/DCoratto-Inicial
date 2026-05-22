@@ -178,7 +178,8 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .danger-btn{color:#ff8a78;border-color:rgba(255,106,85,.35)}
 .catalog-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;max-height:300px;overflow:auto;padding-right:4px}
 .catalog-item{border:1px solid var(--border);border-radius:4px;background:rgba(0,0,0,.2);overflow:hidden}
-.catalog-thumb{width:100%;aspect-ratio:1/1;background:#111;background-size:cover;background-position:center;border-bottom:1px solid var(--border)}
+.catalog-thumb{width:100%;aspect-ratio:1/1;background:#111;border-bottom:1px solid var(--border);overflow:hidden}
+.catalog-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .catalog-meta{padding:10px;display:grid;gap:4px}
 
 /* HISTORY */
@@ -447,7 +448,7 @@ function loadEditorSettings() {
     const settings = JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY) || 'null') || {};
     return {
       logo: settings.logo || DEFAULT_LOGO,
-      catalogItems: settings.catalogItems || [],
+      catalogItems: (settings.catalogItems || []).map(normalizeCatalogItem),
       materialOptions: normalizeMaterialOptions(settings.materialOptions),
       observations: settings.observations || [
         "Apenas Marcenaria considerado no Projeto",
@@ -469,7 +470,27 @@ function normalizeMaterialOptions(options = {}) {
   }));
 }
 
+function catalogItemTextureUrl(item) {
+  return item?.textureUrl
+    || item?.imageUrl
+    || item?.imageData
+    || item?.texture_url
+    || item?.image_url
+    || item?.image_data
+    || item?.data?.textureUrl
+    || item?.data?.imageUrl
+    || item?.data?.image
+    || '';
+}
+
+function normalizeCatalogItem(item) {
+  if (!item || typeof item !== 'object') return item;
+  const textureUrl = catalogItemTextureUrl(item);
+  return textureUrl && item.textureUrl !== textureUrl ? { ...item, textureUrl } : item;
+}
+
 function catalogItemKey(item) {
+  const textureUrl = catalogItemTextureUrl(item);
   return [
     item?.id,
     item?.type,
@@ -477,7 +498,7 @@ function catalogItemKey(item) {
     item?.line,
     item?.name,
     item?.quality,
-    item?.textureUrl || item?.hex || '',
+    textureUrl || item?.hex || '',
   ].filter(Boolean).join('|').toLowerCase();
 }
 
@@ -486,10 +507,11 @@ function mergeCatalogItems(current = [], incoming = []) {
   const seen = new Set();
   [...current, ...incoming].forEach(item => {
     if (!item || !item.name) return;
-    const key = catalogItemKey(item);
+    const normalizedItem = normalizeCatalogItem(item);
+    const key = catalogItemKey(normalizedItem);
     if (seen.has(key)) return;
     seen.add(key);
-    merged.push(item);
+    merged.push(normalizedItem);
   });
   return merged;
 }
@@ -719,17 +741,20 @@ function renderManualCatalogList() {
   const list = document.getElementById('manualCatalogList');
   if (!list) return;
   const items = editorSettings.catalogItems || [];
-  list.innerHTML = items.length ? items.map(item => `
-    <div class="catalog-item">
-      <div class="catalog-thumb" style="background-image:url('${item.textureUrl}')"></div>
-      <div class="catalog-meta">
-        <span>${item.manufacturer} · ${catalogTypeLabel(item.type)}</span>
-        <strong>${item.name}${item.quality ? ' / '+item.quality : ''}</strong>
-        <span>${item.line}</span>
-        <button class="danger-btn" type="button" onclick="removeManualCatalogItem('${item.id}')">Remover</button>
+  list.innerHTML = items.length ? items.map(item => {
+    const textureUrl = catalogItemTextureUrl(item);
+    return `
+      <div class="catalog-item">
+        <div class="catalog-thumb">${textureUrl ? `<img src="${escapeAttribute(textureUrl)}" alt="${escapeAttribute(item.name)}">` : ''}</div>
+        <div class="catalog-meta">
+          <span>${escapeHTML(item.manufacturer)} · ${catalogTypeLabel(item.type)}</span>
+          <strong>${escapeHTML(item.name)}${item.quality ? ' / '+escapeHTML(item.quality) : ''}</strong>
+          <span>${escapeHTML(item.line)}</span>
+          <button class="danger-btn" type="button" onclick="removeManualCatalogItem('${escapeJS(item.id)}')">Remover</button>
+        </div>
       </div>
-    </div>
-  `).join('') : '<div class="amb-summary">Nenhum item manual cadastrado ainda.</div>';
+    `;
+  }).join('') : '<div class="amb-summary">Nenhum item manual cadastrado ainda.</div>';
 }
 
 function catalogTypeLabel(type) {
