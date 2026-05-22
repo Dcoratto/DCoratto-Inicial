@@ -438,6 +438,13 @@ const DEFAULT_MATERIAL_OPTIONS = {
   puxador: ["CAVA 45°","GARD 256mm","PASSANTE","LISA PASSANTE","LISA PASSANTE COM FRISO","EMBUTIDO","PUXADOR J","PUXADOR L"],
   corredica: ["Telescópica","Invisível","Slow Motion","Toque","Push Open"],
 };
+const DEFAULT_OBS_OPTIONS = [
+  "Apenas Marcenaria considerado no Projeto",
+  "Apenas Marcenaria e Metalons considerados no Projeto",
+  "Leds não inclusos",
+  "Considerar cavas para instalação de LEDS",
+  "Eletrodomésticos não inclusos",
+];
 let editorSettings = loadEditorSettings();
 let builderDraft = loadBuilderDraft();
 let editingMaterialOption = null;
@@ -446,28 +453,26 @@ let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'd
 function loadEditorSettings() {
   try {
     const settings = JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY) || 'null') || {};
-    return {
-      logo: settings.logo || DEFAULT_LOGO,
-      catalogItems: (settings.catalogItems || []).map(normalizeCatalogItem),
-      materialOptions: normalizeMaterialOptions(settings.materialOptions),
-      observations: settings.observations || [
-        "Apenas Marcenaria considerado no Projeto",
-        "Apenas Marcenaria e Metalons considerados no Projeto",
-        "Leds não inclusos",
-        "Considerar cavas para instalação de LEDS",
-        "Eletrodomésticos não inclusos",
-      ],
-    };
+    return normalizeEditorSettings(settings);
   } catch {
-    return { logo: DEFAULT_LOGO, catalogItems: [], materialOptions: normalizeMaterialOptions(), observations: [] };
+    return normalizeEditorSettings({});
   }
 }
 
-function normalizeMaterialOptions(options = {}) {
+function normalizeMaterialOptions(options = {}, useDefaults = true) {
   return Object.fromEntries(Object.entries(DEFAULT_MATERIAL_OPTIONS).map(([group, defaults]) => {
-    const list = Array.isArray(options[group]) ? options[group] : [];
-    return [group, list.length ? [...new Set(list)] : [...defaults]];
+    if (Array.isArray(options[group])) return [group, [...new Set(options[group])]];
+    return [group, useDefaults ? [...defaults] : []];
   }));
+}
+
+function normalizeEditorSettings(settings = {}) {
+  return {
+    logo: settings.logo || DEFAULT_LOGO,
+    catalogItems: (settings.catalogItems || []).map(normalizeCatalogItem).filter(item => item?.name),
+    materialOptions: normalizeMaterialOptions(settings.materialOptions),
+    observations: Array.isArray(settings.observations) ? [...new Set(settings.observations)] : [...DEFAULT_OBS_OPTIONS],
+  };
 }
 
 function catalogItemTextureUrl(item) {
@@ -534,6 +539,13 @@ function mergeEditorSettings(current = {}, incoming = {}) {
   };
 }
 
+function applyRemoteEditorSettings(incoming = {}) {
+  editorSettings = normalizeEditorSettings(incoming);
+  safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
+  applyEditorSettings();
+  renderAmbientes();
+}
+
 function loadBuilderDraft() {
   try {
     return JSON.parse(localStorage.getItem(BUILDER_STORAGE_KEY) || 'null') || null;
@@ -543,6 +555,7 @@ function loadBuilderDraft() {
 }
 
 function saveEditorSettings() {
+  editorSettings = normalizeEditorSettings(editorSettings);
   safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
   persistSettingsDirectly(editorSettings);
   postEditorEvent('settings_saved', { settings: editorSettings });
@@ -898,16 +911,8 @@ function allMaterialOptionsWithCatalog(group, type) {
   const manualOptions = manualCatalogItems(type).map(catalogOptionValue);
   return [...new Set([...(editorSettings.materialOptions?.[group] || DEFAULT_MATERIAL_OPTIONS[group] || []), ...manualOptions])];
 }
-const DEFAULT_OBS_OPTIONS = [
-  "Apenas Marcenaria considerado no Projeto",
-  "Apenas Marcenaria e Metalons considerados no Projeto",
-  "Leds não inclusos",
-  "Considerar cavas para instalação de LEDS",
-  "Eletrodomésticos não inclusos",
-];
-
 function obsOptions() {
-  if (!editorSettings.observations?.length) editorSettings.observations = [...DEFAULT_OBS_OPTIONS];
+  if (!Array.isArray(editorSettings.observations)) editorSettings.observations = [...DEFAULT_OBS_OPTIONS];
   return editorSettings.observations;
 }
 
@@ -1819,12 +1824,7 @@ window.addEventListener('message', event => {
   }
   if (event.data?.type !== 'dcoratto:apply-settings') return;
   const incoming = event.data.settings || {};
-  const previousSettings = JSON.stringify(editorSettings);
-  editorSettings = mergeEditorSettings(editorSettings, incoming);
-  safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
-  applyEditorSettings();
-  renderAmbientes();
-  if (JSON.stringify(editorSettings) !== previousSettings && editorActor?.isPrimary) persistSettingsDirectly(editorSettings);
+  applyRemoteEditorSettings(incoming);
   syncPreviewDocument('settings_loaded');
 });
 
@@ -1834,10 +1834,7 @@ function applyHydratedDocument(payload = {}) {
   const incomingPreview = payload.preview || null;
 
   if (incomingSettings) {
-    const previousSettings = JSON.stringify(editorSettings);
-    editorSettings = mergeEditorSettings(editorSettings, incomingSettings);
-    safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
-    if (JSON.stringify(editorSettings) !== previousSettings && editorActor?.isPrimary) persistSettingsDirectly(editorSettings);
+    applyRemoteEditorSettings(incomingSettings);
   }
 
   if (incomingDraft) {

@@ -32,16 +32,21 @@ function App() {
     flushOfflineQueue().catch((error) => console.warn('Falha ao limpar fila offline:', error));
 
     async function bootstrapRemoteState() {
+      let loadedServerSettings = false;
       try {
         const remote = await loadLatestEditorState(actor);
         if (cancelled) return;
         hydrateBrowserStorage(remote);
         setRemoteDocument(remote);
-        if (remote?.settings) setRemoteSettings(remote.settings);
+        if (remote?.settings) {
+          loadedServerSettings = true;
+          setRemoteSettings(remote.settings);
+        }
       } catch (error) {
         console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
       }
 
+      if (loadedServerSettings) return;
       if (!isSupabaseConfigured || !supabase) return;
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData?.session?.access_token) return;

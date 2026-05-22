@@ -592,6 +592,7 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
   if (!hasPersistableContent(draft, preview)) return;
 
   const client = preview?.client || {};
+  const actorEmail = normalizeEmail(actor?.email);
   const projectPayload = {
     id: projectId,
     title: preview?.projectType || 'Projeto Inicial',
@@ -601,6 +602,9 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
     address: client.address || draft?.fields?.endereco || '',
     document_type: 'projeto_inicial',
     status: 'draft',
+    owner_email: primaryAccountEmail,
+    created_by: actorEmail,
+    updated_by: actorEmail,
     data: {
       draft: draft || null,
       preview: preview || null,
@@ -634,7 +638,7 @@ async function saveSharedEditorSettings(incomingSettings, actor = null) {
   const actorEmail = normalizeEmail(actor?.email);
   const canUpdateSharedCatalog = !actorEmail || actorEmail === primaryAccountEmail;
   const payload = canUpdateSharedCatalog
-    ? mergeEditorSettingsPayload(currentSettings, incomingSettings)
+    ? normalizeEditorSettingsPayload(incomingSettings)
     : (currentSettings || mergeEditorSettingsPayload(currentSettings, {}));
   const { error } = await supabaseServer
     .from('editor_settings')
@@ -652,6 +656,19 @@ async function saveSharedEditorSettings(incomingSettings, actor = null) {
   return payload;
 }
 
+function normalizeEditorSettingsPayload(settings = {}) {
+  const incomingSettings = settings || {};
+  return {
+    ...incomingSettings,
+    logo: incomingSettings.logo || '',
+    catalogItems: normalizeCatalogItemsPayload(incomingSettings.catalogItems),
+    observations: Array.isArray(incomingSettings.observations)
+      ? [...new Set(incomingSettings.observations.filter(value => String(value || '').trim()))]
+      : [],
+    materialOptions: normalizeMaterialOptionsPayload(incomingSettings.materialOptions),
+  };
+}
+
 function mergeEditorSettingsPayload(current = {}, incoming = {}) {
   const currentSettings = current || {};
   const incomingSettings = incoming || {};
@@ -665,11 +682,48 @@ function mergeEditorSettingsPayload(current = {}, incoming = {}) {
   };
 }
 
+function catalogItemTextureUrlPayload(item = {}) {
+  return item.textureUrl
+    || item.imageUrl
+    || item.imageData
+    || item.texture_url
+    || item.image_url
+    || item.image_data
+    || item.data?.textureUrl
+    || item.data?.imageUrl
+    || item.data?.image
+    || '';
+}
+
+function normalizeCatalogItemsPayload(items = []) {
+  const merged = [];
+  const seen = new Set();
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    if (!item || !item.name) return;
+    const textureUrl = catalogItemTextureUrlPayload(item);
+    const normalizedItem = textureUrl && item.textureUrl !== textureUrl ? { ...item, textureUrl } : { ...item };
+    const key = [
+      normalizedItem.id,
+      normalizedItem.type,
+      normalizedItem.manufacturer,
+      normalizedItem.line,
+      normalizedItem.name,
+      normalizedItem.quality,
+      textureUrl || normalizedItem.hex || '',
+    ].filter(Boolean).join('|').toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(normalizedItem);
+  });
+  return merged;
+}
+
 function mergeCatalogItemsPayload(current = [], incoming = []) {
   const merged = [];
   const seen = new Set();
-  [...(current || []), ...(incoming || [])].forEach((item) => {
+  [...normalizeCatalogItemsPayload(current), ...normalizeCatalogItemsPayload(incoming)].forEach((item) => {
     if (!item || !item.name) return;
+    const textureUrl = catalogItemTextureUrlPayload(item);
     const key = [
       item.id,
       item.type,
@@ -677,13 +731,23 @@ function mergeCatalogItemsPayload(current = [], incoming = []) {
       item.line,
       item.name,
       item.quality,
-      item.textureUrl || item.hex || '',
+      textureUrl || item.hex || '',
     ].filter(Boolean).join('|').toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
     merged.push(item);
   });
   return merged;
+}
+
+function normalizeMaterialOptionsPayload(options = {}) {
+  const groups = new Set(['tampon', 'porta', 'puxador', 'corredica', ...Object.keys(options || {})]);
+  return Object.fromEntries([...groups].map(group => [
+    group,
+    Array.isArray(options?.[group])
+      ? [...new Set(options[group].filter(value => String(value || '').trim()))]
+      : [],
+  ]));
 }
 
 function mergeMaterialOptionsPayload(current = {}, incoming = {}) {
@@ -757,6 +821,8 @@ function settingsTypeFromCatalogGroup(groupKey) {
 async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
   const catalogItems = Array.isArray(settings.catalogItems) ? settings.catalogItems : [];
   const materialOptions = settings.materialOptions || {};
+  const catalogGroups = [...new Set(['color', 'puxador', 'porta', 'corredica', ...catalogItems.map(item => catalogItemGroup(item.type)).filter(Boolean)])];
+  const optionGroups = [...new Set(['tampon', 'porta', 'puxador', 'corredica', ...Object.keys(materialOptions || {})])];
 
   const materialRows = catalogItems
     .filter(item => item?.name)
@@ -780,6 +846,18 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
       updated_by: actorEmail || primaryAccountEmail,
       data: item,
     }));
+
+  if (catalogGroups.length) {
+    const { error } = await supabaseServer
+      .from('catalog_materials')
+      .update({
+        active: false,
+        updated_by: actorEmail || primaryAccountEmail,
+      })
+      .eq('owner_email', primaryAccountEmail)
+      .in('group_key', catalogGroups);
+    if (error) throw error;
+  }
 
   if (materialRows.length) {
     const { error } = await supabaseServer
@@ -812,6 +890,18 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
       };
     });
   });
+
+  if (optionGroups.length) {
+    const { error } = await supabaseServer
+      .from('catalog_options')
+      .update({
+        active: false,
+        updated_by: actorEmail || primaryAccountEmail,
+      })
+      .eq('owner_email', primaryAccountEmail)
+      .in('group_key', optionGroups);
+    if (error) throw error;
+  }
 
   if (optionRows.length) {
     const { error } = await supabaseServer
@@ -851,6 +941,7 @@ function hasPersistableContent(draft, preview) {
 async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt }) {
   try {
     const client = preview.client || {};
+    const actorEmail = normalizeEmail(actor?.email);
     const { error: projectError } = await supabaseServer
       .from('document_projects')
       .upsert({
@@ -862,6 +953,9 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
         address: client.address || draft?.fields?.endereco || '',
         document_type: 'projeto_inicial',
         status: 'draft',
+        owner_email: primaryAccountEmail,
+        created_by: actorEmail,
+        updated_by: actorEmail,
         data: { draft: draft || null, preview, actor: actor || null, ownerEmail: primaryAccountEmail, lastEventId: eventId || null, lastEventAt: createdAt || new Date().toISOString() },
       });
     if (projectError) throw projectError;
@@ -876,7 +970,8 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
       is_current: true,
       shared_with_client: true,
       shared_at: new Date().toISOString(),
-      created_by: actor?.email || '',
+      created_by: actorEmail,
+      owner_email: primaryAccountEmail,
       share_slug: shareSlug,
       data: {
         publicUrl,
@@ -885,7 +980,7 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
         shareSlug,
         sharedWithClient: true,
         sharedAt: new Date().toISOString(),
-        createdBy: actor?.email || '',
+        createdBy: actorEmail,
         ownerEmail: primaryAccountEmail,
       },
     };
