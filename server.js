@@ -637,7 +637,15 @@ async function loadSharedEditorSettings() {
     .maybeSingle();
   if (error) throw error;
   const tableSettings = await loadSettingsFromSharedCatalogTables();
-  return mergeEditorSettingsPayload(data?.payload || {}, tableSettings);
+  const storedPayload = data?.payload || {};
+  const payload = normalizeEditorSettingsPayload(storedPayload);
+  const hasPayloadCatalog = Array.isArray(storedPayload.catalogItems);
+  const hasPayloadOptions = storedPayload.materialOptions && typeof storedPayload.materialOptions === 'object';
+  return {
+    ...payload,
+    catalogItems: hasPayloadCatalog ? payload.catalogItems : tableSettings.catalogItems,
+    materialOptions: hasPayloadOptions ? payload.materialOptions : tableSettings.materialOptions,
+  };
 }
 
 async function saveSharedEditorSettings(incomingSettings, actor = null) {
@@ -722,7 +730,15 @@ function normalizeCatalogItemsPayload(items = []) {
     seen.add(key);
     merged.push(normalizedItem);
   });
-  return merged;
+  return preferAdminCatalogItems(merged);
+}
+
+function preferAdminCatalogItems(items = []) {
+  const adminManagedTypes = new Set(items
+    .filter(item => ['manual', 'admin', 'upload'].includes(String(item.source || '').toLowerCase()))
+    .map(item => item.type));
+  if (!adminManagedTypes.size) return items;
+  return items.filter(item => !adminManagedTypes.has(item.type) || String(item.source || '').toLowerCase() !== 'shared');
 }
 
 function mergeCatalogItemsPayload(current = [], incoming = []) {

@@ -768,9 +768,12 @@
       }
 
       .page-detail-frame img {
+        position: absolute;
+        inset: 0;
         width: 100%;
         height: 100%;
         object-fit: cover;
+        object-position: center center;
         display: block;
         transform-origin: center;
         pointer-events: none;
@@ -1069,13 +1072,14 @@
       .frame-resize-handle {
         position: absolute;
         z-index: 12;
-        width: 12px;
-        height: 12px;
+        width: 16px;
+        height: 16px;
         border: 2px solid #7c46ff;
         border-radius: 50%;
         background: #fff;
         box-shadow: 0 2px 8px rgba(0,0,0,.16);
         display: none;
+        touch-action: none;
       }
 
       .environment-page.editable .doc-photo-frame.is-selected .frame-resize-handle {
@@ -1090,14 +1094,14 @@
       .frame-resize-handle[data-resize-frame="s"] { left: 50%; bottom: -7px; transform: translateX(-50%); cursor: ns-resize; }
       .frame-resize-handle[data-resize-frame="sw"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
       .frame-resize-handle[data-resize-frame="w"] { left: -7px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
-      .frame-resize-handle[data-resize-detail="nw"] { left: -7px; top: -7px; cursor: nwse-resize; }
-      .frame-resize-handle[data-resize-detail="n"] { left: 50%; top: -7px; transform: translateX(-50%); cursor: ns-resize; }
-      .frame-resize-handle[data-resize-detail="ne"] { right: -7px; top: -7px; cursor: nesw-resize; }
-      .frame-resize-handle[data-resize-detail="e"] { right: -7px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
-      .frame-resize-handle[data-resize-detail="se"] { right: -7px; bottom: -7px; cursor: nwse-resize; }
-      .frame-resize-handle[data-resize-detail="s"] { left: 50%; bottom: -7px; transform: translateX(-50%); cursor: ns-resize; }
-      .frame-resize-handle[data-resize-detail="sw"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
-      .frame-resize-handle[data-resize-detail="w"] { left: -7px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+      .frame-resize-handle[data-resize-detail="nw"] { left: -9px; top: -9px; cursor: nwse-resize; }
+      .frame-resize-handle[data-resize-detail="n"] { left: 50%; top: -9px; transform: translateX(-50%); cursor: ns-resize; }
+      .frame-resize-handle[data-resize-detail="ne"] { right: -9px; top: -9px; cursor: nesw-resize; }
+      .frame-resize-handle[data-resize-detail="e"] { right: -9px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+      .frame-resize-handle[data-resize-detail="se"] { right: -9px; bottom: -9px; cursor: nwse-resize; }
+      .frame-resize-handle[data-resize-detail="s"] { left: 50%; bottom: -9px; transform: translateX(-50%); cursor: ns-resize; }
+      .frame-resize-handle[data-resize-detail="sw"] { left: -9px; bottom: -9px; cursor: nesw-resize; }
+      .frame-resize-handle[data-resize-detail="w"] { left: -9px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
 
       .frame-selection-toolbar {
         position: absolute;
@@ -1294,6 +1298,10 @@
         transform: translateY(8px);
         transition: opacity .45s ease, transform .45s ease;
         text-transform: uppercase;
+      }
+
+      .photo-label:empty {
+        display: none;
       }
 
       .photo-card:hover .photo-label {
@@ -2429,8 +2437,7 @@
             const file = input.files?.[0];
             if (!annotation || !file) return;
             const photo = await readPhoto(file, 0);
-            annotation.image = photo.src;
-            resetDetailPhotoPlacement(annotation);
+            setDetailFrameImage(annotation, photo.src);
             persistAndRender();
           });
         });
@@ -3634,7 +3641,28 @@
         window.addEventListener('pointerup', up);
       }
 
-      function startDetailFrameResize(event) {
+      function detailResizeHandleAtPoint(event, node) {
+        if (!node) return '';
+        const rect = node.getBoundingClientRect();
+        const edge = 16;
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        const nearLeft = x <= edge;
+        const nearRight = x >= rect.width - edge;
+        const nearTop = y <= edge;
+        const nearBottom = y >= rect.height - edge;
+        if (nearTop && nearLeft) return 'nw';
+        if (nearTop && nearRight) return 'ne';
+        if (nearBottom && nearRight) return 'se';
+        if (nearBottom && nearLeft) return 'sw';
+        if (nearTop) return 'n';
+        if (nearRight) return 'e';
+        if (nearBottom) return 's';
+        if (nearLeft) return 'w';
+        return '';
+      }
+
+      function startDetailFrameResize(event, handleOverride = '') {
         if (!isEditablePreview) return;
         const node = event.currentTarget.closest('[data-page-detail-frame]');
         if (arrowDrawMode && Number(node?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(node?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
@@ -3644,7 +3672,7 @@
         const annotation = pageAnnotation(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.annotationIndex));
         if (!node || !pageNode || !annotation) return;
         selectSinglePageAnnotation(pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex));
-        const handle = event.currentTarget.dataset.resizeDetail || 'se';
+        const handle = handleOverride || event.currentTarget.dataset.resizeDetail || 'se';
         const canvasRect = pageNode.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
@@ -3681,7 +3709,11 @@
           let nextY = (top + bottom) / 2;
 
           if (keepSquare) {
-            const size = Math.max(nextWidth, nextHeight);
+            const size = handle === 'n' || handle === 's'
+              ? nextHeight
+              : handle === 'e' || handle === 'w'
+                ? nextWidth
+                : Math.max(nextWidth, nextHeight);
             nextWidth = size;
             nextHeight = size;
           }
@@ -3750,15 +3782,13 @@
         const file = event.dataTransfer?.files?.[0];
         if (file && file.type.startsWith('image/')) {
           readPhoto(file, 0).then(photo => {
-            annotation.image = photo.src;
-            resetDetailPhotoPlacement(annotation);
+            setDetailFrameImage(annotation, photo.src);
             persistAndRender();
           });
           return;
         }
         if (photoSrc) {
-          annotation.image = photoSrc;
-          resetDetailPhotoPlacement(annotation);
+          setDetailFrameImage(annotation, photoSrc);
           persistAndRender();
         }
       }
@@ -3925,10 +3955,17 @@
         const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
         if (!pageNode || !annotation) return;
         const key = pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex);
-        if (node.matches('[data-page-detail-frame]') && annotation.editImage && annotation.image && !event.target.closest('[data-resize-detail]')) {
-          selectSinglePageAnnotation(key, { keepImageEdit: true });
-          startPageDetailImagePan(event, node, annotation);
-          return;
+        if (node.matches('[data-page-detail-frame]')) {
+          const resizeHandle = event.target.closest('[data-resize-detail]') ? '' : detailResizeHandleAtPoint(event, node);
+          if (resizeHandle) {
+            startDetailFrameResize(event, resizeHandle);
+            return;
+          }
+          if (annotation.editImage && annotation.image && !event.target.closest('[data-resize-detail]')) {
+            selectSinglePageAnnotation(key, { keepImageEdit: true });
+            startPageDetailImagePan(event, node, annotation);
+            return;
+          }
         }
         selectSinglePageAnnotation(key);
         const handle = node.dataset.dragPageAnnotation;
@@ -4009,6 +4046,19 @@
         annotation.imgY = 0;
         annotation.imgScale = 1;
         annotation.editImage = false;
+      }
+
+      function setDetailFrameImage(annotation, src) {
+        if (!annotation || !src) return false;
+        annotation.image = src;
+        annotation.type = 'detail-image';
+        annotation.detailShape ||= 'circle';
+        annotation.detailSize = Math.max(7, Math.min(60, Number(annotation.detailSize || 16)));
+        annotation.detailHeight = pageDetailShape(annotation) === 'circle'
+          ? annotation.detailSize
+          : Math.max(6, Math.min(44, Number(annotation.detailHeight || annotation.detailSize * .68)));
+        resetDetailPhotoPlacement(annotation);
+        return true;
       }
 
       function updateFreeImageTransform(node, element) {
@@ -4147,8 +4197,7 @@
         if (target.type === 'detail') {
           const annotation = pageAnnotation(Number(target.node.dataset.environmentIndex), Number(target.node.dataset.pageIndex), Number(target.node.dataset.annotationIndex));
           if (!annotation) return false;
-          annotation.image = element.src;
-          resetDetailPhotoPlacement(annotation);
+          setDetailFrameImage(annotation, element.src);
           page.freeElements.splice(elementIndex, 1);
           selectedFrameKeys.clear();
           selectedPageAnnotationKeys.clear();
@@ -4259,7 +4308,7 @@
 
       function renderEnvironment(environment, index) {
         const photos = normalizePhotos(environment.photos);
-        const layout = environment.layout || suggestDefaultLayout(photos.length);
+        const layout = normalizeMuralLayout(environment.layout, photos.length);
         return `
           <section class="environment" id="${slug(environment.title)}">
             <div class="section-heading">
@@ -4283,10 +4332,9 @@
             <div class="portfolio-layout">
               <div class="photo-mural layout-${escapeAttribute(layout)}">
                 ${photos.map((photo, photoIndex) => `
-                  <button class="photo-card ${tileClass(photoIndex, photos.length, layout)}" type="button" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" data-lightbox-src="${escapeAttribute(photo.src)}" data-lightbox-title="${escapeAttribute(photo.title)}">
-                    <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.title)}" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" />
-                    <span class="photo-index">${String(photoIndex + 1).padStart(2, '0')}</span>
-                    <span class="photo-label">${escapeHTML(photo.title || `Vista ${photoIndex + 1}`)}</span>
+                  <button class="photo-card ${tileClass(photoIndex, photos.length, layout)}" type="button" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" data-lightbox-src="${escapeAttribute(photo.src)}" data-lightbox-title="${escapeAttribute(photo.label)}">
+                    <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.label || environment.title || 'Foto')}" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" />
+                    ${photo.label ? `<span class="photo-label">${escapeHTML(photo.label)}</span>` : ''}
                   </button>
                 `).join('')}
               </div>
@@ -4587,9 +4635,10 @@
       }
 
       function normalizePhotos(photos) {
-        const list = photos && photos.length ? photos : [{ title: 'Vista 1', src: fallbackImage }];
-        return list.map((photo, index) => ({
-          title: photo.title || `Vista ${index + 1}`,
+        const list = photos && photos.length ? photos : [{ label: '', src: fallbackImage }];
+        return list.map((photo) => ({
+          label: photo.label || '',
+          title: photo.label || '',
           src: photo.src || fallbackImage,
         }));
       }
@@ -4627,6 +4676,10 @@
         return 'balanced';
       }
 
+      function normalizeMuralLayout(layout, count) {
+        return count > 1 && layout === 'single' ? suggestDefaultLayout(count) : (layout || suggestDefaultLayout(count));
+      }
+
       function tileClass(index, count, layout) {
         if (count === 1 || layout === 'single') return 'tile-full';
         if (count === 2 && layout !== 'editorial') return 'tile-half';
@@ -4658,7 +4711,8 @@
         return new Promise((resolve) => {
           const reader = new FileReader();
           reader.onload = () => resolve({
-            title: `Vista ${index + 1}`,
+            title: '',
+            label: '',
             src: reader.result,
           });
           reader.readAsDataURL(file);

@@ -85,6 +85,7 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .cover-photo-card{position:relative;border:1px solid var(--border);border-radius:3px;overflow:hidden;background:#111}
 .cover-photo-card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block}
 .cover-photo-card button{position:absolute;right:5px;top:5px;border:1px solid rgba(255,106,85,.45);background:rgba(0,0,0,.72);color:#ff9b8d;border-radius:2px;font-size:9px;text-transform:uppercase;letter-spacing:.08em;padding:4px 6px;cursor:pointer}
+.cover-photo-card input{width:100%;border:0;border-top:1px solid var(--border);background:rgba(0,0,0,.72);color:var(--cream);padding:8px 9px;font-family:'Montserrat',sans-serif;font-size:9px;letter-spacing:.08em;outline:none}
 .preview-edit-note{grid-column:1/-1;border:1px dashed rgba(184,151,106,.35);padding:12px;color:#d7c2a7;font-size:11px;letter-spacing:.08em;line-height:1.5}
 .frames-panel{grid-column:1/-1;display:grid;gap:14px;margin-top:16px}
 .frame-card{border:1px solid rgba(184,151,106,.24);background:rgba(0,0,0,.16);border-radius:4px;padding:14px}
@@ -481,7 +482,7 @@ function normalizeMaterialOptions(options = {}, useDefaults = true) {
 function normalizeEditorSettings(settings = {}) {
   return {
     logo: settings.logo || DEFAULT_LOGO,
-    catalogItems: (settings.catalogItems || []).map(normalizeCatalogItem).filter(item => item?.name),
+    catalogItems: preferAdminCatalogItems((settings.catalogItems || []).map(normalizeCatalogItem).filter(item => item?.name)),
     materialOptions: normalizeMaterialOptions(settings.materialOptions),
     observations: Array.isArray(settings.observations) ? [...new Set(settings.observations)] : [...DEFAULT_OBS_OPTIONS],
   };
@@ -504,6 +505,14 @@ function normalizeCatalogItem(item) {
   if (!item || typeof item !== 'object') return item;
   const textureUrl = catalogItemTextureUrl(item);
   return textureUrl && item.textureUrl !== textureUrl ? { ...item, textureUrl } : item;
+}
+
+function preferAdminCatalogItems(items = []) {
+  const adminManagedTypes = new Set(items
+    .filter(item => ['manual', 'admin', 'upload'].includes(String(item.source || '').toLowerCase()))
+    .map(item => item.type));
+  if (!adminManagedTypes.size) return items;
+  return items.filter(item => !adminManagedTypes.has(item.type) || String(item.source || '').toLowerCase() !== 'shared');
 }
 
 function catalogItemKey(item) {
@@ -530,7 +539,7 @@ function mergeCatalogItems(current = [], incoming = []) {
     seen.add(key);
     merged.push(normalizedItem);
   });
-  return merged;
+  return preferAdminCatalogItems(merged);
 }
 
 function mergeEditorSettings(current = {}, incoming = {}) {
@@ -989,19 +998,38 @@ function normalizeEnvironment(amb = {}) {
   const photos = Array.isArray(amb.photos)
     ? amb.photos.filter(photo => photo?.src)
     : (amb.img ? [{ title: 'Imagem do ambiente', src: amb.img }] : []);
-  const normalizedPhotos = photos.length ? photos : [{ title: 'Imagem do ambiente', src: DEFAULT_AMBIENTE_IMG }];
+  const normalizedPhotos = (photos.length ? photos : [{ src: DEFAULT_AMBIENTE_IMG }]).map(normalizeCoverPhoto);
   return {
     ...amb,
     img: normalizedPhotos[0]?.src || DEFAULT_AMBIENTE_IMG,
     photos: normalizedPhotos,
+    layout: normalizeCoverLayout(amb.layout, normalizedPhotos.length),
     pages: Array.isArray(amb.pages) ? amb.pages : [],
   };
+}
+
+function normalizeCoverPhoto(photo = {}) {
+  return {
+    src: photo.src || DEFAULT_AMBIENTE_IMG,
+    label: photo.label || '',
+  };
+}
+
+function coverLayoutForCount(count) {
+  if (count <= 1) return 'single';
+  if (count === 5) return 'top-heavy';
+  return 'balanced';
+}
+
+function normalizeCoverLayout(layout, count) {
+  return count > 1 && layout === 'single' ? coverLayoutForCount(count) : (layout || coverLayoutForCount(count));
 }
 
 function environmentCoverPhotos(amb) {
   const normalized = normalizeEnvironment(amb);
   amb.img = normalized.img;
   amb.photos = normalized.photos;
+  amb.layout = normalized.layout;
   return amb.photos;
 }
 const state = {};
@@ -1202,8 +1230,9 @@ function renderCard(amb) {
         <div class="cover-photo-grid">
           ${coverPhotos.map((photo, photoIndex) => `
             <div class="cover-photo-card">
-              <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.title || amb.name)}">
+              <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.label || amb.name)}">
               ${coverPhotos.length > 1 ? `<button type="button" onclick="removeCoverPhoto('${escapeJS(amb.id)}',${photoIndex})">Remover</button>` : ''}
+              <input type="text" value="${escapeAttribute(photo.label || '')}" placeholder="Rótulo opcional" oninput="updateCoverPhotoLabel('${escapeJS(amb.id)}',${photoIndex},this.value)">
             </div>
           `).join('')}
         </div>
@@ -1239,12 +1268,13 @@ async function handleCoverPhotosUpload(ambId, input) {
   const uploaded = [];
   for (const file of files) {
     uploaded.push({
-      title: file.name ? file.name.replace(/\.[^.]+$/, '') : `Foto ${existing.length + uploaded.length + 1}`,
+      label: '',
       src: await fileToDataURL(file),
     });
   }
   amb.photos = [...existing, ...uploaded];
   amb.img = amb.photos[0]?.src || DEFAULT_AMBIENTE_IMG;
+  if (!amb.layout || amb.layout === 'single') amb.layout = coverLayoutForCount(amb.photos.length);
   input.value = '';
   renderAmbientes();
   syncPreviewDocument('environment_cover_photos_uploaded');
@@ -1254,10 +1284,20 @@ function removeCoverPhoto(ambId, photoIndex) {
   const amb = AMBIENTES.find(item => item.id === ambId);
   if (!amb) return;
   const photos = environmentCoverPhotos(amb).filter((_, index) => index !== photoIndex);
-  amb.photos = photos.length ? photos : [{ title: 'Imagem do ambiente', src: DEFAULT_AMBIENTE_IMG }];
+  amb.photos = photos.length ? photos : [{ label: '', src: DEFAULT_AMBIENTE_IMG }];
   amb.img = amb.photos[0]?.src || DEFAULT_AMBIENTE_IMG;
+  amb.layout = coverLayoutForCount(amb.photos.length);
   renderAmbientes();
   syncPreviewDocument('environment_cover_photo_removed');
+}
+
+function updateCoverPhotoLabel(ambId, photoIndex, value) {
+  const amb = AMBIENTES.find(item => item.id === ambId);
+  if (!amb) return;
+  const photos = environmentCoverPhotos(amb);
+  if (!photos[photoIndex]) return;
+  photos[photoIndex].label = value;
+  syncPreviewDocument('environment_cover_photo_label_updated');
 }
 
 applyEditorSettings();
@@ -1513,10 +1553,12 @@ function buildPreviewDocumentData() {
       const s = state[amb.id];
       const coverPhotos = environmentCoverPhotos(amb)
         .filter(photo => photo?.src)
-        .map((photo, photoIndex) => ({
-          title: photo.title || `Imagem do ambiente ${photoIndex + 1}`,
+        .map((photo) => ({
+          label: photo.label || '',
+          title: photo.label || '',
           src: photo.src,
         }));
+      const layout = normalizeCoverLayout(amb.layout, coverPhotos.length);
       return {
         number: String(index + 1).padStart(2, '0'),
         title: amb.name,
@@ -1528,7 +1570,7 @@ function buildPreviewDocumentData() {
         },
         colors: s.cores,
         notes: [...s.obs, s.obsExtra || ''].filter(Boolean),
-        layout: 'single',
+        layout,
         photos: coverPhotos,
         pages: normalizedEnvironmentPages(amb),
         hasData: Boolean(hasEnvironmentData(s) || coverPhotos.some(photo => photo.src && photo.src !== DEFAULT_AMBIENTE_IMG)),
@@ -2005,8 +2047,9 @@ function rebuildBuilderFromPreview(preview) {
       name: environment.title || `Ambiente ${index + 1}`,
       img: environment.photos?.[0]?.src || DEFAULT_AMBIENTE_IMG,
       photos: Array.isArray(environment.photos) && environment.photos.length
-        ? environment.photos
-        : [{ title: 'Imagem do ambiente', src: environment.photos?.[0]?.src || DEFAULT_AMBIENTE_IMG }],
+        ? environment.photos.map(normalizeCoverPhoto)
+        : [{ label: '', src: environment.photos?.[0]?.src || DEFAULT_AMBIENTE_IMG }],
+      layout: normalizeCoverLayout(environment.layout, environment.photos?.length || 1),
       pages: Array.isArray(environment.pages) ? environment.pages : [],
     };
   });
@@ -2055,9 +2098,10 @@ function mergePreviewDocument(preview) {
       ? previewEnvironment.photos.filter(photo => photo?.src)
       : [];
     if (coverPhotos.length) {
-      amb.photos = coverPhotos;
+      amb.photos = coverPhotos.map(normalizeCoverPhoto);
       amb.img = coverPhotos[0].src;
     }
+    amb.layout = normalizeCoverLayout(previewEnvironment.layout, amb.photos?.length || 1);
     amb.pages = Array.isArray(previewEnvironment.pages)
       ? previewEnvironment.pages.map(page => ({
         id: page.id || `page-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
