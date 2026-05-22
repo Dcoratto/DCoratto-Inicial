@@ -699,12 +699,19 @@
         min-width: 92px;
         min-height: 72px;
         transform: translate(-50%, -50%);
-        overflow: hidden;
+        overflow: visible;
         border: var(--detail-border-width, 1.2px) solid var(--detail-border-color, #d7c2a7);
         background: rgba(21,18,15,.96);
         box-shadow: 0 18px 44px rgba(0,0,0,.38);
         cursor: move;
         pointer-events: auto;
+      }
+
+      .page-detail-clip {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        border-radius: inherit;
       }
 
       .page-detail-frame.shape-circle {
@@ -738,6 +745,10 @@
         display: block;
         pointer-events: none;
         user-select: none;
+      }
+
+      .page-detail-frame.is-selected .frame-resize-handle {
+        display: block;
       }
 
       .page-detail-placeholder {
@@ -1347,7 +1358,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 18px;
+        gap: 12px;
         margin: -22px 0 18px;
         padding-left: 60px;
       }
@@ -1360,24 +1371,58 @@
 
       .layout-suggestions button,
       .photo-upload {
-        border: 1px solid var(--line);
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-height: 36px;
+        border: 1px solid rgba(184,151,106,.22);
         border-radius: 999px;
-        background: rgba(17, 16, 14, .8);
-        color: var(--muted);
+        background: linear-gradient(180deg, rgba(34,29,23,.92), rgba(14,13,11,.92));
+        color: rgba(247,242,234,.76);
         cursor: pointer;
         font: inherit;
-        font-size: 9px;
-        font-weight: 500;
-        letter-spacing: .16em;
-        padding: 8px 11px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: .12em;
+        padding: 10px 14px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 10px 26px rgba(0,0,0,.18);
         text-transform: uppercase;
+        transition: transform .18s ease, border-color .18s ease, color .18s ease, background .18s ease, box-shadow .18s ease;
+      }
+
+      .layout-suggestions button::before,
+      .photo-upload::before {
+        content: "+";
+        display: inline-grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: rgba(184,151,106,.18);
+        color: var(--gold-soft);
+        font-size: 13px;
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      .history-action::before {
+        content: "↶";
+      }
+
+      .history-action[data-history-redo]::before {
+        content: "↷";
       }
 
       .layout-suggestions button.active,
       .layout-suggestions button:hover,
       .photo-upload:hover {
-        border-color: rgba(184, 151, 106, .55);
-        color: var(--gold-soft);
+        border-color: rgba(184, 151, 106, .66);
+        color: #fff6e8;
+        background: linear-gradient(180deg, rgba(56,46,34,.96), rgba(19,17,14,.96));
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 14px 30px rgba(0,0,0,.26);
+        transform: translateY(-1px);
       }
 
       .photo-upload input { display: none; }
@@ -2425,6 +2470,10 @@
 
         document.querySelectorAll('[data-resize-frame]').forEach((node) => {
           node.addEventListener('pointerdown', startPreviewFrameResize);
+        });
+
+        document.querySelectorAll('[data-resize-detail]').forEach((node) => {
+          node.addEventListener('pointerdown', startDetailFrameResize);
         });
 
         document.querySelectorAll('[data-editable-frame-image]').forEach((node) => {
@@ -3486,6 +3535,77 @@
         window.addEventListener('pointerup', up);
       }
 
+      function startDetailFrameResize(event) {
+        if (!isEditablePreview) return;
+        const node = event.currentTarget.closest('[data-page-detail-frame]');
+        if (arrowDrawMode && Number(node?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(node?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const pageNode = node?.closest('[data-page-frames]');
+        const annotation = pageAnnotation(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.annotationIndex));
+        if (!node || !pageNode || !annotation) return;
+        selectSinglePageAnnotation(pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex));
+        const handle = event.currentTarget.dataset.resizeDetail || 'se';
+        const canvasRect = pageNode.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const initial = {
+          x: Number(annotation.fromX || 0),
+          y: Number(annotation.fromY || 0),
+          width: pageDetailSize(annotation),
+          height: Number(annotation.detailHeight ?? pageDetailSize(annotation) * .68),
+        };
+        const initialBox = {
+          left: initial.x - initial.width / 2,
+          right: initial.x + initial.width / 2,
+          top: initial.y - initial.height / 2,
+          bottom: initial.y + initial.height / 2,
+        };
+        const keepSquare = pageDetailShape(annotation) === 'circle';
+
+        const move = (pointerEvent) => {
+          const dw = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
+          const dh = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
+          let left = initialBox.left;
+          let right = initialBox.right;
+          let top = initialBox.top;
+          let bottom = initialBox.bottom;
+
+          if (handle.includes('e')) right = initialBox.right + dw;
+          if (handle.includes('w')) left = initialBox.left + dw;
+          if (handle.includes('s')) bottom = initialBox.bottom + dh;
+          if (handle.includes('n')) top = initialBox.top + dh;
+
+          let nextWidth = Math.max(7, Math.min(60, right - left));
+          let nextHeight = Math.max(6, Math.min(44, bottom - top));
+          let nextX = (left + right) / 2;
+          let nextY = (top + bottom) / 2;
+
+          if (keepSquare) {
+            const size = Math.max(nextWidth, nextHeight);
+            nextWidth = size;
+            nextHeight = size;
+          }
+
+          annotation.fromX = Math.max(0, Math.min(100, nextX));
+          annotation.fromY = Math.max(0, Math.min(100, nextY));
+          annotation.detailSize = nextWidth;
+          annotation.detailHeight = nextHeight;
+          updatePageDetailFrame(node, annotation);
+          const id = `${node.dataset.environmentIndex}-${node.dataset.pageIndex}-${node.dataset.annotationIndex}`;
+          updatePageAnnotationLine(pageNode.querySelector(`[data-page-annotation-line="${id}"]`), annotation, pageNode);
+        };
+
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          persistWithoutRender();
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      }
+
       function handleFrameDragOver(event) {
         if (!isEditablePreview) return;
         event.preventDefault();
@@ -3609,7 +3729,11 @@
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
           const distance = Math.hypot(pointerEvent.clientX - startClient.x, pointerEvent.clientY - startClient.y);
-          if (!annotation && distance < dragThreshold) return;
+          if (!annotation && distance < dragThreshold) {
+            arrowDrawMode = null;
+            applyArrowDrawMode();
+            return;
+          }
           ensureDraftAnnotation();
           const end = pagePoint(pointerEvent, pageNode);
           annotation.fromX = end.x;
@@ -4062,6 +4186,9 @@
             const detailHeight = detailShape === 'circle'
               ? detailSize
               : Math.max(6, Math.min(28, Number(annotation.detailHeight ?? detailSize * .68)));
+            const detailHandles = isEditablePreview
+              ? ['nw','n','ne','e','se','s','sw','w'].map(handle => `<span class="frame-resize-handle" data-resize-detail="${handle}"></span>`).join('')
+              : '';
             return `
             <span
               data-page-annotation-toolbar
@@ -4112,7 +4239,10 @@
                 class="page-detail-frame shape-${escapeAttribute(detailShape)} ${selectedPageAnnotationKeys.has(pageAnnotationKey(environmentIndex, pageIndex, annotationIndex)) ? 'is-selected' : ''}"
                 style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;z-index:${zIndex + 20};--detail-width:${detailSize}%;--detail-height:${detailHeight}%;--detail-border-color:${escapeAttribute(annotation.detailBorderColor || pageAnnotationArrowColor(annotation))};--detail-border-width:${Number(annotation.detailBorderWidth ?? 1.2)}px"
               >
-                ${annotation.image ? `<img src="${escapeAttribute(annotation.image)}" alt="Detalhe" draggable="false">` : '<span class="page-detail-placeholder">Imagem do detalhe</span>'}
+                <span class="page-detail-clip">
+                  ${annotation.image ? `<img src="${escapeAttribute(annotation.image)}" alt="Detalhe" draggable="false">` : '<span class="page-detail-placeholder">Imagem do detalhe</span>'}
+                </span>
+                ${detailHandles}
               </span>
             ` : `
               <span
