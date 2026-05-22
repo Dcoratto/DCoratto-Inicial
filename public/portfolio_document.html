@@ -327,11 +327,6 @@
         50% { opacity: 1; transform: translate(-50%, 6px) rotate(45deg); }
       }
 
-      @keyframes introOrb {
-        from { transform: scale(.92) rotate(0deg); opacity: .55; }
-        to { transform: scale(1.08) rotate(9deg); opacity: 1; }
-      }
-
       @keyframes introFadeOut {
         to { opacity: 0; visibility: hidden; }
       }
@@ -2475,6 +2470,12 @@
         });
 
         document.querySelectorAll('[data-page-detail-frame]').forEach((node) => {
+          node.addEventListener('dblclick', (event) => {
+            if (!isEditablePreview || event.target.closest('[data-resize-detail], .page-annotation-toolbar')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            activateDetailImageEdit(node);
+          });
           node.addEventListener('contextmenu', (event) => {
             if (!isEditablePreview) return;
             event.preventDefault();
@@ -2508,6 +2509,12 @@
 
         document.querySelectorAll('[data-draggable-frame]').forEach((node) => {
           node.addEventListener('pointerdown', startPreviewFrameDrag);
+          node.addEventListener('dblclick', (event) => {
+            if (!isEditablePreview || event.target.closest('.preview-frame-tools, .frame-selection-toolbar, [data-resize-frame]')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            activateFrameImageEdit(node);
+          });
           node.addEventListener('dragover', handleFrameDragOver);
           node.addEventListener('dragleave', handleFrameDragLeave);
           node.addEventListener('drop', handleFrameDrop);
@@ -3539,10 +3546,10 @@
         if (arrowDrawMode) return;
         if (event.shiftKey || event.ctrlKey || event.metaKey) toggleFrameSelection(key);
         else if (!selectedFrameKeys.has(key)) selectSingleFrame(key);
-        if (event.target.closest('[data-editable-frame-image]')) return;
         const frame = pageFrame(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.frameIndex));
         const canvas = node.closest('.page-frames');
         if (!frame || !canvas) return;
+        if (frame.editImage && event.target.closest('[data-editable-frame-image]')) return;
         const canvasRect = canvas.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
@@ -3917,7 +3924,13 @@
         const pageNode = node.closest('[data-page-frames]');
         const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
         if (!pageNode || !annotation) return;
-        selectSinglePageAnnotation(pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex));
+        const key = pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex);
+        if (node.matches('[data-page-detail-frame]') && annotation.editImage && annotation.image && !event.target.closest('[data-resize-detail]')) {
+          selectSinglePageAnnotation(key, { keepImageEdit: true });
+          startPageDetailImagePan(event, node, annotation);
+          return;
+        }
+        selectSinglePageAnnotation(key);
         const handle = node.dataset.dragPageAnnotation;
         const keyX = handle === 'head' ? 'toX' : 'fromX';
         const keyY = handle === 'head' ? 'toY' : 'fromY';
@@ -4072,6 +4085,82 @@
         window.addEventListener('pointerup', up);
       }
 
+      function startPageDetailImagePan(event, detailNode, annotation) {
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const initial = { x: Number(annotation.imgX || 0), y: Number(annotation.imgY || 0) };
+
+        const move = (pointerEvent) => {
+          const rect = detailNode.getBoundingClientRect();
+          annotation.imgX = Math.max(-100, Math.min(100, initial.x + ((pointerEvent.clientX - startX) / rect.width) * 100));
+          annotation.imgY = Math.max(-100, Math.min(100, initial.y + ((pointerEvent.clientY - startY) / rect.height) * 100));
+          updatePageDetailImageTransform(detailNode, annotation);
+        };
+
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          persistWithoutRender();
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      }
+
+      function imageDropTargetAt(clientX, clientY, sourceNode) {
+        const stack = document.elementsFromPoint(clientX, clientY);
+        for (const element of stack) {
+          const detailNode = element.closest?.('[data-page-detail-frame]');
+          if (detailNode && detailNode !== sourceNode && !sourceNode.contains(detailNode)) {
+            return { type: 'detail', node: detailNode };
+          }
+          const frameNode = element.closest?.('[data-draggable-frame]');
+          if (frameNode && frameNode !== sourceNode && !sourceNode.contains(frameNode)) {
+            return { type: 'frame', node: frameNode };
+          }
+        }
+        return null;
+      }
+
+      function dropFreeImageIntoTarget(sourceNode, element, pointerEvent) {
+        if (!element || element.type !== 'image' || !element.src || element.cropMode || !pointerEvent) return false;
+        const target = imageDropTargetAt(pointerEvent.clientX, pointerEvent.clientY, sourceNode);
+        if (!target) return false;
+        const page = environmentPage(Number(sourceNode.dataset.environmentIndex), Number(sourceNode.dataset.pageIndex));
+        if (!page || !Array.isArray(page.freeElements)) return false;
+        const elementIndex = Number(sourceNode.dataset.elementIndex);
+
+        if (target.type === 'frame') {
+          const frame = pageFrame(Number(target.node.dataset.environmentIndex), Number(target.node.dataset.pageIndex), Number(target.node.dataset.frameIndex));
+          if (!frame) return false;
+          frame.photo = element.src;
+          resetFramePhotoPlacement(frame);
+          page.freeElements.splice(elementIndex, 1);
+          selectedFrameKeys.clear();
+          selectedPageAnnotationKeys.clear();
+          selectedFreeElementKeys.clear();
+          selectedFrameKeys.add(frameKey(target.node.dataset.environmentIndex, target.node.dataset.pageIndex, target.node.dataset.frameIndex));
+          persistAndRender();
+          return true;
+        }
+
+        if (target.type === 'detail') {
+          const annotation = pageAnnotation(Number(target.node.dataset.environmentIndex), Number(target.node.dataset.pageIndex), Number(target.node.dataset.annotationIndex));
+          if (!annotation) return false;
+          annotation.image = element.src;
+          resetDetailPhotoPlacement(annotation);
+          page.freeElements.splice(elementIndex, 1);
+          selectedFrameKeys.clear();
+          selectedPageAnnotationKeys.clear();
+          selectedFreeElementKeys.clear();
+          selectedPageAnnotationKeys.add(pageAnnotationKey(target.node.dataset.environmentIndex, target.node.dataset.pageIndex, target.node.dataset.annotationIndex));
+          persistAndRender();
+          return true;
+        }
+
+        return false;
+      }
+
       function startFreeElementDrag(event) {
         if (!isEditablePreview) return;
         if (event.target.closest('.free-element-toolbar')) return;
@@ -4112,9 +4201,10 @@
           node.style.left = `${element.x}%`;
           node.style.top = `${element.y}%`;
         };
-        const up = () => {
+        const up = (pointerEvent) => {
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
+          if (dropFreeImageIntoTarget(node, element, pointerEvent)) return;
           persistWithoutRender();
         };
         window.addEventListener('pointermove', move);
@@ -4450,7 +4540,7 @@
           >
             ${isEditablePreview ? renderFramePreviewTools(frame, environmentIndex, pageIndex, frameIndex) : ''}
             <div class="frame-clip">
-              ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" draggable="true" data-photo-src="${escapeAttribute(frame.photo)}" data-editable-frame-image style="${imageStyle}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
+              ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" draggable="false" data-photo-src="${escapeAttribute(frame.photo)}" data-editable-frame-image style="${imageStyle}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
               ${isEditablePreview ? '<span class="drop-hint">Solte a foto aqui</span>' : ''}
               <span class="doc-frame-title">${String(frameIndex + 1).padStart(2, '0')} · ${escapeHTML(frame.title || 'Moldura')}</span>
             </div>
