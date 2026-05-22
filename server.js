@@ -1,8 +1,12 @@
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
+
+const localEnvKeys = new Set();
+loadLocalEnvFile('.env');
+loadLocalEnvFile('.env.local', true);
 
 const port = Number(process.env.PORT || 4173);
 const root = resolve('dist');
@@ -23,6 +27,33 @@ const supabaseServer = supabaseUrl && supabaseServiceKey
     auth: { persistSession: false, autoRefreshToken: false },
   })
   : null;
+
+function loadLocalEnvFile(fileName, overrideLocal = false) {
+  const filePath = resolve(fileName);
+  if (!existsSync(filePath)) return;
+  let content = '';
+  try {
+    content = readFileSync(filePath, 'utf8');
+  } catch (error) {
+    console.warn(`Nao foi possivel carregar ${fileName}.`, error);
+    return;
+  }
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex <= 0) continue;
+    const key = line.slice(0, separatorIndex).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (process.env[key] !== undefined && !(overrideLocal && localEnvKeys.has(key))) continue;
+    let value = line.slice(separatorIndex + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value.replace(/\\n/g, '\n');
+    localEnvKeys.add(key);
+  }
+}
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',

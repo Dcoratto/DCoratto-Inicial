@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Login, PRIMARY_ACCOUNT_EMAIL } from './Login'
 import { persistEditorEvent, flushOfflineQueue, loadLatestEditorState } from './auditPersistence'
-import { isSupabaseConfigured, supabase } from './supabaseClient'
 import './styles.css'
 
 function App() {
@@ -21,7 +20,7 @@ function App() {
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-05-19-remote-persistence-v1";
+  const SYSTEM_VERSION = "2026-05-22-remote-persistence-v2";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
@@ -32,34 +31,14 @@ function App() {
     flushOfflineQueue().catch((error) => console.warn('Falha ao limpar fila offline:', error));
 
     async function bootstrapRemoteState() {
-      let loadedServerSettings = false;
       try {
         const remote = await loadLatestEditorState(actor);
         if (cancelled) return;
         hydrateBrowserStorage(remote);
         setRemoteDocument(remote);
-        if (remote?.settings) {
-          loadedServerSettings = true;
-          setRemoteSettings(remote.settings);
-        }
+        if (remote?.settings) setRemoteSettings(remote.settings);
       } catch (error) {
         console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
-      }
-
-      if (loadedServerSettings) return;
-      if (!isSupabaseConfigured || !supabase) return;
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData?.session?.access_token) return;
-      const { data, error } = await supabase
-        .from('editor_settings')
-        .select('payload')
-        .eq('settings_key', 'default')
-        .maybeSingle();
-
-      if (!error && data?.payload) {
-        if (cancelled) return;
-        setRemoteSettings(data.payload);
-        hydrateBrowserStorage({ settings: data.payload });
       }
     }
 

@@ -187,6 +187,13 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .catalog-thumb{width:100%;aspect-ratio:1/1;background:#111;border-bottom:1px solid var(--border);overflow:hidden}
 .catalog-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .catalog-meta{padding:10px;display:grid;gap:4px}
+.catalog-editing{border-color:var(--gold);box-shadow:0 0 0 1px rgba(184,151,106,.22)}
+.catalog-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.catalog-actions button{margin-top:0}
+.catalog-current-image{display:none;border:1px solid var(--border);background:#0c0b09;border-radius:4px;overflow:hidden;min-height:70px}
+.catalog-current-image.active{display:grid;grid-template-columns:72px 1fr;align-items:center}
+.catalog-current-image img{width:72px;height:72px;object-fit:cover;display:block;border-right:1px solid var(--border)}
+.catalog-current-image span{padding:8px 10px;color:var(--muted);font-size:9px;letter-spacing:.1em;text-transform:uppercase;line-height:1.45}
 
 /* HISTORY */
 .history-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:300;align-items:center;justify-content:center;padding:28px}
@@ -211,7 +218,7 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .history-empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:13px}
 .catalog-meta strong{font-size:11px;color:var(--cream);line-height:1.25}
 .catalog-meta span{font-size:9px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
-.catalog-meta button{margin-top:6px;justify-self:start}
+.catalog-meta > button{margin-top:6px;justify-self:start}
 .technical-card{grid-column:1/-1}
 .technical-card .settings-note{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.55;max-width:620px}
 .option-form{display:grid;grid-template-columns:220px minmax(220px,1fr) auto;gap:12px;align-items:end;margin-top:2px}
@@ -372,9 +379,13 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
             <label>Imagem</label>
             <input type="file" id="catalogImage" accept="image/*">
           </div>
+          <div class="catalog-current-image field-full" id="catalogCurrentImage"></div>
           <div class="settings-actions split field-full">
             <button class="danger-btn" type="button" onclick="clearManualCatalogColors()">Excluir cores manuais</button>
-            <button class="hbtn" type="button" onclick="addManualCatalogItem()">Adicionar ao catálogo</button>
+            <div class="catalog-actions">
+              <button class="ghost-btn" type="button" id="cancelCatalogEditBtn" onclick="cancelManualCatalogEdit()" style="display:none">Cancelar</button>
+              <button class="hbtn" type="button" id="saveCatalogItemBtn" onclick="addManualCatalogItem()">Adicionar ao catálogo</button>
+            </div>
           </div>
         </div>
         <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>
@@ -459,6 +470,7 @@ const DEFAULT_OBS_OPTIONS = [
 ];
 let editorSettings = loadEditorSettings();
 let builderDraft = loadBuilderDraft();
+let editingCatalogItemId = null;
 let editingMaterialOption = null;
 let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
 let clientHistoryItems = [];
@@ -745,15 +757,32 @@ async function addManualCatalogItem() {
   const line = document.getElementById('catalogLine').value.trim();
   const name = document.getElementById('catalogName').value.trim();
   const quality = document.getElementById('catalogQuality').value;
-  if (!file || !line || !name) {
-    alert('Preencha linha, cor/modelo e imagem.');
+  const items = editorSettings.catalogItems || [];
+  const currentItem = editingCatalogItemId ? items.find(item => item.id === editingCatalogItemId) : null;
+  const currentTextureUrl = catalogItemTextureUrl(currentItem);
+  if (!line || !name || (!file && !currentTextureUrl)) {
+    alert(editingCatalogItemId ? 'Preencha linha, cor/modelo e mantenha ou envie uma imagem.' : 'Preencha linha, cor/modelo e imagem.');
     return;
   }
 
-  const textureUrl = await fileToDataURL(file);
-  editorSettings.catalogItems = [
-    ...(editorSettings.catalogItems || []),
-    {
+  const textureUrl = file ? await fileToDataURL(file) : currentTextureUrl;
+  if (editingCatalogItemId && currentItem) {
+    editorSettings.catalogItems = items.map(item => item.id === editingCatalogItemId ? {
+      ...item,
+      type,
+      manufacturer,
+      line,
+      name,
+      quality,
+      hex: item.hex || '#b8976a',
+      textureUrl,
+      source: ['manual', 'admin', 'upload'].includes(String(item.source || '').toLowerCase()) ? item.source : 'manual',
+      updatedAt: new Date().toISOString(),
+    } : item);
+  } else {
+    editorSettings.catalogItems = [
+      ...items,
+      {
       id: crypto.randomUUID(),
       type,
       manufacturer,
@@ -763,19 +792,79 @@ async function addManualCatalogItem() {
       hex: '#b8976a',
       textureUrl,
       source: 'manual',
-    },
-  ];
+      },
+    ];
+  }
   saveEditorSettings();
-  document.getElementById('catalogLine').value = '';
-  document.getElementById('catalogName').value = '';
-  document.getElementById('catalogQuality').value = '';
-  imageInput.value = '';
+  resetCatalogForm();
   applyEditorSettings();
   rerenderAllSwatches();
   syncPreviewDocument();
 }
 
+function startManualCatalogEdit(id) {
+  const item = (editorSettings.catalogItems || []).find(entry => entry.id === id);
+  if (!item) return;
+  editingCatalogItemId = id;
+  setSelectValue(document.getElementById('catalogType'), item.type || 'color', catalogTypeLabel(item.type || 'color'));
+  setSelectValue(document.getElementById('catalogManufacturer'), item.manufacturer || 'BOA VISTA');
+  document.getElementById('catalogLine').value = item.line || '';
+  document.getElementById('catalogName').value = item.name || '';
+  setSelectValue(document.getElementById('catalogQuality'), item.quality || '', item.quality || 'Sem qualidade');
+  document.getElementById('catalogImage').value = '';
+  updateCatalogEditControls(item);
+  renderManualCatalogList();
+  document.getElementById('catalogLine')?.focus();
+}
+
+function setSelectValue(select, value, label = value) {
+  if (!select) return;
+  const normalizedValue = String(value || '');
+  if (normalizedValue && !Array.from(select.options).some(option => option.value === normalizedValue)) {
+    const option = document.createElement('option');
+    option.value = normalizedValue;
+    option.textContent = label || normalizedValue;
+    select.appendChild(option);
+  }
+  select.value = normalizedValue;
+}
+
+function cancelManualCatalogEdit() {
+  resetCatalogForm();
+  renderManualCatalogList();
+}
+
+function resetCatalogForm() {
+  editingCatalogItemId = null;
+  document.getElementById('catalogLine').value = '';
+  document.getElementById('catalogName').value = '';
+  document.getElementById('catalogQuality').value = '';
+  document.getElementById('catalogImage').value = '';
+  updateCatalogEditControls(null);
+}
+
+function updateCatalogEditControls(item = null) {
+  const saveButton = document.getElementById('saveCatalogItemBtn');
+  const cancelButton = document.getElementById('cancelCatalogEditBtn');
+  const currentImage = document.getElementById('catalogCurrentImage');
+  if (saveButton) saveButton.textContent = item ? 'Salvar material' : 'Adicionar ao catálogo';
+  if (cancelButton) cancelButton.style.display = item ? '' : 'none';
+  if (!currentImage) return;
+  const textureUrl = catalogItemTextureUrl(item);
+  if (item && textureUrl) {
+    currentImage.classList.add('active');
+    currentImage.innerHTML = `
+      <img src="${escapeAttribute(textureUrl)}" alt="${escapeAttribute(item.name || 'Material')}">
+      <span>Foto atual. Envie outra imagem para substituir.</span>
+    `;
+  } else {
+    currentImage.classList.remove('active');
+    currentImage.innerHTML = '';
+  }
+}
+
 function removeManualCatalogItem(id) {
+  if (editingCatalogItemId === id) resetCatalogForm();
   editorSettings.catalogItems = (editorSettings.catalogItems || []).filter(item => item.id !== id);
   saveEditorSettings();
   applyEditorSettings();
@@ -791,6 +880,7 @@ function clearManualCatalogColors() {
     return;
   }
   if (!confirm(`Excluir ${colorCount} cor(es) manual(is) do catálogo?`)) return;
+  if ((editorSettings.catalogItems || []).some(item => item.id === editingCatalogItemId && item.type === 'color')) resetCatalogForm();
   editorSettings.catalogItems = items.filter(item => item.type !== 'color');
   Object.values(state).forEach(envState => {
     envState.cores = [];
@@ -809,13 +899,16 @@ function renderManualCatalogList() {
   list.innerHTML = items.length ? items.map(item => {
     const textureUrl = catalogItemTextureUrl(item);
     return `
-      <div class="catalog-item">
+      <div class="catalog-item ${item.id === editingCatalogItemId ? 'catalog-editing' : ''}">
         <div class="catalog-thumb">${textureUrl ? `<img src="${escapeAttribute(textureUrl)}" alt="${escapeAttribute(item.name)}">` : ''}</div>
         <div class="catalog-meta">
           <span>${escapeHTML(item.manufacturer)} · ${catalogTypeLabel(item.type)}</span>
           <strong>${escapeHTML(item.name)}${item.quality ? ' / '+escapeHTML(item.quality) : ''}</strong>
           <span>${escapeHTML(item.line)}</span>
-          <button class="danger-btn" type="button" onclick="removeManualCatalogItem('${escapeJS(item.id)}')">Remover</button>
+          <div class="catalog-actions">
+            <button class="ghost-btn" type="button" onclick="startManualCatalogEdit('${escapeJS(item.id)}')">Editar</button>
+            <button class="danger-btn" type="button" onclick="removeManualCatalogItem('${escapeJS(item.id)}')">Remover</button>
+          </div>
         </div>
       </div>
     `;
