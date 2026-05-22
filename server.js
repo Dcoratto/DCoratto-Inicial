@@ -11,6 +11,13 @@ const indexFile = join(root, 'index.html');
 const htmlBucket = process.env.SUPABASE_HTML_BUCKET || process.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const primaryAccountEmail = 'dcorattoinovacao@gmail.com';
+const localLoginUsers = [
+  { email: primaryAccountEmail, password: 'sob_medida', name: "D'Coratto Inovacao", role: 'owner' },
+  { email: 'rafael@dcoratto.com.br', password: 'Dcoratto@Rafael26', name: 'Rafael', role: 'team' },
+  { email: 'isabela@dcoratto.com.br', password: 'Dcoratto@Isabela26', name: 'Isabela', role: 'team' },
+  { email: 'vinicius@dcoratto.com.br', password: 'Dcoratto@Vinicius26', name: 'Vinicius', role: 'team' },
+];
 const supabaseServer = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -33,6 +40,11 @@ const mimeTypes = {
 
 createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+
+  if (request.method === 'POST' && url.pathname === '/api/login') {
+    await handleLoginRequest(request, response);
+    return;
+  }
 
   if (request.method === 'POST' && url.pathname === '/api/client-links') {
     await handleClientLinkRequest(request, response);
@@ -101,6 +113,43 @@ createServer(async (request, response) => {
 }).listen(port, '0.0.0.0', () => {
   console.log(`D'coratto editor listening on port ${port}`);
 });
+
+async function handleLoginRequest(request, response) {
+  try {
+    const body = await readJsonBody(request);
+    const email = normalizeEmail(body.email);
+    const password = String(body.password || '');
+    if (!email || !password) {
+      sendJson(response, 400, { error: 'Informe email e senha.' });
+      return;
+    }
+
+    if (supabaseServer) {
+      try {
+        const { data, error } = await supabaseServer.rpc('verify_app_login', {
+          login_email: email,
+          login_password: password,
+        });
+        if (!error && data?.ok && data?.user?.email) {
+          sendJson(response, 200, { ok: true, source: 'supabase', user: normalizeAppUser(data.user) });
+          return;
+        }
+      } catch (error) {
+        console.warn('Login por Supabase indisponivel; usando fallback local.', error);
+      }
+    }
+
+    const fallbackUser = localLoginUsers.find((user) => user.email === email && user.password === password);
+    if (!fallbackUser) {
+      sendJson(response, 401, { error: 'Credenciais incorretas.' });
+      return;
+    }
+
+    sendJson(response, 200, { ok: true, source: 'local', user: normalizeAppUser(fallbackUser) });
+  } catch (error) {
+    sendJson(response, 500, { error: String(error?.message || error) });
+  }
+}
 
 async function handleClientLinkRequest(request, response) {
   try {
@@ -213,14 +262,26 @@ async function handleLatestEditorStateRequest(url, response) {
       return;
     }
 
-    const { data: projects, error: projectError } = await supabaseServer
-      .from('document_projects')
-      .select('id, data, updated_at')
-      .eq('document_type', 'projeto_inicial')
-      .order('updated_at', { ascending: false })
-      .limit(12);
-    if (projectError) throw projectError;
-    const project = (projects || []).find(item => hasPersistableContent(item?.data?.draft, item?.data?.preview)) || null;
+    const requestedProjectId = safeId(url.searchParams.get('projectId'));
+    let project = null;
+    if (requestedProjectId) {
+      const { data, error } = await supabaseServer
+        .from('document_projects')
+        .select('id, data, updated_at')
+        .eq('id', requestedProjectId)
+        .maybeSingle();
+      if (error) throw error;
+      project = data || null;
+    } else {
+      const { data: projects, error: projectError } = await supabaseServer
+        .from('document_projects')
+        .select('id, data, updated_at')
+        .eq('document_type', 'projeto_inicial')
+        .order('updated_at', { ascending: false })
+        .limit(12);
+      if (projectError) throw projectError;
+      project = (projects || []).find(item => hasPersistableContent(item?.data?.draft, item?.data?.preview)) || null;
+    }
 
     let settings = null;
     try {
@@ -297,7 +358,7 @@ async function handleClientHistoryRequest(response) {
 
     const { data: versions, error } = await supabaseServer
       .from('document_html_versions')
-      .select('id, title, share_slug, project_id, created_at, data')
+      .select('id, title, share_slug, project_id, created_at, data, is_current, replacement_public_url')
       .eq('shared_with_client', true)
       .order('created_at', { ascending: false })
       .limit(50);
@@ -314,6 +375,8 @@ async function handleClientHistoryRequest(response) {
       projectId: v.project_id,
       createdAt: v.created_at,
       publicUrl: v.data?.publicUrl || '',
+      isCurrent: v.is_current !== false,
+      replacementPublicUrl: v.replacement_public_url || '',
     }));
 
     sendJson(response, 200, {
@@ -397,29 +460,29 @@ async function loadClientHtml({ projectId, shareSlug }) {
 async function findHtmlVersionByStoragePath(storagePath) {
   const { data, error } = await supabaseServer
     .from('document_html_versions')
-    .select('html_content')
+    .select('id, project_id, html_content, is_current, replacement_public_url, data')
     .eq('storage_path', storagePath)
     .eq('shared_with_client', true)
     .maybeSingle();
   if (error) throw error;
-  return data?.html_content || '';
+  return resolveHtmlVersion(data);
 }
 
 async function findHtmlVersionByShareSlug(shareSlug) {
   const { data, error } = await supabaseServer
     .from('document_html_versions')
-    .select('html_content')
+    .select('id, project_id, html_content, is_current, replacement_public_url, data')
     .eq('share_slug', shareSlug)
     .eq('shared_with_client', true)
     .maybeSingle();
   if (error) throw error;
-  return data?.html_content || '';
+  return resolveHtmlVersion(data);
 }
 
 async function findHtmlVersionByDataShareSlug(shareSlug) {
   const { data, error } = await supabaseServer
     .from('document_html_versions')
-    .select('html_content')
+    .select('id, project_id, html_content, is_current, replacement_public_url, data')
     .filter('data->>shareSlug', 'eq', shareSlug)
     .eq('shared_with_client', true)
     .order('created_at', { ascending: false })
@@ -428,7 +491,56 @@ async function findHtmlVersionByDataShareSlug(shareSlug) {
     console.warn('Nao foi possivel buscar HTML por data.shareSlug.', error);
     return '';
   }
-  return data?.[0]?.html_content || '';
+  return resolveHtmlVersion(data?.[0] || null);
+}
+
+async function resolveHtmlVersion(version) {
+  if (!version) return '';
+  if (version.is_current !== false) return version.html_content || '';
+  const replacementUrl = version.replacement_public_url
+    || version.data?.replacementPublicUrl
+    || await currentProjectPublicUrl(version.project_id);
+  return obsoleteClientLinkHtml(replacementUrl);
+}
+
+async function currentProjectPublicUrl(projectId) {
+  if (!projectId) return '';
+  const { data, error } = await supabaseServer
+    .from('document_html_versions')
+    .select('data, replacement_public_url')
+    .eq('project_id', projectId)
+    .eq('is_current', true)
+    .eq('shared_with_client', true)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) return '';
+  return data?.[0]?.data?.publicUrl || data?.[0]?.replacement_public_url || '';
+}
+
+function obsoleteClientLinkHtml(replacementUrl = '') {
+  const safeUrl = escapeHtml(replacementUrl);
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Link atualizado | D'Coratto</title>
+    <style>
+      body{margin:0;min-height:100vh;display:grid;place-items:center;background:#080807;color:#f7f2ea;font-family:Arial,sans-serif;padding:24px}
+      main{max-width:560px;text-align:center;border:1px solid rgba(184,151,106,.28);background:#15120f;padding:34px}
+      h1{margin:0 0 12px;color:#d7c2a7;font-family:Georgia,serif;font-weight:400}
+      p{line-height:1.55;color:#d8c8b3}
+      a{display:inline-block;margin-top:14px;color:#080807;background:#d7c2a7;padding:12px 16px;text-decoration:none;font-weight:700}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>há um novo link desse projeto</h1>
+      <p>Este link foi substituído por uma versão mais recente do projeto.</p>
+      ${safeUrl ? `<a href="${safeUrl}">Abrir novo link</a>` : ''}
+    </main>
+  </body>
+</html>`;
 }
 
 async function downloadHtmlFromStorage(storagePath) {
@@ -493,6 +605,7 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
       draft: draft || null,
       preview: preview || null,
       actor: actor || null,
+      ownerEmail: primaryAccountEmail,
       lastAction: action || 'autosave',
       lastEventId: eventId || null,
       lastEventAt: createdAt || new Date().toISOString(),
@@ -517,15 +630,24 @@ async function loadSharedEditorSettings() {
 
 async function saveSharedEditorSettings(incomingSettings, actor = null) {
   const currentSettings = await loadSharedEditorSettings();
-  const payload = mergeEditorSettingsPayload(currentSettings, incomingSettings);
+  const actorEmail = normalizeEmail(actor?.email);
+  const canUpdateSharedCatalog = !actorEmail || actorEmail === primaryAccountEmail;
+  const payload = canUpdateSharedCatalog
+    ? mergeEditorSettingsPayload(currentSettings, incomingSettings)
+    : (currentSettings || mergeEditorSettingsPayload(currentSettings, {}));
   const { error } = await supabaseServer
     .from('editor_settings')
     .upsert({
       settings_key: 'default',
       payload,
-      updated_by: actor?.email || '',
+      updated_by: actorEmail || '',
     }, { onConflict: 'settings_key' });
   if (error) throw error;
+  if (canUpdateSharedCatalog) {
+    await persistSharedCatalogTables(payload, actorEmail).catch((tableError) => {
+      console.warn('Configuracoes salvas, mas nao foi possivel espelhar catalogos nas tabelas.', tableError);
+    });
+  }
   return payload;
 }
 
@@ -571,6 +693,90 @@ function mergeMaterialOptionsPayload(current = {}, incoming = {}) {
   ]));
 }
 
+async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
+  const catalogItems = Array.isArray(settings.catalogItems) ? settings.catalogItems : [];
+  const materialOptions = settings.materialOptions || {};
+
+  const materialRows = catalogItems
+    .filter(item => item?.name)
+    .map((item, index) => ({
+      group_key: catalogItemGroup(item.type),
+      name: item.name,
+      code: item.id || null,
+      brand: item.brand || item.manufacturer || null,
+      manufacturer: item.manufacturer || null,
+      line_name: item.line || item.line_name || null,
+      quality: item.quality || null,
+      hex: item.hex || null,
+      texture_url: item.textureUrl || item.imageUrl || null,
+      image_data: String(item.textureUrl || '').startsWith('data:image/') ? item.textureUrl : null,
+      image_url: String(item.textureUrl || item.imageUrl || '').startsWith('http') || String(item.textureUrl || item.imageUrl || '').startsWith('/')
+        ? (item.textureUrl || item.imageUrl)
+        : null,
+      sort_order: index,
+      active: true,
+      owner_email: primaryAccountEmail,
+      updated_by: actorEmail || primaryAccountEmail,
+      data: item,
+    }));
+
+  if (materialRows.length) {
+    const { error } = await supabaseServer
+      .from('catalog_materials')
+      .upsert(materialRows, { onConflict: 'group_key,name' });
+    if (error) throw error;
+  }
+
+  const imageByOption = new Map();
+  catalogItems.forEach((item) => {
+    const group = catalogItemOptionGroup(item.type);
+    if (!group || !item?.name) return;
+    const label = `${item.name}${item.line ? ' · ' + item.line : ''}`;
+    imageByOption.set(`${group}|${label}`.toLowerCase(), item.textureUrl || item.imageUrl || '');
+  });
+
+  const optionRows = Object.entries(materialOptions).flatMap(([group, options]) => {
+    if (!Array.isArray(options)) return [];
+    return options.filter(Boolean).map((label, index) => {
+      const image = imageByOption.get(`${group}|${label}`.toLowerCase()) || '';
+      return {
+        group_key: group,
+        label,
+        sort_order: index,
+        active: true,
+        image_data: String(image).startsWith('data:image/') ? image : null,
+        image_url: String(image).startsWith('http') || String(image).startsWith('/') ? image : null,
+        updated_by: actorEmail || primaryAccountEmail,
+        data: image ? { image } : {},
+      };
+    });
+  });
+
+  if (optionRows.length) {
+    const { error } = await supabaseServer
+      .from('catalog_options')
+      .upsert(optionRows, { onConflict: 'group_key,label' });
+    if (error) throw error;
+  }
+}
+
+function catalogItemGroup(type) {
+  return {
+    color: 'color',
+    handle: 'puxador',
+    door: 'porta',
+    slide: 'corredica',
+  }[type] || String(type || 'material');
+}
+
+function catalogItemOptionGroup(type) {
+  return {
+    handle: 'puxador',
+    door: 'porta',
+    slide: 'corredica',
+  }[type] || '';
+}
+
 function hasPersistableContent(draft, preview) {
   const hasPreviewContent = Array.isArray(preview?.environments) && preview.environments.length > 0;
   const hasAmbientes = Array.isArray(draft?.ambientes) && draft.ambientes.length > 0;
@@ -595,7 +801,7 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
         address: client.address || draft?.fields?.endereco || '',
         document_type: 'projeto_inicial',
         status: 'draft',
-        data: { draft: draft || null, preview, actor: actor || null, lastEventId: eventId || null, lastEventAt: createdAt || new Date().toISOString() },
+        data: { draft: draft || null, preview, actor: actor || null, ownerEmail: primaryAccountEmail, lastEventId: eventId || null, lastEventAt: createdAt || new Date().toISOString() },
       });
     if (projectError) throw projectError;
 
@@ -619,13 +825,35 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
         sharedWithClient: true,
         sharedAt: new Date().toISOString(),
         createdBy: actor?.email || '',
+        ownerEmail: primaryAccountEmail,
       },
     };
 
-    const { error: htmlError } = await supabaseServer
+    const { data: insertedVersion, error: htmlError } = await supabaseServer
       .from('document_html_versions')
-      .insert(htmlPayload);
+      .insert(htmlPayload)
+      .select('id')
+      .single();
     if (htmlError) throw htmlError;
+
+    if (insertedVersion?.id) {
+      await supabaseServer
+        .from('document_html_versions')
+        .update({
+          is_current: false,
+          superseded_at: new Date().toISOString(),
+          superseded_by_id: insertedVersion.id,
+          replacement_public_url: publicUrl,
+        })
+        .eq('project_id', projectId)
+        .neq('id', insertedVersion.id)
+        .eq('shared_with_client', true);
+
+      await supabaseServer
+        .from('document_projects')
+        .update({ current_html_id: insertedVersion.id })
+        .eq('id', projectId);
+    }
 
     return {};
   } catch (error) {
@@ -682,6 +910,31 @@ function sendJson(response, status, payload) {
     'Cache-Control': 'no-store',
   });
   response.end(JSON.stringify(payload));
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeAppUser(user = {}) {
+  const email = normalizeEmail(user.email);
+  return {
+    email,
+    name: user.name || user.display_name || email,
+    role: user.role || (email === primaryAccountEmail ? 'owner' : 'team'),
+    primaryAccountEmail,
+    isPrimary: email === primaryAccountEmail,
+  };
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[char]));
 }
 
 function requestOrigin(request) {

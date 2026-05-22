@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { Login } from './Login'
+import { Login, PRIMARY_ACCOUNT_EMAIL } from './Login'
 import { persistEditorEvent, flushOfflineQueue, loadLatestEditorState } from './auditPersistence'
 import { isSupabaseConfigured, supabase } from './supabaseClient'
 import './styles.css'
@@ -10,8 +10,15 @@ function App() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [remoteSettings, setRemoteSettings] = useState(null);
   const [remoteDocument, setRemoteDocument] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
   const iframeRef = useRef(null);
-  const actor = { email: 'dcorattoinovacao@gmail.com' };
+  const actor = useMemo(() => ({
+    email: currentUser?.email || PRIMARY_ACCOUNT_EMAIL,
+    name: currentUser?.name || "D'Coratto Inovacao",
+    role: currentUser?.role || 'owner',
+    primaryAccountEmail: PRIMARY_ACCOUNT_EMAIL,
+    isPrimary: (currentUser?.email || PRIMARY_ACCOUNT_EMAIL) === PRIMARY_ACCOUNT_EMAIL,
+  }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
   const SYSTEM_VERSION = "2026-05-19-remote-persistence-v1";
@@ -58,13 +65,37 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [isLogged]);
+  }, [isLogged, actor.email]);
 
   useEffect(() => {
     if (!isLogged) return undefined;
 
     function handleMessage(event) {
       if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'dcoratto:load-project') {
+        const projectId = event.data.projectId || '';
+        loadLatestEditorState(actor, projectId)
+          .then((remote) => {
+            hydrateBrowserStorage(remote);
+            setRemoteDocument(remote);
+            if (remote?.settings) setRemoteSettings(remote.settings);
+            iframeRef.current?.contentWindow?.postMessage({
+              type: 'dcoratto:hydrate-document',
+              draft: remote?.draft || null,
+              preview: remote?.preview || null,
+              settings: remote?.settings || remoteSettings,
+              projectId: remote?.projectId || projectId || null,
+            }, window.location.origin);
+          })
+          .catch((error) => {
+            iframeRef.current?.contentWindow?.postMessage({
+              type: 'dcoratto:load-project-result',
+              ok: false,
+              error: String(error?.message || error),
+            }, window.location.origin);
+          });
+        return;
+      }
       if (event.data?.type !== 'dcoratto:editor-state') return;
 
       const { action, draft, preview, settings } = event.data;
@@ -101,9 +132,13 @@ function App() {
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [isLogged]);
+  }, [isLogged, actor, remoteSettings]);
 
   function sendStateToEditor() {
+    iframeRef.current?.contentWindow?.postMessage({
+      type: 'dcoratto:session',
+      actor,
+    }, window.location.origin);
     if (remoteSettings) {
       iframeRef.current?.contentWindow?.postMessage({
         type: 'dcoratto:apply-settings',
@@ -124,7 +159,10 @@ function App() {
   }, [isLogged, isBootstrapping, remoteSettings, remoteDocument]);
 
   if (!isLogged) {
-    return <Login onLoginSuccess={() => setIsLogged(true)} />;
+    return <Login onLoginSuccess={(user) => {
+      setCurrentUser(user);
+      setIsLogged(true);
+    }} />;
   }
 
   if (isBootstrapping) {

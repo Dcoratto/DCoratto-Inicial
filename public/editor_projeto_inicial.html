@@ -330,6 +330,8 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
             <select id="catalogType">
               <option value="color">Cor / Material</option>
               <option value="handle">Puxador</option>
+              <option value="door">Porta</option>
+              <option value="slide">Corrediça</option>
             </select>
           </div>
           <div class="field-group">
@@ -438,6 +440,7 @@ const DEFAULT_MATERIAL_OPTIONS = {
 let editorSettings = loadEditorSettings();
 let builderDraft = loadBuilderDraft();
 let editingMaterialOption = null;
+let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
 
 function loadEditorSettings() {
   try {
@@ -528,7 +531,7 @@ async function persistSettingsDirectly(settings) {
     await fetch('/api/editor-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings }),
+      body: JSON.stringify({ settings, actor: editorActor }),
     });
   } catch (error) {
     console.warn('Nao foi possivel salvar configuracoes compartilhadas agora.', error);
@@ -578,6 +581,10 @@ function resetLogo() {
 }
 
 function openSettings() {
+  if (editorActor && editorActor.isPrimary === false) {
+    alert('Os cadastros de materiais são administrados pela conta principal dcorattoinovacao@gmail.com.');
+    return;
+  }
   applyEditorSettings();
   document.getElementById('settingsOverlay').classList.add('active');
 }
@@ -618,14 +625,21 @@ async function loadClientHistory() {
           <div class="history-date">${new Date(item.createdAt).toLocaleDateString('pt-BR')} às ${new Date(item.createdAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</div>
         </div>
         <div class="history-actions">
+          <button class="history-action" type="button" onclick="editProjectFromHistory('${item.projectId}')">Editar Projeto</button>
           <button class="history-action" type="button" onclick="copyLinkToClipboard('${item.publicUrl}')">Copiar Link</button>
-          <button class="history-action" type="button" onclick="window.open('${item.publicUrl}', '_blank')">Abrir Preview</button>
+          <button class="history-action" type="button" onclick="window.open('${item.publicUrl}', '_blank')">${item.isCurrent ? 'Abrir Preview' : 'Abrir Link Antigo'}</button>
         </div>
       </div>
     `).join('');
   } catch (error) {
     historyList.innerHTML = `<div class="history-empty">Erro ao carregar histórico: ${escapeHTML(error.message)}</div>`;
   }
+}
+
+function editProjectFromHistory(projectId) {
+  if (!projectId) return;
+  window.parent?.postMessage({ type: 'dcoratto:load-project', projectId }, window.location.origin);
+  closeClientHistory();
 }
 
 function copyLinkToClipboard(url) {
@@ -709,7 +723,7 @@ function renderManualCatalogList() {
     <div class="catalog-item">
       <div class="catalog-thumb" style="background-image:url('${item.textureUrl}')"></div>
       <div class="catalog-meta">
-        <span>${item.manufacturer} · ${item.type === 'handle' ? 'Puxador' : 'Cor'}</span>
+        <span>${item.manufacturer} · ${catalogTypeLabel(item.type)}</span>
         <strong>${item.name}${item.quality ? ' / '+item.quality : ''}</strong>
         <span>${item.line}</span>
         <button class="danger-btn" type="button" onclick="removeManualCatalogItem('${item.id}')">Remover</button>
@@ -718,9 +732,20 @@ function renderManualCatalogList() {
   `).join('') : '<div class="amb-summary">Nenhum item manual cadastrado ainda.</div>';
 }
 
+function catalogTypeLabel(type) {
+  return {
+    color: 'Cor',
+    handle: 'Puxador',
+    door: 'Porta',
+    slide: 'Corrediça',
+  }[type] || 'Material';
+}
+
 function materialOptions(group) {
   editorSettings.materialOptions = normalizeMaterialOptions(editorSettings.materialOptions);
-  if (group === 'puxador') return allPuxadores();
+  if (group === 'puxador') return allMaterialOptionsWithCatalog('puxador', 'handle');
+  if (group === 'porta') return allMaterialOptionsWithCatalog('porta', 'door');
+  if (group === 'corredica') return allMaterialOptionsWithCatalog('corredica', 'slide');
   return editorSettings.materialOptions[group] || [];
 }
 
@@ -840,9 +865,13 @@ function pruneUnavailableColors() {
   });
 }
 
-function allPuxadores() {
-  const manualHandles = manualCatalogItems('handle').map(item => `${item.name}${item.line ? ' · '+item.line : ''}`);
-  return [...new Set([...(editorSettings.materialOptions?.puxador || DEFAULT_MATERIAL_OPTIONS.puxador), ...manualHandles])];
+function catalogOptionValue(item) {
+  return `${item.name}${item.line ? ' · '+item.line : ''}`;
+}
+
+function allMaterialOptionsWithCatalog(group, type) {
+  const manualOptions = manualCatalogItems(type).map(catalogOptionValue);
+  return [...new Set([...(editorSettings.materialOptions?.[group] || DEFAULT_MATERIAL_OPTIONS[group] || []), ...manualOptions])];
 }
 const DEFAULT_OBS_OPTIONS = [
   "Apenas Marcenaria considerado no Projeto",
@@ -961,17 +990,17 @@ function buildObsHTML(ambId) {
   }).join('');
 }
 
-function buildHandlePickerHTML(ambId) {
+function buildMaterialImagePickerHTML(ambId, field, type) {
   const factories = selectedFactories();
-  const handles = manualCatalogItems('handle').filter(item => factories.includes(item.manufacturer));
-  if (!handles.length) return '';
+  const items = manualCatalogItems(type).filter(item => factories.includes(item.manufacturer));
+  if (!items.length) return '';
   return `
     <div class="handle-picker">
-      ${handles.map(item => {
-        const value = `${item.name}${item.line ? ' · '+item.line : ''}`;
-        const selected = state[ambId].puxador.includes(value);
+      ${items.map(item => {
+        const value = catalogOptionValue(item);
+        const selected = state[ambId][field].includes(value);
         return `
-          <button class="handle-card ${selected ? 'selected' : ''}" type="button" onclick="toggleHandle('${escapeJS(ambId)}','${escapeJS(value)}')">
+          <button class="handle-card ${selected ? 'selected' : ''}" type="button" onclick="toggleMaterialImageOption('${escapeJS(ambId)}','${escapeJS(field)}','${escapeJS(value)}')">
             <img src="${escapeAttribute(item.textureUrl)}" alt="${escapeAttribute(item.name)}">
             <span>${escapeHTML(item.name)}</span>
             <span>${escapeHTML(item.line)}</span>
@@ -980,6 +1009,10 @@ function buildHandlePickerHTML(ambId) {
       }).join('')}
     </div>
   `;
+}
+
+function buildHandlePickerHTML(ambId) {
+  return buildMaterialImagePickerHTML(ambId, 'puxador', 'handle');
 }
 
 function addEnvironment() {
@@ -1039,7 +1072,8 @@ function renderCard(amb) {
         </div>
         <div class="field-group">
           <label>Portas</label>
-          <div class="check-grid">${buildCheckboxHTML(amb.id,'porta')}</div>
+          <div class="check-grid" data-field="porta">${buildCheckboxHTML(amb.id,'porta')}</div>
+          ${buildMaterialImagePickerHTML(amb.id, 'porta', 'door')}
         </div>
         <div class="field-group">
           <label>Puxadores</label>
@@ -1048,7 +1082,8 @@ function renderCard(amb) {
         </div>
         <div class="field-group">
           <label>Corrediças</label>
-          <div class="check-grid">${buildCheckboxHTML(amb.id,'corredica')}</div>
+          <div class="check-grid" data-field="corredica">${buildCheckboxHTML(amb.id,'corredica')}</div>
+          ${buildMaterialImagePickerHTML(amb.id, 'corredica', 'slide')}
         </div>
         <div class="field-group">
           <label>Obs adicional</label>
@@ -1111,12 +1146,18 @@ function rerenderAllSwatches() {
 
 function refreshPuxadorSelects() {
   AMBIENTES.forEach(amb => {
-    const card = document.querySelector(`#card-${amb.id} [data-field="puxador"]`)?.parentElement;
-    const grid = card?.querySelector('[data-field="puxador"]');
-    if (grid) grid.innerHTML = buildCheckboxHTML(amb.id, 'puxador');
-    const oldPicker = card?.querySelector('.handle-picker');
-    if (oldPicker) oldPicker.remove();
-    card?.insertAdjacentHTML('beforeend', buildHandlePickerHTML(amb.id));
+    [
+      ['porta', 'door'],
+      ['puxador', 'handle'],
+      ['corredica', 'slide'],
+    ].forEach(([field, type]) => {
+      const card = document.querySelector(`#card-${amb.id} [data-field="${field}"]`)?.parentElement;
+      const grid = card?.querySelector(`[data-field="${field}"]`);
+      if (grid) grid.innerHTML = buildCheckboxHTML(amb.id, field);
+      const oldPicker = card?.querySelector('.handle-picker');
+      if (oldPicker) oldPicker.remove();
+      card?.insertAdjacentHTML('beforeend', buildMaterialImagePickerHTML(amb.id, field, type));
+    });
   });
 }
 
@@ -1169,17 +1210,23 @@ function updateCheckbox(ambId, field, value, checked) {
   syncPreviewDocument();
 }
 
-function toggleHandle(ambId, value) {
-  const list = state[ambId].puxador;
+function toggleMaterialImageOption(ambId, field, value) {
+  const envState = ensureEnvironmentState(ambId);
+  const list = envState[field] || [];
   const index = list.indexOf(value);
   if (index > -1) list.splice(index, 1);
   else list.push(value);
-  document.querySelectorAll(`#card-${ambId} [data-field="puxador"] input[type="checkbox"]`).forEach(input => {
+  envState[field] = list;
+  document.querySelectorAll(`#card-${ambId} [data-field="${field}"] input[type="checkbox"]`).forEach(input => {
     input.checked = list.includes(input.parentElement.textContent.trim());
   });
   refreshPuxadorSelects();
   updateSummary(ambId);
   syncPreviewDocument();
+}
+
+function toggleHandle(ambId, value) {
+  toggleMaterialImageOption(ambId, 'puxador', value);
 }
 
 function toggleColor(ambId, name, hex, el, textureUrl='', manufacturer='', line='', quality='') {
@@ -1715,6 +1762,14 @@ function renderEnvironmentPages(amb) {
 
 window.addEventListener('message', event => {
   if (event.origin !== window.location.origin) return;
+  if (event.data?.type === 'dcoratto:session') {
+    editorActor = event.data.actor || editorActor;
+    return;
+  }
+  if (event.data?.type === 'dcoratto:load-project-result') {
+    if (!event.data.ok) alert(`Não foi possível carregar o projeto: ${event.data.error || 'erro desconhecido'}`);
+    return;
+  }
   if (event.data?.type === 'dcoratto:editor-state' && event.data?.action === 'portfolio_sync') {
     mergePreviewDocument(event.data.preview);
     const draft = saveBuilderDraft();

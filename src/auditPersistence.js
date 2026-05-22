@@ -78,9 +78,10 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
   }
 }
 
-export async function loadLatestEditorState(actor) {
+export async function loadLatestEditorState(actor, projectId = '') {
   const params = new URLSearchParams();
   if (actor?.email) params.set('actor', actor.email);
+  if (projectId) params.set('projectId', projectId);
   const response = await fetch(`/api/editor-state/latest?${params.toString()}`, {
     cache: 'no-store',
   });
