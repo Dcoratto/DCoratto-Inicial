@@ -625,7 +625,8 @@ async function loadSharedEditorSettings() {
     .eq('settings_key', 'default')
     .maybeSingle();
   if (error) throw error;
-  return data?.payload || null;
+  const tableSettings = await loadSettingsFromSharedCatalogTables();
+  return mergeEditorSettingsPayload(data?.payload || {}, tableSettings);
 }
 
 async function saveSharedEditorSettings(incomingSettings, actor = null) {
@@ -691,6 +692,66 @@ function mergeMaterialOptionsPayload(current = {}, incoming = {}) {
     group,
     [...new Set([...(current?.[group] || []), ...(incoming?.[group] || [])])],
   ]));
+}
+
+async function loadSettingsFromSharedCatalogTables() {
+  const [materialsResult, optionsResult] = await Promise.all([
+    supabaseServer
+      .from('catalog_materials')
+      .select('group_key, name, manufacturer, line_name, quality, hex, texture_url, image_url, image_data, sort_order, data')
+      .eq('active', true)
+      .eq('owner_email', primaryAccountEmail)
+      .order('sort_order', { ascending: true }),
+    supabaseServer
+      .from('catalog_options')
+      .select('group_key, label, sort_order')
+      .eq('active', true)
+      .order('sort_order', { ascending: true }),
+  ]);
+
+  if (materialsResult.error) throw materialsResult.error;
+  if (optionsResult.error) throw optionsResult.error;
+
+  const catalogItems = (materialsResult.data || [])
+    .map(catalogMaterialToSettingsItem)
+    .filter(Boolean);
+  const materialOptions = (optionsResult.data || []).reduce((acc, option) => {
+    if (!option?.group_key || !option?.label) return acc;
+    acc[option.group_key] = [...(acc[option.group_key] || []), option.label];
+    return acc;
+  }, {});
+
+  return { catalogItems, materialOptions };
+}
+
+function catalogMaterialToSettingsItem(row) {
+  const data = row?.data && typeof row.data === 'object' ? row.data : {};
+  const type = data.type || settingsTypeFromCatalogGroup(row?.group_key);
+  if (!type || !row?.name) return null;
+  const textureUrl = data.textureUrl || data.imageUrl || row.image_data || row.image_url || row.texture_url || '';
+  return {
+    id: data.id || `${row.group_key}-${row.name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    type,
+    manufacturer: data.manufacturer || row.manufacturer || '',
+    line: data.line || data.line_name || row.line_name || '',
+    name: data.name || row.name,
+    quality: data.quality || row.quality || '',
+    hex: data.hex || row.hex || '#b8976a',
+    textureUrl,
+    source: data.source || 'shared',
+  };
+}
+
+function settingsTypeFromCatalogGroup(groupKey) {
+  return {
+    color: 'color',
+    boa_vista_cores: 'color',
+    madeira: 'color',
+    laca: 'color',
+    puxador: 'handle',
+    porta: 'door',
+    corredica: 'slide',
+  }[groupKey] || '';
 }
 
 async function persistSharedCatalogTables(settings = {}, actorEmail = '') {

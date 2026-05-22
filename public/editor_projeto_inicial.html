@@ -1799,7 +1799,7 @@ window.addEventListener('message', event => {
   safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
   applyEditorSettings();
   renderAmbientes();
-  if (JSON.stringify(editorSettings) !== previousSettings) persistSettingsDirectly(editorSettings);
+  if (JSON.stringify(editorSettings) !== previousSettings && editorActor?.isPrimary) persistSettingsDirectly(editorSettings);
   syncPreviewDocument('settings_loaded');
 });
 
@@ -1812,7 +1812,7 @@ function applyHydratedDocument(payload = {}) {
     const previousSettings = JSON.stringify(editorSettings);
     editorSettings = mergeEditorSettings(editorSettings, incomingSettings);
     safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
-    if (JSON.stringify(editorSettings) !== previousSettings) persistSettingsDirectly(editorSettings);
+    if (JSON.stringify(editorSettings) !== previousSettings && editorActor?.isPrimary) persistSettingsDirectly(editorSettings);
   }
 
   if (incomingDraft) {
@@ -1974,7 +1974,6 @@ async function copyClientLink(url) {
 ['clientName', 'contractNum', 'endereco'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', syncPreviewDocument);
 });
-persistSettingsDirectly(editorSettings);
 syncPreviewDocument();
 
 // ─── PREVIEW / PUBLICAÇÃO ────────────────────────────────────────────────────
