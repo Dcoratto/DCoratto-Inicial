@@ -555,13 +555,11 @@
 
       .doc-photo-frame.shape-circle {
         aspect-ratio: 1 / 1;
-        height: auto !important;
         min-height: 0;
       }
 
       .doc-photo-frame.shape-square {
         aspect-ratio: 1 / 1;
-        height: auto !important;
         min-height: 0;
       }
 
@@ -740,8 +738,12 @@
 
       .page-detail-frame.shape-circle {
         aspect-ratio: 1 / 1;
-        height: auto;
         border-radius: 50%;
+      }
+
+      .page-detail-frame.shape-square {
+        aspect-ratio: 1 / 1;
+        border-radius: 2px;
       }
 
       .page-detail-frame.shape-rounded {
@@ -934,6 +936,7 @@
       }
 
       .page-annotation-toolbar.detail-toolbar {
+        display: none !important;
         transform: translate(-50%, calc(-100% - 14px));
       }
 
@@ -2516,6 +2519,13 @@
 
         document.querySelectorAll('[data-draggable-frame]').forEach((node) => {
           node.addEventListener('pointerdown', startPreviewFrameDrag);
+          node.addEventListener('contextmenu', (event) => {
+            if (!isEditablePreview) return;
+            event.preventDefault();
+            event.stopPropagation();
+            selectSingleFrame(frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex));
+            openFrameContextMenu(event.clientX, event.clientY);
+          });
           node.addEventListener('dblclick', (event) => {
             if (!isEditablePreview || event.target.closest('.preview-frame-tools, .frame-selection-toolbar, [data-resize-frame]')) return;
             event.preventDefault();
@@ -2684,7 +2694,7 @@
       }
 
       function pageDetailShape(annotation) {
-        return ['circle', 'rounded', 'rectangle'].includes(annotation?.detailShape)
+        return ['circle', 'square', 'rounded', 'rectangle'].includes(annotation?.detailShape)
           ? annotation.detailShape
           : 'circle';
       }
@@ -2698,7 +2708,7 @@
         if (!node || !annotation) return;
         const size = pageDetailSize(annotation);
         const shape = pageDetailShape(annotation);
-        const height = shape === 'circle'
+        const height = ['circle', 'square'].includes(shape)
           ? size
           : Math.max(6, Math.min(28, Number(annotation.detailHeight ?? size * .68)));
         node.style.left = `${Number(annotation.fromX ?? 0)}%`;
@@ -3187,7 +3197,7 @@
         pasteCopiedElements();
       }
 
-      function openFrameContextMenu(anchor) {
+      function openFrameContextMenu(anchor, clientY = null) {
         let menu = document.getElementById('frameContextMenu');
         if (!menu) {
           menu = document.createElement('div');
@@ -3196,7 +3206,7 @@
           document.body.appendChild(menu);
         }
         
-        const isPageAnnotation = selectedPageAnnotationKeys.size > 0;
+        const isFrameSelection = selectedFrameKeys.size > 0;
         
         let menuHTML = `
           <button type="button" data-menu-action="copy"><span>⧉</span><span>Copiar</span><kbd>Ctrl+C</kbd></button>
@@ -3204,13 +3214,23 @@
           <button type="button" data-menu-action="duplicate"><span>⊞</span><span>Duplicar</span><kbd>Ctrl+D</kbd></button>
         `;
         
-        if (isPageAnnotation) {
+        if (isFrameSelection) {
           menuHTML += `
             <button type="button" data-menu-action="bring-forward"><span>↑</span><span>Trazer para frente</span></button>
             <button type="button" data-menu-action="send-backward"><span>↓</span><span>Enviar para trás</span></button>
           `;
         }
-        
+        if (isFrameSelection) {
+          menuHTML = menuHTML.replace(/<button type="button" data-menu-action="bring-forward"[\s\S]*?<button type="button" data-menu-action="send-backward"[\s\S]*?<\/button>\s*/, '');
+          menuHTML += `
+            <button type="button" data-menu-action="replace-frame-photo"><span>F</span><span>Trocar foto</span></button>
+            <button type="button" data-menu-action="toggle-frame-image-edit"><span>M</span><span>Editar enquadramento</span></button>
+            ${frameShapeMenuOptions().map(option => `
+              <button type="button" data-menu-action="frame-shape:${option.value}"><span>${option.short}</span><span>${option.label}</span></button>
+            `).join('')}
+            <button type="button" data-menu-action="add-frame-arrow"><span>S</span><span>Adicionar seta</span></button>
+          `;
+        }
         menuHTML += `
           <button type="button" data-menu-action="delete"><span>⌫</span><span>Excluir</span><kbd>Del</kbd></button>
         `;
@@ -3224,18 +3244,146 @@
             if (action === 'duplicate') duplicateSelectedElements();
             if (action === 'bring-forward') bringPageAnnotationForward();
             if (action === 'send-backward') sendPageAnnotationBackward();
+            if (action === 'replace-frame-photo') requestSelectedFramePhoto();
+            if (action === 'toggle-frame-image-edit') toggleSelectedFrameImageEdit();
+            if (action?.startsWith('frame-shape:')) setSelectedFrameShape(action.split(':')[1]);
+            if (action === 'add-frame-arrow') startFrameArrowFromSelection();
             if (action === 'delete') deleteSelectedElements();
             closeFrameContextMenu();
           });
         });
-        const rect = anchor.getBoundingClientRect();
-        menu.style.left = `${Math.min(window.innerWidth - 280, rect.right + 10)}px`;
-        menu.style.top = `${Math.min(window.innerHeight - 230, rect.top - 4)}px`;
+        positionContextMenu(menu, anchor, clientY);
         menu.classList.add('active');
       }
 
       function closeFrameContextMenu() {
         document.getElementById('frameContextMenu')?.classList.remove('active');
+      }
+
+      function positionContextMenu(menu, anchorOrX, clientY = null) {
+        const estimatedWidth = 280;
+        const estimatedHeight = 430;
+        let left = 24;
+        let top = 24;
+        if (typeof anchorOrX === 'number') {
+          left = anchorOrX;
+          top = Number(clientY ?? 24);
+        } else if (anchorOrX?.getBoundingClientRect) {
+          const rect = anchorOrX.getBoundingClientRect();
+          left = rect.right + 10;
+          top = rect.top - 4;
+        }
+        menu.style.left = `${Math.max(8, Math.min(window.innerWidth - estimatedWidth, left))}px`;
+        menu.style.top = `${Math.max(8, Math.min(window.innerHeight - estimatedHeight, top))}px`;
+      }
+
+      function frameShapeMenuOptions() {
+        return [
+          { value: 'circle', label: 'Formato circular', short: 'C' },
+          { value: 'square', label: 'Formato quadrado', short: 'Q' },
+          { value: 'rectangle', label: 'Formato retangular', short: 'R' },
+          { value: 'rounded', label: 'Cantos arredondados', short: 'A' },
+        ];
+      }
+
+      function setSelectedFrameShape(shape) {
+        if (!['circle', 'square', 'rectangle', 'rounded'].includes(shape)) return;
+        selectedFrameRefs().forEach(({ frame }) => {
+          frame.shape = shape;
+          if (shape === 'circle' || shape === 'square') {
+            frame.height = frame.width;
+          } else if (!Number.isFinite(Number(frame.height)) || Number(frame.height) === Number(frame.width)) {
+            frame.height = Math.max(8, Math.min(100 - Number(frame.y || 0), Number(frame.width || 20) * .68));
+          }
+        });
+        persistAndRender();
+      }
+
+      function requestSelectedFramePhoto() {
+        const ref = selectedFrameRefs()[0];
+        if (!ref) return;
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.style.display = 'none';
+        input.addEventListener('change', async () => {
+          const file = input.files?.[0];
+          input.remove();
+          if (!file) return;
+          const photo = await readPhoto(file, 0);
+          ref.frame.photo = photo.src;
+          resetFramePhotoPlacement(ref.frame);
+          persistAndRender();
+        }, { once: true });
+        document.body.appendChild(input);
+        input.click();
+      }
+
+      function toggleSelectedFrameImageEdit() {
+        const ref = selectedFrameRefs()[0];
+        if (!ref?.frame?.photo) return;
+        ref.frame.editImage = !ref.frame.editImage;
+        persistAndRender();
+      }
+
+      function startFrameArrowFromSelection() {
+        const ref = selectedFrameRefs()[0];
+        if (!ref) return;
+        arrowDrawMode = {
+          environmentIndex: ref.environmentIndex,
+          pageIndex: ref.pageIndex,
+          type: 'text',
+        };
+        applyArrowDrawMode();
+      }
+
+      function detailShapeMenuOptions() {
+        return [
+          { value: 'circle', label: 'Formato circular', short: 'C' },
+          { value: 'square', label: 'Formato quadrado', short: 'Q' },
+          { value: 'rectangle', label: 'Formato retangular', short: 'R' },
+          { value: 'rounded', label: 'Cantos arredondados', short: 'A' },
+        ];
+      }
+
+      function setSelectedDetailShape(shape) {
+        if (!['circle', 'square', 'rectangle', 'rounded'].includes(shape)) return;
+        selectedPageAnnotationRefs()
+          .filter(ref => isDetailAnnotation(ref.annotation))
+          .forEach(({ annotation }) => {
+            const size = pageDetailSize(annotation);
+            annotation.detailShape = shape;
+            annotation.detailHeight = shape === 'circle' || shape === 'square'
+              ? size
+              : Math.max(6, Math.min(44, Number(annotation.detailHeight || size * .68)));
+          });
+        persistAndRender();
+      }
+
+      function requestSelectedDetailPhoto() {
+        const ref = selectedPageAnnotationRefs().find(item => isDetailAnnotation(item.annotation));
+        if (!ref) return;
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.style.display = 'none';
+        input.addEventListener('change', async () => {
+          const file = input.files?.[0];
+          input.remove();
+          if (!file) return;
+          const photo = await readPhoto(file, 0);
+          setDetailFrameImage(ref.annotation, photo.src);
+          persistAndRender();
+        }, { once: true });
+        document.body.appendChild(input);
+        input.click();
+      }
+
+      function toggleSelectedDetailImageEdit() {
+        const ref = selectedPageAnnotationRefs().find(item => isDetailAnnotation(item.annotation));
+        if (!ref?.annotation?.image) return;
+        ref.annotation.editImage = !ref.annotation.editImage;
+        persistAndRender();
       }
 
       function openFrameFormatMenu(button) {
@@ -3338,6 +3486,7 @@
         }
         
         const isPageAnnotation = selectedPageAnnotationKeys.size > 0;
+        const hasDetailSelection = selectedPageAnnotationRefs().some(ref => isDetailAnnotation(ref.annotation));
         
         let menuHTML = `
           <button type="button" data-menu-action="copy"><span>⧉</span><span>Copiar</span><kbd>Ctrl+C</kbd></button>
@@ -3349,6 +3498,15 @@
           menuHTML += `
             <button type="button" data-menu-action="bring-forward"><span>↑</span><span>Trazer para frente</span></button>
             <button type="button" data-menu-action="send-backward"><span>↓</span><span>Enviar para trás</span></button>
+          `;
+        }
+        if (hasDetailSelection) {
+          menuHTML += `
+            <button type="button" data-menu-action="replace-detail-photo"><span>F</span><span>Trocar foto</span></button>
+            <button type="button" data-menu-action="toggle-detail-image-edit"><span>M</span><span>Editar enquadramento</span></button>
+            ${detailShapeMenuOptions().map(option => `
+              <button type="button" data-menu-action="detail-shape:${option.value}"><span>${option.short}</span><span>${option.label}</span></button>
+            `).join('')}
           `;
         }
         
@@ -3365,13 +3523,15 @@
             if (action === 'duplicate') duplicateSelectedElements();
             if (action === 'bring-forward') bringPageAnnotationForward();
             if (action === 'send-backward') sendPageAnnotationBackward();
+            if (action === 'replace-detail-photo') requestSelectedDetailPhoto();
+            if (action === 'toggle-detail-image-edit') toggleSelectedDetailImageEdit();
+            if (action?.startsWith('detail-shape:')) setSelectedDetailShape(action.split(':')[1]);
             if (action === 'delete') deleteSelectedElements();
             closeFrameContextMenu();
           });
         });
         
-        menu.style.left = `${Math.min(window.innerWidth - 280, clientX)}px`;
-        menu.style.top = `${Math.min(window.innerHeight - 230, clientY)}px`;
+        positionContextMenu(menu, clientX, clientY);
         menu.classList.add('active');
       }
 
@@ -3607,7 +3767,7 @@
           x: Number(frame.x || 0),
           y: Number(frame.y || 0),
           width: Number(frame.width || 20),
-          height: Number(frame.height || 20),
+          height: ['circle', 'square'].includes(frame.shape) ? Number(frame.width || 20) : Number(frame.height || 20),
         };
 
         const move = (pointerEvent) => {
@@ -3624,6 +3784,15 @@
             const nextY = Math.max(0, Math.min(initial.y + initial.height - 8, initial.y + dh));
             frame.y = nextY;
             frame.height = Math.max(8, Math.min(100 - nextY, initial.height + (initial.y - nextY)));
+          }
+          if (['circle', 'square'].includes(frame.shape)) {
+            const size = handle === 'n' || handle === 's'
+              ? Number(frame.height || initial.height)
+              : handle === 'e' || handle === 'w'
+                ? Number(frame.width || initial.width)
+                : Math.max(Number(frame.width || initial.width), Number(frame.height || initial.height));
+            frame.width = Math.max(8, Math.min(100 - Number(frame.x || 0), size));
+            frame.height = Math.max(8, Math.min(100 - Number(frame.y || 0), size));
           }
           node.style.left = `${frame.x}%`;
           node.style.top = `${frame.y}%`;
@@ -3647,6 +3816,22 @@
         const edge = 16;
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
+        if (node.classList.contains('shape-circle')) {
+          const dx = x - rect.width / 2;
+          const dy = y - rect.height / 2;
+          const radius = Math.min(rect.width, rect.height) / 2;
+          const distance = Math.hypot(dx, dy);
+          if (Math.abs(distance - radius) <= edge) {
+            const absX = Math.abs(dx);
+            const absY = Math.abs(dy);
+            if (absX > absY * 1.7) return dx >= 0 ? 'e' : 'w';
+            if (absY > absX * 1.7) return dy >= 0 ? 's' : 'n';
+            if (dx >= 0 && dy >= 0) return 'se';
+            if (dx >= 0 && dy < 0) return 'ne';
+            if (dx < 0 && dy >= 0) return 'sw';
+            return 'nw';
+          }
+        }
         const nearLeft = x <= edge;
         const nearRight = x >= rect.width - edge;
         const nearTop = y <= edge;
@@ -3680,7 +3865,9 @@
           x: Number(annotation.fromX || 0),
           y: Number(annotation.fromY || 0),
           width: pageDetailSize(annotation),
-          height: Number(annotation.detailHeight ?? pageDetailSize(annotation) * .68),
+          height: ['circle', 'square'].includes(pageDetailShape(annotation))
+            ? pageDetailSize(annotation)
+            : Number(annotation.detailHeight ?? pageDetailSize(annotation) * .68),
         };
         const initialBox = {
           left: initial.x - initial.width / 2,
@@ -3688,7 +3875,7 @@
           top: initial.y - initial.height / 2,
           bottom: initial.y + initial.height / 2,
         };
-        const keepSquare = pageDetailShape(annotation) === 'circle';
+        const keepSquare = ['circle', 'square'].includes(pageDetailShape(annotation));
 
         const move = (pointerEvent) => {
           const dw = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
@@ -4054,7 +4241,7 @@
         annotation.type = 'detail-image';
         annotation.detailShape ||= 'circle';
         annotation.detailSize = Math.max(7, Math.min(60, Number(annotation.detailSize || 16)));
-        annotation.detailHeight = pageDetailShape(annotation) === 'circle'
+        annotation.detailHeight = ['circle', 'square'].includes(pageDetailShape(annotation))
           ? annotation.detailSize
           : Math.max(6, Math.min(44, Number(annotation.detailHeight || annotation.detailSize * .68)));
         resetDetailPhotoPlacement(annotation);
@@ -4471,7 +4658,7 @@
             const detail = isDetailAnnotation(annotation);
             const detailShape = pageDetailShape(annotation);
             const detailSize = pageDetailSize(annotation);
-            const detailHeight = detailShape === 'circle'
+            const detailHeight = ['circle', 'square'].includes(detailShape)
               ? detailSize
               : Math.max(6, Math.min(28, Number(annotation.detailHeight ?? detailSize * .68)));
             const detailImageStyle = `transform:translate(${Number(annotation.imgX || 0)}%, ${Number(annotation.imgY || 0)}%) scale(${Number(annotation.imgScale || 1)})`;
@@ -4479,36 +4666,21 @@
               ? ['nw','n','ne','e','se','s','sw','w'].map(handle => `<span class="frame-resize-handle" data-resize-detail="${handle}"></span>`).join('')
               : '';
             return `
-            <span
+            ${!detail ? `<span
               data-page-annotation-toolbar
               data-environment-index="${environmentIndex}"
               data-page-index="${pageIndex}"
               data-annotation-index="${annotationIndex}"
-              class="page-annotation-toolbar ${detail ? 'detail-toolbar' : ''}"
+              class="page-annotation-toolbar"
               style="left:${Number(annotation.fromX ?? 30)}%;top:${Number(annotation.fromY ?? 30)}%;z-index:${zIndex + 15}"
             >
-              ${detail ? `
-                <label>
-                  Foto
-                  <input type="file" accept="image/*" data-detail-image-input data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
-                </label>
-                <select class="shape-select" data-detail-shape data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
-                  <option value="circle" ${detailShape === 'circle' ? 'selected' : ''}>Circulo</option>
-                  <option value="rounded" ${detailShape === 'rounded' ? 'selected' : ''}>Arred.</option>
-                  <option value="rectangle" ${detailShape === 'rectangle' ? 'selected' : ''}>Retang.</option>
-                </select>
-                <input type="number" min="7" max="34" step="1" title="Tamanho" value="${detailSize}" data-detail-size data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
-                <input type="color" title="Borda" value="${escapeAttribute(annotation.detailBorderColor || pageAnnotationArrowColor(annotation))}" data-detail-border-color data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
-                <input type="number" min="0.4" max="2.5" step="0.1" title="Seta" value="${Number(annotation.arrowWidth ?? 0.9)}" data-page-annotation-style="arrowWidth" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
-              ` : `
                 <input type="color" title="Cor do texto" value="${escapeAttribute(pageAnnotationTextColor(annotation))}" data-page-annotation-style="textColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
                 <input type="color" title="Cor da seta" value="${escapeAttribute(pageAnnotationArrowColor(annotation))}" data-page-annotation-style="arrowColor" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
                 <input type="number" min="9" max="32" step="1" title="Fonte" value="${Number(annotation.fontSize ?? 15)}" data-page-annotation-style="fontSize" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
                 <input type="number" min="0.4" max="2.5" step="0.1" title="Seta" value="${Number(annotation.arrowWidth ?? 0.9)}" data-page-annotation-style="arrowWidth" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">
                 <button type="button" class="${annotation.textShadow !== 'none' ? 'active' : ''}" data-page-annotation-toggle="textShadow" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">Sombra</button>
                 <button type="button" class="${annotation.textBorder ? 'active' : ''}" data-page-annotation-toggle="textBorder" data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-annotation-index="${annotationIndex}">Borda</button>
-              `}
-            </span>
+            </span>` : ''}
             ${isEditablePreview ? `<span
               data-page-annotation-tail="${environmentIndex}-${pageIndex}-${annotationIndex}"
               data-drag-page-annotation="text"
@@ -4577,7 +4749,8 @@
         applyFrameLayout(frame, frameIndex);
         const hasPhoto = Boolean(frame.photo);
         const shape = ['circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded';
-        const frameStyle = `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${Number(frame.height)}%`;
+        const frameHeight = ['circle', 'square'].includes(shape) ? Number(frame.width) : Number(frame.height);
+        const frameStyle = `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${frameHeight}%`;
         const imageStyle = `transform:translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
         const handles = ['nw','n','ne','e','se','s','sw','w'].map(handle => `<span class="frame-resize-handle" data-resize-frame="${handle}"></span>`).join('');
         return `
@@ -4586,7 +4759,6 @@
             style="${frameStyle}"
             ${isEditablePreview ? `data-draggable-frame data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}"` : ''}
           >
-            ${isEditablePreview ? renderFramePreviewTools(frame, environmentIndex, pageIndex, frameIndex) : ''}
             <div class="frame-clip">
               ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" draggable="false" data-photo-src="${escapeAttribute(frame.photo)}" data-editable-frame-image style="${imageStyle}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
               ${isEditablePreview ? '<span class="drop-hint">Solte a foto aqui</span>' : ''}
