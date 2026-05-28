@@ -61,7 +61,7 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
     } catch (error) {
       console.warn('Persistencia do link pelo servidor indisponivel. Evento mantido na fila local para reenvio.', error);
       enqueue(payload);
-      return { source: 'local-queue', projectId: getActiveProjectId(actor), error: String(error?.message || error) };
+      return { source: 'server-error', projectId: getActiveProjectId(actor), error: String(error?.message || error), queued: true };
     }
   }
 

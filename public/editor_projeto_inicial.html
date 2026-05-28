@@ -2067,7 +2067,7 @@ window.addEventListener('message', event => {
       showClientLink(event.data.publicUrl);
     } else if (status) {
       status.textContent = event.data.source === 'local-queue'
-        ? 'Sem confirmação do banco agora. O evento ficou na fila local; gere novamente quando a sessão do Supabase estiver ativa.'
+        ? `O servidor nao confirmou o link agora. O evento ficou na fila local e sera reenviado automaticamente. Detalhe: ${event.data.error || 'erro desconhecido'}`
         : `Nao foi possivel gerar o link persistente: ${event.data.error || 'erro desconhecido'}`;
     }
     return;

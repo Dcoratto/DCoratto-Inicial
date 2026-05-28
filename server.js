@@ -14,7 +14,11 @@ const publicRoot = resolve('public');
 const indexFile = join(root, 'index.html');
 const htmlBucket = process.env.SUPABASE_HTML_BUCKET || process.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  || process.env.SUPABASE_SERVICE_KEY
+  || process.env.SERVICE_ROLE_KEY
+  || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY
+  || '';
 const primaryAccountEmail = 'dcorattoinovacao@gmail.com';
 const localLoginUsers = [
   { email: primaryAccountEmail, password: 'sob_medida', name: "D'Coratto Inovacao", role: 'owner' },
@@ -199,32 +203,19 @@ async function handleClientLinkRequest(request, response) {
       return;
     }
 
-    await ensureHtmlBucket();
     const versionNumber = await nextHtmlVersionNumber(projectId);
     const shareSlug = `${slugify(preview.client?.name || 'cliente')}-${String(versionNumber).padStart(3, '0')}-${crypto.randomUUID().slice(0, 8)}`;
     const storagePath = `${projectId}/cliente/${shareSlug}.html`;
     const html = await buildStandaloneHtml(preview);
     const clientUrl = `${requestOrigin(request)}/cliente/${encodeURIComponent(projectId)}/${encodeURIComponent(shareSlug)}`;
 
-    const { error: uploadError } = await supabaseServer.storage
-      .from(htmlBucket)
-      .upload(storagePath, new Blob([html], { type: 'text/html;charset=utf-8' }), {
-        cacheControl: '60',
-        contentType: 'text/html;charset=utf-8',
-        upsert: true,
-      });
-
-    if (uploadError) throw uploadError;
-
-    const { data: publicData } = supabaseServer.storage.from(htmlBucket).getPublicUrl(storagePath);
-    const storagePublicUrl = publicData?.publicUrl || '';
     const dbResult = await persistHtmlVersion({
       projectId,
       versionNumber,
       shareSlug,
       storagePath,
       publicUrl: clientUrl,
-      storagePublicUrl,
+      storagePublicUrl: '',
       html,
       preview,
       actor: body.actor,
@@ -232,16 +223,21 @@ async function handleClientLinkRequest(request, response) {
       eventId: body.eventId,
       createdAt: body.createdAt,
     });
+    const finalPublicUrl = dbResult.publicUrl || clientUrl;
+    const finalStoragePath = dbResult.storagePath || storagePath;
+    const storageResult = dbResult.deduped
+      ? { publicUrl: dbResult.storagePublicUrl || '', warning: '' }
+      : await uploadHtmlSnapshotToStorage(finalStoragePath, html);
 
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
       projectId,
-      publicUrl: clientUrl,
-      storagePublicUrl,
-      storagePath,
-      shareSlug,
-      dbWarning: dbResult.warning || '',
+      publicUrl: finalPublicUrl,
+      storagePublicUrl: storageResult.publicUrl || '',
+      storagePath: finalStoragePath,
+      shareSlug: dbResult.shareSlug || shareSlug,
+      storageWarning: storageResult.warning || '',
     });
   } catch (error) {
     sendJson(response, 500, {
@@ -622,6 +618,27 @@ async function ensureHtmlBucket() {
   if (error) throw error;
 }
 
+async function uploadHtmlSnapshotToStorage(storagePath, html) {
+  try {
+    await ensureHtmlBucket();
+    const { error: uploadError } = await supabaseServer.storage
+      .from(htmlBucket)
+      .upload(storagePath, new Blob([html], { type: 'text/html;charset=utf-8' }), {
+        cacheControl: '60',
+        contentType: 'text/html;charset=utf-8',
+        upsert: true,
+      });
+    if (uploadError) throw uploadError;
+
+    const { data: publicData } = supabaseServer.storage.from(htmlBucket).getPublicUrl(storagePath);
+    const publicUrl = publicData?.publicUrl || '';
+    return { publicUrl };
+  } catch (error) {
+    console.warn('Link persistido no banco, mas o espelho no Storage falhou.', error);
+    return { publicUrl: '', warning: String(error?.message || error) };
+  }
+}
+
 async function persistEditorState({ projectId, actor, action, draft, preview, settings, eventId, createdAt }) {
   if (settings) {
     await saveSharedEditorSettings(settings, actor);
@@ -993,83 +1010,102 @@ function hasPersistableContent(draft, preview) {
 }
 
 async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt }) {
-  try {
-    const client = preview.client || {};
-    const actorEmail = normalizeEmail(actor?.email);
-    const { error: projectError } = await supabaseServer
-      .from('document_projects')
-      .upsert({
-        id: projectId,
-        title: preview.projectType || 'Projeto Inicial',
-        client_name: client.name || draft?.fields?.clientName || '',
-        contract_number: client.contractNumber || draft?.fields?.contractNum || '',
-        factory: Array.isArray(client.manufacturers) ? client.manufacturers.join(' + ') : '',
-        address: client.address || draft?.fields?.endereco || '',
-        document_type: 'projeto_inicial',
-        status: 'draft',
-        owner_email: primaryAccountEmail,
-        created_by: actorEmail,
-        updated_by: actorEmail,
-        data: { draft: draft || null, preview, actor: actor || null, ownerEmail: primaryAccountEmail, lastEventId: eventId || null, lastEventAt: createdAt || new Date().toISOString() },
-      });
-    if (projectError) throw projectError;
+  const client = preview.client || {};
+  const actorEmail = normalizeEmail(actor?.email);
 
-    const htmlPayload = {
-      project_id: projectId,
-      version_number: versionNumber,
-      title: `Projeto Inicial - ${client.name || 'Cliente'}`,
-      html_content: html,
-      storage_bucket: htmlBucket,
-      storage_path: storagePath,
-      is_current: true,
-      shared_with_client: true,
-      shared_at: new Date().toISOString(),
-      created_by: actorEmail,
-      owner_email: primaryAccountEmail,
-      share_slug: shareSlug,
-      data: {
-        publicUrl,
-        storagePublicUrl,
-        client,
-        shareSlug,
-        sharedWithClient: true,
-        sharedAt: new Date().toISOString(),
-        createdBy: actorEmail,
-        ownerEmail: primaryAccountEmail,
-      },
-    };
-
-    const { data: insertedVersion, error: htmlError } = await supabaseServer
+  if (eventId) {
+    const { data: existingVersion, error: existingError } = await supabaseServer
       .from('document_html_versions')
-      .insert(htmlPayload)
-      .select('id')
-      .single();
-    if (htmlError) throw htmlError;
-
-    if (insertedVersion?.id) {
-      await supabaseServer
-        .from('document_html_versions')
-        .update({
-          is_current: false,
-          superseded_at: new Date().toISOString(),
-          superseded_by_id: insertedVersion.id,
-          replacement_public_url: publicUrl,
-        })
-        .eq('project_id', projectId)
-        .neq('id', insertedVersion.id)
-        .eq('shared_with_client', true);
-
-      await supabaseServer
-        .from('document_projects')
-        .update({ current_html_id: insertedVersion.id })
-        .eq('id', projectId);
+      .select('id, project_id, storage_path, data')
+      .filter('data->>eventId', 'eq', eventId)
+      .eq('shared_with_client', true)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existingVersion?.id) {
+      return {
+        versionId: existingVersion.id,
+        publicUrl: existingVersion.data?.publicUrl || publicUrl,
+        storagePath: existingVersion.storage_path || storagePath,
+        storagePublicUrl: existingVersion.data?.storagePublicUrl || '',
+        shareSlug: existingVersion.data?.shareSlug || '',
+        deduped: true,
+      };
     }
-
-    return {};
-  } catch (error) {
-    console.warn('Link salvo no Storage, mas nao foi possivel registrar a versao no banco.', error);
-    return { warning: String(error?.message || error) };
   }
+
+  const { error: projectError } = await supabaseServer
+    .from('document_projects')
+    .upsert({
+      id: projectId,
+      title: preview.projectType || 'Projeto Inicial',
+      client_name: client.name || draft?.fields?.clientName || '',
+      contract_number: client.contractNumber || draft?.fields?.contractNum || '',
+      factory: Array.isArray(client.manufacturers) ? client.manufacturers.join(' + ') : '',
+      address: client.address || draft?.fields?.endereco || '',
+      document_type: 'projeto_inicial',
+      status: 'draft',
+      owner_email: primaryAccountEmail,
+      created_by: actorEmail,
+      updated_by: actorEmail,
+      data: { draft: draft || null, preview, actor: actor || null, ownerEmail: primaryAccountEmail, lastEventId: eventId || null, lastEventAt: createdAt || new Date().toISOString() },
+    });
+  if (projectError) throw projectError;
+
+  const htmlPayload = {
+    project_id: projectId,
+    version_number: versionNumber,
+    title: `Projeto Inicial - ${client.name || 'Cliente'}`,
+    html_content: html,
+    storage_bucket: htmlBucket,
+    storage_path: storagePath,
+    is_current: true,
+    shared_with_client: true,
+    shared_at: new Date().toISOString(),
+    created_by: actorEmail,
+    owner_email: primaryAccountEmail,
+    share_slug: shareSlug,
+    data: {
+      publicUrl,
+      storagePublicUrl,
+      client,
+      shareSlug,
+      eventId: eventId || null,
+      sharedWithClient: true,
+      sharedAt: new Date().toISOString(),
+      createdBy: actorEmail,
+      ownerEmail: primaryAccountEmail,
+    },
+  };
+
+  const { data: insertedVersion, error: htmlError } = await supabaseServer
+    .from('document_html_versions')
+    .insert(htmlPayload)
+    .select('id')
+    .single();
+  if (htmlError) throw htmlError;
+
+  if (insertedVersion?.id) {
+    const { error: supersedeError } = await supabaseServer
+      .from('document_html_versions')
+      .update({
+        is_current: false,
+        superseded_at: new Date().toISOString(),
+        superseded_by_id: insertedVersion.id,
+        replacement_public_url: publicUrl,
+      })
+      .eq('project_id', projectId)
+      .neq('id', insertedVersion.id)
+      .eq('shared_with_client', true);
+    if (supersedeError) throw supersedeError;
+
+    const { error: currentError } = await supabaseServer
+      .from('document_projects')
+      .update({ current_html_id: insertedVersion.id })
+      .eq('id', projectId);
+    if (currentError) throw currentError;
+  }
+
+  return { versionId: insertedVersion?.id || '' };
 }
 
 async function nextHtmlVersionNumber(projectId) {
