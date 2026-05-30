@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Login, PRIMARY_ACCOUNT_EMAIL } from './Login'
-import { getActiveProjectId, persistEditorEvent, flushOfflineQueue, loadLatestEditorState } from './auditPersistence'
+import { createNewActiveProjectId, getActiveProjectId, persistEditorEvent, flushOfflineQueue, loadLatestEditorState } from './auditPersistence'
 import { loadLocalProjectSnapshot, saveLocalProjectSnapshot, savePendingAsset } from './offlinePersistence'
 import { optimizeImageToWebp } from './imageOptimizer'
 import './styles.css'
@@ -24,7 +24,7 @@ function App() {
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-05-22-remote-persistence-v2";
+  const SYSTEM_VERSION = "2026-05-30-sold-readonly-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
@@ -39,6 +39,10 @@ function App() {
         const remote = await loadLatestEditorState(actor);
         if (cancelled) return;
         const hydrated = hydrateBrowserStorage(remote);
+        if (!hydrated?.projectId) {
+          hydrated.projectId = createNewActiveProjectId(actor);
+          hydrated.status = 'draft';
+        }
         setRemoteDocument(hydrated);
         if (hydrated?.settings) setRemoteSettings(hydrated.settings);
       } catch (error) {
@@ -110,6 +114,31 @@ function App() {
               error: String(error?.message || error),
             }, window.location.origin);
           });
+        return;
+      }
+      if (event.data?.type === 'dcoratto:new-project') {
+        window.clearTimeout(autosaveTimerRef.current);
+        pendingAutosaveRef.current = null;
+        const projectId = createNewActiveProjectId(actor);
+        const freshDocument = {
+          source: 'client-new-project',
+          projectId,
+          status: 'draft',
+          draft: null,
+          preview: null,
+          settings: remoteSettings,
+        };
+        hydrateBrowserStorage(freshDocument);
+        setRemoteDocument(freshDocument);
+        iframeRef.current?.contentWindow?.postMessage({
+          type: 'dcoratto:hydrate-document',
+          draft: null,
+          preview: null,
+          settings: remoteSettings,
+          projectId,
+          status: 'draft',
+          reset: true,
+        }, window.location.origin);
         return;
       }
       if (event.data?.type !== 'dcoratto:editor-state') return;

@@ -19,10 +19,12 @@ html{scroll-behavior:smooth}
 body{background:var(--dark);color:var(--cream);font-family:'Montserrat',sans-serif;font-weight:300;min-height:100vh}
 
 /* HEADER */
-header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padding:0 40px;height:64px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;backdrop-filter:blur(12px)}
+header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padding:0 40px;height:64px;display:flex;align-items:center;justify-content:space-between;gap:18px;position:sticky;top:0;z-index:100;backdrop-filter:blur(12px)}
 .hlogo img{height:32px;filter:brightness(0) invert(1);opacity:.9}
-.htitle{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;color:var(--gold-l);letter-spacing:.05em}
-.header-actions{display:flex;align-items:center;gap:10px}
+.htitle{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;color:var(--gold-l);letter-spacing:.05em;white-space:nowrap}
+.header-actions{display:flex;align-items:center;gap:10px;min-width:0;overflow-x:auto;scrollbar-width:thin}
+.header-actions button{flex:0 0 auto;white-space:nowrap}
+.header-actions button[disabled],.preview-actions button[disabled]{opacity:.48;cursor:not-allowed}
 .sold-lock-banner{display:none;background:#3a2117;color:#f7dfbf;border-bottom:1px solid rgba(184,151,106,.32);padding:10px 40px;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
 body.project-sold .sold-lock-banner{display:block}
 body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
@@ -241,6 +243,12 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
 .option-row button{border:1px solid rgba(184,151,106,.36);background:rgba(0,0,0,.2);color:#e7d3b5;padding:6px 10px;border-radius:3px;cursor:pointer;font-size:11px;letter-spacing:.08em;transition:all .2s}
 .option-row button:hover{border-color:var(--gold);color:var(--gold);background:rgba(184,151,106,.08)}
 @media (max-width: 860px){
+  header{padding:0 16px;gap:10px}
+  .hlogo img{height:28px}
+  .htitle{font-size:15px}
+  .header-actions{gap:8px}
+  .header-actions .ghost-btn,.header-actions .hbtn{padding:9px 12px;font-size:10px}
+  .icon-btn{width:34px;height:34px;font-size:16px}
   .settings-overlay{padding:0;align-items:stretch}
   .settings-panel{width:100vw;max-height:100dvh;border-radius:0;border-left:0;border-right:0}
   .settings-head{padding:16px 18px}
@@ -251,6 +259,10 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
   .settings-actions,.settings-actions.split,.logo-actions{grid-template-columns:1fr;display:grid;justify-content:stretch}
   .settings-actions .hbtn,.settings-actions .danger-btn,.settings-actions .ghost-btn,.option-form .hbtn{width:100%}
   .catalog-list,.option-list{max-height:none}
+}
+
+@media (max-width: 520px){
+  .htitle{display:none}
 }
 
 /* PROGRESS */
@@ -270,17 +282,18 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
   </div>
   <span class="htitle">Editor · Projeto Inicial</span>
   <div class="header-actions">
-    <button class="icon-btn" type="button" onclick="openClientHistory()" title="Histórico de clientes" aria-label="Histórico de clientes">📋</button>
-    <button class="icon-btn" type="button" onclick="openSettings()" title="Configurações" aria-label="Configurações">⚙</button>
-    <button class="ghost-btn" type="button" onclick="openHtmlPreview()">Preview HTML</button>
+    <button class="icon-btn" type="button" id="historyBtn" onclick="openClientHistory()" title="Histórico de clientes" aria-label="Histórico de clientes">📋</button>
+    <button class="icon-btn" type="button" id="settingsBtn" onclick="openSettings()" title="Configurações" aria-label="Configurações">⚙</button>
+    <button class="ghost-btn" type="button" id="newProjectBtn" onclick="startNewProject()">Novo projeto</button>
+    <button class="ghost-btn" type="button" id="previewHtmlBtn" onclick="openHtmlPreview()">Preview HTML</button>
     <button class="ghost-btn" type="button" id="saveDraftBtn" onclick="saveProjectDraft()">Salvar como rascunho</button>
     <button class="ghost-btn" type="button" id="sellProjectBtn" onclick="markProjectSold()">Marcar vendido</button>
-    <button class="hbtn" type="button" onclick="publishClientHtml()">Gerar link para cliente</button>
+    <button class="hbtn" type="button" id="publishClientBtn" onclick="publishClientHtml()">Gerar link para cliente</button>
   </div>
 </header>
 
 <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-<div class="sold-lock-banner" id="soldLockBanner">Projeto vendido. Este projeto está bloqueado para alterações.</div>
+<div class="sold-lock-banner" id="soldLockBanner">Projeto vendido. Visualização em somente leitura; use o histórico ou Novo projeto para continuar.</div>
 
 <!-- COVER DATA -->
 <div class="cover-section">
@@ -333,7 +346,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
       </div>
       <div class="preview-actions">
         <button class="ghost-btn" type="button" onclick="refreshHtmlPreview()">Atualizar preview</button>
-        <button class="hbtn" type="button" onclick="publishClientHtml()">Gerar link para cliente</button>
+        <button class="hbtn" type="button" id="previewPublishClientBtn" onclick="publishClientHtml()">Gerar link para cliente</button>
         <button class="settings-close" type="button" onclick="closePreview()" aria-label="Fechar preview">×</button>
       </div>
     </div>
@@ -2603,14 +2616,18 @@ function applyHydratedDocument(payload = {}) {
   const incomingSettings = payload.settings || null;
   const incomingDraft = payload.draft || null;
   const incomingPreview = payload.preview || null;
-  currentProjectId = payload.projectId || currentProjectId || '';
-  projectStatus = payload.status || projectStatus || 'draft';
+  const incomingProjectId = payload.projectId || '';
+  const shouldResetDocument = Boolean(payload.reset || (incomingProjectId && incomingProjectId !== currentProjectId && !incomingDraft && !incomingPreview));
+  currentProjectId = incomingProjectId || currentProjectId || '';
+  projectStatus = payload.status || (shouldResetDocument ? 'draft' : projectStatus) || 'draft';
 
   if (incomingSettings) {
     applyRemoteEditorSettings(incomingSettings);
   }
 
-  if (incomingDraft) {
+  if (shouldResetDocument) {
+    resetProjectDocumentState();
+  } else if (incomingDraft) {
     builderDraft = incomingDraft;
     AMBIENTES = Array.isArray(incomingDraft.ambientes)
       ? incomingDraft.ambientes.map(normalizeEnvironment)
@@ -2632,6 +2649,31 @@ function applyHydratedDocument(payload = {}) {
   if (incomingDraft || incomingPreview) {
     syncPreviewDocument('remote_document_loaded');
   }
+  updateSoldLockUi();
+}
+
+function resetProjectDocumentState() {
+  builderDraft = null;
+  AMBIENTES = [];
+  resetBuilderState({});
+  document.getElementById('clientName').value = '';
+  document.getElementById('contractNum').value = '';
+  document.getElementById('endereco').value = '';
+  document.querySelectorAll('#fabricante input[type="checkbox"]').forEach(input => {
+    input.checked = true;
+  });
+  const linkBox = document.getElementById('previewClientLink');
+  if (linkBox) {
+    linkBox.hidden = true;
+    linkBox.innerHTML = '';
+  }
+  const status = document.getElementById('previewStatus');
+  if (status) status.textContent = 'Revise a apresentação antes de gerar o link.';
+  safeRemoveLocalStorage(BUILDER_STORAGE_KEY);
+  safeRemoveLocalStorage(PORTFOLIO_STORAGE_KEY);
+  applyEditorSettings();
+  pruneUnavailableColors();
+  renderAmbientes();
   updateSoldLockUi();
 }
 
@@ -2787,6 +2829,28 @@ function trackPendingAsset(file, metadata = {}) {
   return assetId;
 }
 
+function startNewProject() {
+  const hasContent = hasCurrentProjectContent();
+  const message = isProjectSold()
+    ? 'Iniciar um novo projeto? O projeto vendido continuará disponível na pasta Vendidos.'
+    : 'Iniciar um novo projeto? O projeto atual continuará disponível no histórico se já tiver sido salvo.';
+  if (hasContent && !confirm(message)) return;
+  currentProjectId = '';
+  projectStatus = 'draft';
+  resetProjectDocumentState();
+  window.parent?.postMessage({ type: 'dcoratto:new-project' }, window.location.origin);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function hasCurrentProjectContent() {
+  return Boolean(
+    document.getElementById('clientName')?.value?.trim()
+    || document.getElementById('contractNum')?.value?.trim()
+    || document.getElementById('endereco')?.value?.trim()
+    || AMBIENTES.length
+  );
+}
+
 function isProjectSold() {
   return projectStatus === 'sold';
 }
@@ -2800,6 +2864,10 @@ function updateSoldLockUi() {
   }
   const draftButton = document.getElementById('saveDraftBtn');
   if (draftButton) draftButton.disabled = isProjectSold();
+  const publishButton = document.getElementById('publishClientBtn');
+  if (publishButton) publishButton.disabled = isProjectSold();
+  const previewPublishButton = document.getElementById('previewPublishClientBtn');
+  if (previewPublishButton) previewPublishButton.disabled = isProjectSold();
 }
 
 async function markProjectSold() {
@@ -2820,7 +2888,7 @@ async function markProjectSold() {
     if (!response.ok) throw new Error(result?.error || 'Não foi possível marcar como vendido.');
     projectStatus = 'sold';
     updateSoldLockUi();
-    alert('Projeto marcado como vendido e bloqueado.');
+    alert('Projeto marcado como vendido. Ele ficará disponível na pasta Vendidos em somente leitura.');
   } catch (error) {
     alert(String(error?.message || error));
   }
@@ -2829,7 +2897,7 @@ async function markProjectSold() {
 document.addEventListener('click', event => {
   if (!isProjectSold()) return;
   const target = event.target;
-  if (target.closest('#sellProjectBtn,.preview-overlay,.history-overlay,.settings-close')) return;
+  if (isSoldReadOnlyAllowedTarget(target)) return;
   if (target.closest('button,label.file-input,input,select,textarea')) {
     event.preventDefault();
     event.stopPropagation();
@@ -2839,15 +2907,23 @@ document.addEventListener('click', event => {
 
 document.addEventListener('input', event => {
   if (!isProjectSold()) return;
+  if (isSoldReadOnlyAllowedTarget(event.target)) return;
   event.preventDefault();
   event.stopPropagation();
 }, true);
 
 document.addEventListener('change', event => {
   if (!isProjectSold()) return;
+  if (isSoldReadOnlyAllowedTarget(event.target)) return;
   event.preventDefault();
   event.stopPropagation();
 }, true);
+
+function isSoldReadOnlyAllowedTarget(target) {
+  return Boolean(target?.closest(
+    '#historyBtn,#settingsBtn,#newProjectBtn,#previewHtmlBtn,.preview-overlay,.history-overlay,.settings-close'
+  ));
+}
 
 window.addEventListener('beforeunload', () => {
   syncPreviewDocument('before_unload_autosave');
@@ -2862,6 +2938,14 @@ function safeSetLocalStorage(key, value) {
     localStorage.setItem(key, value);
   } catch (error) {
     console.warn('Armazenamento local cheio. A edicao continua ativa e a persistencia remota sera tentada.', error);
+  }
+}
+
+function safeRemoveLocalStorage(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.warn('Nao foi possivel limpar o cache local do projeto.', error);
   }
 }
 
@@ -2899,7 +2983,11 @@ function refreshHtmlPreview() {
   if (!frame) return;
   frame.src = `/portfolio_document.html?preview=${Date.now()}`;
   const status = document.getElementById('previewStatus');
-  if (status) status.textContent = 'Preview atualizado. Confira antes de gerar o link para o cliente.';
+  if (status) {
+    status.textContent = isProjectSold()
+      ? 'Preview em somente leitura. Projetos vendidos não geram novas versões.'
+      : 'Preview atualizado. Confira antes de gerar o link para o cliente.';
+  }
 }
 
 function openHtmlPreview() {
@@ -2908,6 +2996,12 @@ function openHtmlPreview() {
 }
 
 function publishClientHtml() {
+  if (isProjectSold()) {
+    openHtmlPreview();
+    const status = document.getElementById('previewStatus');
+    if (status) status.textContent = 'Projeto vendido em somente leitura. Para gerar outro link, inicie um novo projeto.';
+    return;
+  }
   const linkBox = document.getElementById('previewClientLink');
   if (linkBox) {
     linkBox.hidden = true;

@@ -350,6 +350,7 @@ async function handleLatestEditorStateRequest(url, response) {
         .from('document_projects')
         .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_at, deleted_for_users')
         .eq('document_type', 'projeto_inicial')
+        .neq('status', 'sold')
         .is('deleted_at', null)
         .order('updated_at', { ascending: false })
         .limit(24);
@@ -422,6 +423,7 @@ async function handleProjectStatusRequest(request, response) {
         locked_at: status === 'sold' ? new Date().toISOString() : null,
         locked_by: status === 'sold' ? actorEmail : null,
         lock_reason: status === 'sold' ? 'sold_project' : null,
+        is_draft: status === 'draft' ? true : status === 'sold' ? false : Boolean(current?.is_draft),
         data: {
           ...currentData,
           soldAt: status === 'sold' ? new Date().toISOString() : null,

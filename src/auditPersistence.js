@@ -23,6 +23,12 @@ export function setActiveProjectId(id, actor = null) {
   localStorage.setItem(activeProjectIdKey(actor), id);
 }
 
+export function createNewActiveProjectId(actor = null) {
+  const id = crypto.randomUUID();
+  setActiveProjectId(id, actor);
+  return id;
+}
+
 function activeProjectIdKey(actor = null) {
   const email = String(actor?.email || currentActorEmail() || '').trim().toLowerCase();
   return email ? `${PROJECT_ID_KEY}.${email}` : PROJECT_ID_KEY;
