@@ -20,11 +20,11 @@ export async function optimizeImageToWebp(file, options = {}) {
     converted: false,
   };
 
-  if (typeof document === 'undefined' || typeof createImageBitmap === 'undefined') {
+  if (typeof document === 'undefined') {
     return fallback;
   }
 
-  const image = await createImageBitmap(file).catch(() => null);
+  const image = await loadImageForOptimization(file).catch(() => null);
   if (!image) return fallback;
 
   const maxSize = Number(options.maxSize || DEFAULT_MAX_SIZE);
@@ -57,6 +57,28 @@ export async function optimizeImageToWebp(file, options = {}) {
     previewUrl: URL.createObjectURL(blob),
     converted: true,
   };
+}
+
+async function loadImageForOptimization(file) {
+  if (typeof createImageBitmap !== 'undefined') {
+    const bitmap = await createImageBitmap(file).catch(() => null);
+    if (bitmap) return bitmap;
+  }
+
+  if (typeof Image === 'undefined' || typeof URL === 'undefined') return null;
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      image.close = () => URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Nao foi possivel otimizar a imagem.'));
+    };
+    image.src = url;
+  });
 }
 
 function webpFileName(name) {

@@ -38,16 +38,16 @@ function App() {
       try {
         const remote = await loadLatestEditorState(actor);
         if (cancelled) return;
-        hydrateBrowserStorage(remote);
-        setRemoteDocument(remote);
-        if (remote?.settings) setRemoteSettings(remote.settings);
+        const hydrated = hydrateBrowserStorage(remote);
+        setRemoteDocument(hydrated);
+        if (hydrated?.settings) setRemoteSettings(hydrated.settings);
       } catch (error) {
         console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
         const local = await loadLocalProjectSnapshot(getActiveProjectId(actor)).catch(() => null);
         if (!cancelled && local) {
-          hydrateBrowserStorage(local);
-          setRemoteDocument(local);
-          if (local?.settings) setRemoteSettings(local.settings);
+          const hydrated = hydrateBrowserStorage(local);
+          setRemoteDocument(hydrated);
+          if (hydrated?.settings) setRemoteSettings(hydrated.settings);
         }
       }
     }
@@ -91,9 +91,9 @@ function App() {
         const projectId = event.data.projectId || '';
         loadLatestEditorState(actor, projectId)
           .then((remote) => {
-            hydrateBrowserStorage(remote);
-            setRemoteDocument(remote);
-            if (remote?.settings) setRemoteSettings(remote.settings);
+            const hydrated = hydrateBrowserStorage(remote);
+            setRemoteDocument(hydrated);
+            if (hydrated?.settings) setRemoteSettings(hydrated.settings);
             iframeRef.current?.contentWindow?.postMessage({
               type: 'dcoratto:hydrate-document',
               draft: remote?.draft || null,
@@ -277,13 +277,150 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 )
 
 function hydrateBrowserStorage(remote) {
+  const hydrated = { ...(remote || {}) };
   try {
     if (remote?.draft) localStorage.setItem('dcoratto.builder.document.v1', JSON.stringify(remote.draft));
     else localStorage.removeItem('dcoratto.builder.document.v1');
     if (remote?.preview) localStorage.setItem('dcoratto.portfolio.document.v1', JSON.stringify(remote.preview));
     else localStorage.removeItem('dcoratto.portfolio.document.v1');
-    if (remote?.settings) localStorage.setItem('dcoratto.editor.settings.v1', JSON.stringify(remote.settings));
+    if (remote?.settings) {
+      const localSettings = parseStoredJson(localStorage.getItem('dcoratto.editor.settings.v1')) || {};
+      hydrated.settings = mergeSettingsPreservingCatalogImages(localSettings, remote.settings);
+      localStorage.setItem('dcoratto.editor.settings.v1', JSON.stringify(hydrated.settings));
+    }
   } catch (error) {
     console.warn('Nao foi possivel preparar o cache local do editor.', error);
   }
+  return hydrated;
+}
+
+function parseStoredJson(value) {
+  try {
+    return JSON.parse(value || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function mergeSettingsPreservingCatalogImages(localSettings = {}, remoteSettings = {}) {
+  return {
+    ...localSettings,
+    ...remoteSettings,
+    catalogItems: mergeCatalogItemsPreservingImages(localSettings.catalogItems, remoteSettings.catalogItems),
+  };
+}
+
+function mergeCatalogItemsPreservingImages(localItems = [], remoteItems = []) {
+  let merged = [];
+  (Array.isArray(remoteItems) ? remoteItems : []).forEach((item) => {
+    if (!item?.name) return;
+    merged = upsertCatalogItemPreservingImage(merged, item);
+  });
+  (Array.isArray(localItems) ? localItems : []).forEach((item) => {
+    if (!item?.name) return;
+    const localImage = catalogItemTextureUrl(item);
+    const localTime = catalogItemUpdatedTime(item);
+    const shouldProtectLocal = Boolean(localImage && (localTime || isCatalogDataImage(localImage)));
+    if (!shouldProtectLocal) return;
+    merged = upsertCatalogItemPreservingImage(merged, item);
+  });
+  return merged;
+}
+
+function upsertCatalogItemPreservingImage(items = [], incomingItem = {}) {
+  const matchKeys = new Set(catalogItemMatchKeys(incomingItem));
+  let replaced = false;
+  const next = items.map((item) => {
+    if (!replaced && catalogItemMatchKeys(item).some(key => matchKeys.has(key))) {
+      replaced = true;
+      return mergeCatalogItemPreservingImage(item, incomingItem);
+    }
+    return item;
+  });
+  if (!replaced) next.push(incomingItem);
+  return next;
+}
+
+function mergeCatalogItemPreservingImage(existingItem = {}, incomingItem = {}) {
+  const image = chooseCatalogImage(existingItem, incomingItem);
+  const merged = {
+    ...existingItem,
+    ...incomingItem,
+  };
+  if (image) {
+    merged.textureUrl = image;
+    merged.imageUrl = image;
+  }
+  if (!incomingItem.storageBucket && existingItem.storageBucket) merged.storageBucket = existingItem.storageBucket;
+  if (!incomingItem.storagePath && existingItem.storagePath) merged.storagePath = existingItem.storagePath;
+  if (!incomingItem.publicUrl && existingItem.publicUrl) merged.publicUrl = existingItem.publicUrl;
+  if (!incomingItem.mimeType && existingItem.mimeType) merged.mimeType = existingItem.mimeType;
+  return merged;
+}
+
+function chooseCatalogImage(existingItem = {}, incomingItem = {}) {
+  const existingImage = catalogItemTextureUrl(existingItem);
+  const incomingImage = catalogItemTextureUrl(incomingItem);
+  if (!existingImage) return incomingImage;
+  if (!incomingImage) return existingImage;
+  const existingTime = catalogItemUpdatedTime(existingItem);
+  const incomingTime = catalogItemUpdatedTime(incomingItem);
+  if (existingTime && incomingTime && existingTime > incomingTime) return existingImage;
+  if (isCatalogDataImage(existingImage) && (!incomingTime || existingTime >= incomingTime)) return existingImage;
+  return incomingImage;
+}
+
+function catalogItemTextureUrl(item = {}) {
+  return item.textureUrl
+    || item.imageUrl
+    || item.imageData
+    || item.publicUrl
+    || item.texture_url
+    || item.image_url
+    || item.image_data
+    || item.public_url
+    || item.data?.textureUrl
+    || item.data?.imageUrl
+    || item.data?.publicUrl
+    || item.data?.image
+    || '';
+}
+
+function catalogItemUpdatedTime(item = {}) {
+  const value = item.updatedAt
+    || item.updated_at
+    || item.uploadedAt
+    || item.createdAt
+    || item.created_at
+    || item.data?.updatedAt
+    || item.data?.updated_at
+    || '';
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function isCatalogDataImage(value = '') {
+  return String(value || '').startsWith('data:image/');
+}
+
+function catalogItemMatchKeys(item = {}) {
+  return [
+    item.id,
+    item.catalogKey,
+    item.catalog_key,
+    stableCatalogKey({
+      category: item.type || item.category,
+      factory: item.manufacturer || item.factory,
+      line: item.line || item.lineName || item.line_name,
+      quality: item.quality || item.materialType,
+      name: item.name,
+    }),
+  ].filter(Boolean).map(value => String(value).toLowerCase());
+}
+
+function stableCatalogKey({ category, factory, line, quality, name }) {
+  return [category, factory, line, quality, name]
+    .map(value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''))
+    .filter(Boolean)
+    .join('-');
 }

@@ -5069,15 +5069,66 @@
         return index % 5 < 2 ? 'tile-half' : 'tile-third';
       }
 
-      function readPhoto(file, index) {
-        return new Promise((resolve) => {
+      async function readPhoto(file, index) {
+        return {
+          title: '',
+          label: '',
+          src: await fileToWebpDataUrl(file),
+        };
+      }
+
+      async function fileToWebpDataUrl(file) {
+        const fallback = () => readBlobAsDataURL(file);
+        if (!file || !String(file.type || '').startsWith('image/')) return fallback();
+        if (typeof document === 'undefined') return fallback();
+        const image = await loadImageForOptimization(file).catch(() => null);
+        if (!image) return fallback();
+        const maxSize = 1920;
+        const quality = 0.82;
+        const scale = Math.min(1, maxSize / Math.max(image.width || 1, image.height || 1));
+        const width = Math.max(1, Math.round((image.width || 1) * scale));
+        const height = Math.max(1, Math.round((image.height || 1) * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          image.close?.();
+          return fallback();
+        }
+        context.drawImage(image, 0, 0, width, height);
+        image.close?.();
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', quality));
+        return blob && blob.type === 'image/webp' ? readBlobAsDataURL(blob) : fallback();
+      }
+
+      function readBlobAsDataURL(blob) {
+        return new Promise((resolve, reject) => {
           const reader = new FileReader();
-          reader.onload = () => resolve({
-            title: '',
-            label: '',
-            src: reader.result,
-          });
-          reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      }
+
+      async function loadImageForOptimization(file) {
+        if (typeof createImageBitmap !== 'undefined') {
+          const bitmap = await createImageBitmap(file).catch(() => null);
+          if (bitmap) return bitmap;
+        }
+        if (typeof Image === 'undefined' || typeof URL === 'undefined') return null;
+        return new Promise((resolve, reject) => {
+          const url = URL.createObjectURL(file);
+          const image = new Image();
+          image.onload = () => {
+            image.close = () => URL.revokeObjectURL(url);
+            resolve(image);
+          };
+          image.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error('Nao foi possivel otimizar a imagem.'));
+          };
+          image.src = url;
         });
       }
 

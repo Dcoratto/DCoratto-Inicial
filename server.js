@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
+import sharp from 'sharp';
 
 const localEnvKeys = new Set();
 loadLocalEnvFile('.env');
@@ -1069,9 +1070,13 @@ async function promoteSettingsImagesToStorage(settings = {}) {
       ...item,
       textureUrl: asset.publicUrl || textureUrl,
       imageUrl: asset.publicUrl || textureUrl,
+      publicUrl: asset.publicUrl || item.publicUrl || '',
+      public_url: asset.publicUrl || item.public_url || '',
       storageBucket: asset.storageBucket,
       storagePath: asset.storagePath,
+      storage_path: asset.storagePath,
       mimeType: asset.mimeType,
+      mime_type: asset.mimeType,
       size: asset.size,
       uploadedAt: asset.uploadedAt,
     };
@@ -1111,7 +1116,7 @@ async function promoteImageDataUrls(value, folder) {
 }
 
 async function uploadDataUrlAsset({ dataUrl, folder, fileNameHint }) {
-  const parsed = parseDataUrl(dataUrl);
+  const parsed = await normalizeDataUrlAsset(parseDataUrl(dataUrl));
   const hash = createHash('sha256').update(parsed.buffer).digest('hex');
   const extension = extensionFromMime(parsed.mimeType);
   const safeName = slugify(fileNameHint || 'asset') || 'asset';
@@ -1133,6 +1138,18 @@ async function uploadDataUrlAsset({ dataUrl, folder, fileNameHint }) {
     mimeType: parsed.mimeType,
     size: parsed.buffer.length,
     uploadedAt: new Date().toISOString(),
+  };
+}
+
+async function normalizeDataUrlAsset(parsed) {
+  if (parsed.mimeType === 'image/webp') return parsed;
+  const buffer = await sharp(parsed.buffer, { failOn: 'none' })
+    .rotate()
+    .webp({ quality: 82 })
+    .toBuffer();
+  return {
+    mimeType: 'image/webp',
+    buffer,
   };
 }
 
@@ -1250,6 +1267,35 @@ function catalogItemTextureUrlPayload(item = {}) {
     || '';
 }
 
+function catalogItemUpdatedTimePayload(item = {}) {
+  const value = item.updatedAt
+    || item.updated_at
+    || item.uploadedAt
+    || item.createdAt
+    || item.created_at
+    || item.data?.updatedAt
+    || item.data?.updated_at
+    || '';
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function isCatalogDataImagePayload(value = '') {
+  return String(value || '').startsWith('data:image/');
+}
+
+function chooseCatalogImagePayload(existingItem = {}, incomingItem = {}) {
+  const existingImage = catalogItemTextureUrlPayload(existingItem);
+  const incomingImage = catalogItemTextureUrlPayload(incomingItem);
+  if (!existingImage) return incomingImage;
+  if (!incomingImage) return existingImage;
+  const existingTime = catalogItemUpdatedTimePayload(existingItem);
+  const incomingTime = catalogItemUpdatedTimePayload(incomingItem);
+  if (existingTime && incomingTime && existingTime > incomingTime) return existingImage;
+  if (isCatalogDataImagePayload(existingImage) && (!incomingTime || existingTime >= incomingTime)) return existingImage;
+  return incomingImage;
+}
+
 function normalizeCatalogItemsPayload(items = []) {
   const merged = [];
   const seen = new Set();
@@ -1335,9 +1381,7 @@ function upsertCatalogItemPayload(items = [], incomingItem, previousKeys = []) {
 }
 
 function mergeCatalogItemPayload(existingItem = {}, incomingItem = {}) {
-  const existingImage = catalogItemTextureUrlPayload(existingItem);
-  const incomingImage = catalogItemTextureUrlPayload(incomingItem);
-  const image = incomingImage || existingImage;
+  const image = chooseCatalogImagePayload(existingItem, incomingItem);
   const merged = {
     ...existingItem,
     ...incomingItem,
@@ -1539,6 +1583,24 @@ function catalogMaterialKeyFromItem(item = {}) {
 function catalogMaterialRowFromItem(item, index = 0, actorEmail = '') {
   const groupKey = catalogItemGroup(item.type);
   const catalogKey = item.catalogKey || item.catalog_key || catalogMaterialKeyFromItem(item);
+  const textureUrl = catalogItemTextureUrlPayload(item);
+  const publicImageUrl = [
+    item.textureUrl,
+    item.imageUrl,
+    item.texture_url,
+    item.image_url,
+    item.publicUrl,
+    item.public_url,
+  ].map(value => String(value || '').trim())
+    .find(value => value && !value.startsWith('data:image/') && (value.startsWith('http') || value.startsWith('/'))) || null;
+  const rowData = {
+    ...item,
+    catalogKey,
+    textureUrl: publicImageUrl || textureUrl || '',
+    imageUrl: publicImageUrl || textureUrl || '',
+    publicUrl: publicImageUrl || item.publicUrl || item.public_url || '',
+    public_url: publicImageUrl || item.public_url || item.publicUrl || '',
+  };
   return {
     catalog_key: catalogKey,
     group_key: groupKey,
@@ -1551,14 +1613,12 @@ function catalogMaterialRowFromItem(item, index = 0, actorEmail = '') {
     material_type: item.materialType || item.quality || null,
     category: item.category || groupKey,
     hex: item.hex || null,
-    texture_url: item.textureUrl || item.imageUrl || null,
+    texture_url: textureUrl || null,
     image_data: null,
-    image_url: String(item.textureUrl || item.imageUrl || '').startsWith('http') || String(item.textureUrl || item.imageUrl || '').startsWith('/')
-      ? (item.textureUrl || item.imageUrl)
-      : null,
+    image_url: publicImageUrl,
     storage_bucket: item.storageBucket || photoBucket,
     storage_path: item.storagePath || null,
-    public_url: item.publicUrl || item.imageUrl || item.textureUrl || null,
+    public_url: publicImageUrl,
     mime_type: item.mimeType || (String(item.textureUrl || '').includes('.webp') ? 'image/webp' : null),
     width: Number(item.width) || null,
     height: Number(item.height) || null,
@@ -1572,7 +1632,7 @@ function catalogMaterialRowFromItem(item, index = 0, actorEmail = '') {
     owner_email: primaryAccountEmail,
     created_by: item.createdBy || actorEmail || primaryAccountEmail,
     updated_by: actorEmail || primaryAccountEmail,
-    data: { ...item, catalogKey },
+    data: rowData,
   };
 }
 
@@ -1652,51 +1712,7 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
 
   const materialRows = catalogItems
     .filter(item => item?.name)
-    .map((item, index) => {
-      const groupKey = catalogItemGroup(item.type);
-      const catalogKey = stableCatalogKey({
-        category: groupKey,
-        factory: item.manufacturer || item.factory || '',
-        line: item.line || item.line_name || '',
-        quality: item.quality || item.materialType || '',
-        name: item.name,
-      });
-      return {
-      catalog_key: catalogKey,
-      group_key: groupKey,
-      name: item.name,
-      code: item.code || item.id || null,
-      brand: item.brand || item.manufacturer || null,
-      manufacturer: item.manufacturer || null,
-      line_name: item.line || item.line_name || null,
-      quality: item.quality || null,
-      material_type: item.materialType || item.quality || null,
-      category: item.category || groupKey,
-      hex: item.hex || null,
-      texture_url: item.textureUrl || item.imageUrl || null,
-      image_data: null,
-      image_url: String(item.textureUrl || item.imageUrl || '').startsWith('http') || String(item.textureUrl || item.imageUrl || '').startsWith('/')
-        ? (item.textureUrl || item.imageUrl)
-        : null,
-      storage_bucket: item.storageBucket || photoBucket,
-      storage_path: item.storagePath || null,
-      public_url: item.publicUrl || item.imageUrl || item.textureUrl || null,
-      mime_type: item.mimeType || (String(item.textureUrl || '').includes('.webp') ? 'image/webp' : null),
-      width: Number(item.width) || null,
-      height: Number(item.height) || null,
-      sort_order: index,
-      active: true,
-      deleted_at: null,
-      deleted_by: null,
-      deleted_reason: null,
-      restored_at: new Date().toISOString(),
-      restored_by: actorEmail || primaryAccountEmail,
-      owner_email: primaryAccountEmail,
-      created_by: item.createdBy || actorEmail || primaryAccountEmail,
-      updated_by: actorEmail || primaryAccountEmail,
-      data: { ...item, catalogKey },
-    };
-    });
+    .map((item, index) => catalogMaterialRowFromItem(item, index, actorEmail));
 
   if (materialRows.length) {
     const { error } = await supabaseServer
