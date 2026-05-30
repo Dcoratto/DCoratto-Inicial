@@ -553,43 +553,19 @@
         outline-offset: 0;
       }
 
-      .doc-photo-frame.shape-circle {
-        aspect-ratio: 1 / 1;
-        min-height: 0;
-      }
-
+      .doc-photo-frame.shape-circle,
       .doc-photo-frame.shape-square {
         aspect-ratio: 1 / 1;
+        height: auto;
         min-height: 0;
       }
 
-      .doc-photo-frame.shape-square .frame-clip,
-      .doc-photo-frame.shape-rounded .frame-clip {
-        border-radius: 18px;
+      .doc-photo-frame.shape-square .frame-clip {
+        border-radius: 0;
       }
 
-      .doc-photo-frame.shape-rectangle .frame-clip {
-        border-radius: 18px;
-      }
-
-      .doc-photo-frame.shape-circle .frame-clip,
-      .doc-photo-frame.shape-oval .frame-clip {
+      .doc-photo-frame.shape-circle .frame-clip {
         border-radius: 50%;
-      }
-
-      .doc-photo-frame.shape-triangle .frame-clip {
-        border-radius: 18px;
-        clip-path: polygon(50% 5%, 95% 92%, 5% 92%);
-      }
-
-      .doc-photo-frame.shape-diamond .frame-clip {
-        border-radius: 18px;
-        clip-path: polygon(50% 3%, 97% 50%, 50% 97%, 3% 50%);
-      }
-
-      .doc-photo-frame.shape-hexagon .frame-clip {
-        border-radius: 18px;
-        clip-path: polygon(25% 5%, 75% 5%, 96% 50%, 75% 95%, 25% 95%, 4% 50%);
       }
 
       .frame-clip {
@@ -754,19 +730,15 @@
 
       .page-detail-frame.shape-circle {
         aspect-ratio: 1 / 1;
+        height: auto;
+        min-height: 92px;
         border-radius: 50%;
       }
 
       .page-detail-frame.shape-square {
         aspect-ratio: 1 / 1;
-        border-radius: 2px;
-      }
-
-      .page-detail-frame.shape-rounded {
-        border-radius: 26px;
-      }
-
-      .page-detail-frame.shape-rectangle {
+        height: auto;
+        min-height: 92px;
         border-radius: 2px;
       }
 
@@ -1169,7 +1141,7 @@
         width: 34px;
         height: 34px;
         border: 2px solid #8f7044;
-        border-radius: 9px;
+        border-radius: 2px;
         background: rgba(184,151,106,.16);
       }
 
@@ -1179,21 +1151,8 @@
         height: 32px;
       }
 
-      .frame-format-preview.shape-circle,
-      .frame-format-preview.shape-oval {
+      .frame-format-preview.shape-circle {
         border-radius: 999px;
-      }
-
-      .frame-format-preview.shape-triangle {
-        clip-path: polygon(50% 5%, 95% 92%, 5% 92%);
-      }
-
-      .frame-format-preview.shape-diamond {
-        clip-path: polygon(50% 3%, 97% 50%, 50% 97%, 3% 50%);
-      }
-
-      .frame-format-preview.shape-hexagon {
-        clip-path: polygon(25% 5%, 75% 5%, 96% 50%, 75% 95%, 25% 95%, 4% 50%);
       }
 
       .frame-selection-toolbar {
@@ -1808,6 +1767,8 @@
       const storageKey = 'dcoratto.portfolio.document.v1';
       const isEditablePreview = new URLSearchParams(window.location.search).has('preview');
       const isClientView = Boolean(window.__DCORATTO_CLIENT_VIEW__) && !isEditablePreview;
+      const DEFAULT_FRAME_SIZE = 120;
+      const MIN_FRAME_SIZE = 40;
       
       // Aplicar classe para desabilitar seleção em client view
       if (isClientView) {
@@ -1964,7 +1925,7 @@
         }
         if (isModifierShortcut && !event.shiftKey && !event.altKey && ['1', '2'].includes(event.key)) {
           event.preventDefault();
-          addFrameWithFormatFromShortcut(event.key === '1' ? 'circle' : 'square');
+          addFrameWithFormatFromShortcut(event.key === '1' ? 'square' : 'circle');
         }
         if (isModifierShortcut && event.key.toLowerCase() === 'd') {
           event.preventDefault();
@@ -2791,7 +2752,7 @@
       }
 
       function pageDetailShape(annotation) {
-        return ['circle', 'square', 'rounded', 'rectangle'].includes(annotation?.detailShape)
+        return ['circle', 'square'].includes(annotation?.detailShape)
           ? annotation.detailShape
           : 'circle';
       }
@@ -3379,22 +3340,15 @@
         return [
           { value: 'square', label: 'Quadrado', short: 'Q' },
           { value: 'circle', label: 'Círculo', short: 'C' },
-          { value: 'triangle', label: 'Triângulo', short: 'T' },
-          { value: 'diamond', label: 'Losango', short: 'L' },
-          { value: 'hexagon', label: 'Hexágono', short: 'H' },
         ];
       }
 
       function setSelectedFrameShape(shape) {
         if (!supportedFrameShapes().includes(shape)) return;
-        selectedFrameRefs().forEach(({ frame }) => {
+        selectedFrameRefs().forEach(({ frame, environmentIndex, pageIndex }) => {
           frame.shape = shape;
           frame.frameType = shape;
-          if (isProportionalFrameShape(shape)) {
-            frame.height = frame.width;
-          } else if (!Number.isFinite(Number(frame.height)) || Number(frame.height) === Number(frame.width)) {
-            frame.height = Math.max(8, Math.min(100 - Number(frame.y || 0), Number(frame.width || 20) * .68));
-          }
+          fitFrameToSquare(frame, environmentIndex, pageIndex);
         });
         persistAndRender();
       }
@@ -3441,21 +3395,17 @@
         return [
           { value: 'circle', label: 'Formato circular', short: 'C' },
           { value: 'square', label: 'Formato quadrado', short: 'Q' },
-          { value: 'rectangle', label: 'Formato retangular', short: 'R' },
-          { value: 'rounded', label: 'Cantos arredondados', short: 'A' },
         ];
       }
 
       function setSelectedDetailShape(shape) {
-        if (!['circle', 'square', 'rectangle', 'rounded'].includes(shape)) return;
+        if (!['circle', 'square'].includes(shape)) return;
         selectedPageAnnotationRefs()
           .filter(ref => isDetailAnnotation(ref.annotation))
           .forEach(({ annotation }) => {
             const size = pageDetailSize(annotation);
             annotation.detailShape = shape;
-            annotation.detailHeight = shape === 'circle' || shape === 'square'
-              ? size
-              : Math.max(6, Math.min(44, Number(annotation.detailHeight || size * .68)));
+            annotation.detailHeight = size;
           });
         persistAndRender();
       }
@@ -3498,7 +3448,7 @@
         const options = frameFormatOptions();
         menu.innerHTML = options.map((opt, idx) => `
           <button type="button" class="frame-format-option" data-format-index="${idx}" title="${escapeAttribute(opt.name)}">
-            <span class="frame-format-preview shape-${escapeAttribute(opt.shape || 'rounded')}"></span>
+            <span class="frame-format-preview shape-${escapeAttribute(opt.shape || 'square')}"></span>
             <span>${escapeHTML(opt.name)}</span>
           </button>
         `).join('');
@@ -3540,8 +3490,7 @@
         if (!format) return;
         const position = getRandomPosition();
         const shape = supportedFrameShapes().includes(format.shape) ? format.shape : 'square';
-        const width = Number(format.width || 30);
-        const height = isProportionalFrameShape(shape) ? width : Number(format.height || width);
+        const { width, height } = defaultFrameSizePercent(environmentIndex, pageIndex);
         
         const frame = {
           id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
@@ -3549,8 +3498,8 @@
           photo: '',
           frameType: shape,
           shape,
-          x: position.x,
-          y: position.y,
+          x: Math.max(0, Math.min(100 - width, position.x)),
+          y: Math.max(0, Math.min(100 - height, position.y)),
           width,
           height,
           imgScale: 1,
@@ -3575,11 +3524,97 @@
       }
 
       function supportedFrameShapes() {
-        return ['square', 'circle', 'triangle', 'diamond', 'hexagon', 'oval', 'rectangle', 'rounded'];
+        return ['square', 'circle'];
       }
 
       function isProportionalFrameShape(shape) {
-        return ['circle', 'square', 'triangle', 'diamond', 'hexagon'].includes(shape);
+        return ['circle', 'square'].includes(shape);
+      }
+
+      function pageFrameCanvas(environmentIndex, pageIndex) {
+        return document.querySelector(`[data-page-frames][data-environment-index="${environmentIndex}"][data-page-index="${pageIndex}"]`);
+      }
+
+      function defaultFrameSizePercent(environmentIndex, pageIndex) {
+        const rect = pageFrameCanvas(environmentIndex, pageIndex)?.getBoundingClientRect?.();
+        if (!rect?.width || !rect?.height) return { width: 16, height: 16 };
+        const size = Math.max(MIN_FRAME_SIZE, Math.min(DEFAULT_FRAME_SIZE, rect.width, rect.height));
+        return {
+          width: (size / rect.width) * 100,
+          height: (size / rect.height) * 100,
+        };
+      }
+
+      function frameDisplayHeightPercent(frame, canvas) {
+        if (!isProportionalFrameShape(frame?.shape)) return Number(frame?.height || frame?.width || 20);
+        const rect = canvas?.getBoundingClientRect?.();
+        if (!rect?.width || !rect?.height) return Number(frame?.height || frame?.width || 20);
+        return (Number(frame.width || 20) * rect.width) / rect.height;
+      }
+
+      function fitFrameToSquare(frame, environmentIndex, pageIndex) {
+        if (!frame) return;
+        const canvas = pageFrameCanvas(environmentIndex, pageIndex);
+        const rect = canvas?.getBoundingClientRect?.();
+        frame.width = Math.max(1, Math.min(100 - Number(frame.x || 0), Number(frame.width || 16)));
+        if (rect?.width && rect?.height) {
+          frame.height = Math.max(1, Math.min(100 - Number(frame.y || 0), (frame.width * rect.width) / rect.height));
+        } else {
+          frame.height = Math.max(1, Math.min(100 - Number(frame.y || 0), Number(frame.height || frame.width)));
+        }
+      }
+
+      function resizeSquareFromHandle(initial, handle, dx, dy, bounds, minSize = MIN_FRAME_SIZE) {
+        const horizontalSize = handle.includes('e')
+          ? initial.size + dx
+          : handle.includes('w')
+            ? initial.size - dx
+            : null;
+        const verticalSize = handle.includes('s')
+          ? initial.size + dy
+          : handle.includes('n')
+            ? initial.size - dy
+            : null;
+        let size = initial.size;
+        if (horizontalSize !== null && verticalSize !== null) {
+          size = Math.abs(horizontalSize - initial.size) >= Math.abs(verticalSize - initial.size)
+            ? horizontalSize
+            : verticalSize;
+        } else if (horizontalSize !== null) {
+          size = horizontalSize;
+        } else if (verticalSize !== null) {
+          size = verticalSize;
+        }
+
+        const centerX = initial.left + initial.size / 2;
+        const centerY = initial.top + initial.size / 2;
+        const maxHorizontal = handle.includes('w')
+          ? initial.right
+          : handle.includes('e')
+            ? bounds.width - initial.left
+            : 2 * Math.min(centerX, bounds.width - centerX);
+        const maxVertical = handle.includes('n')
+          ? initial.bottom
+          : handle.includes('s')
+            ? bounds.height - initial.top
+            : 2 * Math.min(centerY, bounds.height - centerY);
+        const maxSize = Math.max(1, Math.min(maxHorizontal, maxVertical));
+        const safeMinSize = Math.min(minSize, maxSize);
+        size = Math.max(safeMinSize, Math.min(maxSize, size));
+
+        let left = handle.includes('w')
+          ? initial.right - size
+          : handle.includes('e')
+            ? initial.left
+            : centerX - size / 2;
+        let top = handle.includes('n')
+          ? initial.bottom - size
+          : handle.includes('s')
+            ? initial.top
+            : centerY - size / 2;
+        left = Math.max(0, Math.min(bounds.width - size, left));
+        top = Math.max(0, Math.min(bounds.height - size, top));
+        return { left, top, size };
       }
 
       function currentFrameInsertionTarget() {
@@ -3772,11 +3807,8 @@
       }
       function frameFormatOptions() {
         return [
-          { key: 'square', name: 'Quadrado', width: 22, height: 22, shape: 'square' },
-          { key: 'circle', name: 'Círculo', width: 22, height: 22, shape: 'circle' },
-          { key: 'triangle', name: 'Triângulo', width: 22, height: 22, shape: 'triangle' },
-          { key: 'diamond', name: 'Losango', width: 22, height: 22, shape: 'diamond' },
-          { key: 'hexagon', name: 'Hexágono', width: 22, height: 22, shape: 'hexagon' },
+          { key: 'square', name: 'Quadrado', shape: 'square' },
+          { key: 'circle', name: 'Círculo', shape: 'circle' },
         ];
       }
 
@@ -3789,11 +3821,11 @@
 
       function frameDefaultLayout(index) {
         const presets = [
-          { x: 18, y: 8, width: 64, height: 64 },
-          { x: 5, y: 18, width: 43, height: 46 },
-          { x: 52, y: 18, width: 43, height: 46 },
-          { x: 10, y: 58, width: 34, height: 34 },
-          { x: 48, y: 58, width: 42, height: 34 },
+          { x: 18, y: 8, width: 16, height: 16 },
+          { x: 38, y: 8, width: 16, height: 16 },
+          { x: 58, y: 8, width: 16, height: 16 },
+          { x: 18, y: 30, width: 16, height: 16 },
+          { x: 38, y: 30, width: 16, height: 16 },
         ];
         return presets[index % presets.length];
       }
@@ -3816,11 +3848,6 @@
         frame.y = Math.max(0, Math.min(98, frame.y));
         frame.width = Math.max(8, Math.min(100 - frame.x, frame.width));
         frame.height = Math.max(8, Math.min(100 - frame.y, frame.height));
-        if (isProportionalFrameShape(frame.shape)) {
-          const size = Math.max(8, Math.min(frame.width, frame.height, 100 - frame.x, 100 - frame.y));
-          frame.width = size;
-          frame.height = size;
-        }
         frame.imgScale = Math.max(1, Math.min(3, frame.imgScale));
         frame.imgX = Math.max(-100, Math.min(100, frame.imgX));
         frame.imgY = Math.max(-100, Math.min(100, frame.imgY));
@@ -3855,7 +3882,9 @@
           const [environmentIndex, pageIndex, frameIndex] = selectedKey.split(':').map(Number);
           const selectedFrame = pageFrame(environmentIndex, pageIndex, frameIndex);
           const selectedNode = document.querySelector(`[data-draggable-frame][data-environment-index="${environmentIndex}"][data-page-index="${pageIndex}"][data-frame-index="${frameIndex}"]`);
-          return selectedFrame && selectedNode ? { frame: selectedFrame, node: selectedNode, x: Number(selectedFrame.x || 0), y: Number(selectedFrame.y || 0) } : null;
+          return selectedFrame && selectedNode
+            ? { frame: selectedFrame, node: selectedNode, x: Number(selectedFrame.x || 0), y: Number(selectedFrame.y || 0), height: frameDisplayHeightPercent(selectedFrame, canvas) }
+            : null;
         }).filter(Boolean);
 
         const move = (pointerEvent) => {
@@ -3863,7 +3892,7 @@
           const dy = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
           selected.forEach((item) => {
             item.frame.x = Math.max(0, Math.min(100 - Number(item.frame.width || 20), item.x + dx));
-            item.frame.y = Math.max(0, Math.min(100 - Number(item.frame.height || 20), item.y + dy));
+            item.frame.y = Math.max(0, Math.min(100 - item.height, item.y + dy));
             item.node.style.left = `${item.frame.x}%`;
             item.node.style.top = `${item.frame.y}%`;
           });
@@ -3879,81 +3908,71 @@
         window.addEventListener('pointerup', up);
       }
 
-      function startPreviewFrameResize(event, handleOverride = '') {
+      function startPreviewFrameResizeStable(event, handleOverride = '') {
         if (!isEditablePreview) return;
-        // Se modo de desenho de setas está ativo, não permitir redimensionar frames
-        const node = event.currentTarget.closest?.('.doc-photo-frame') || event.currentTarget;
+        const resizeHandle = event.target.closest?.('[data-resize-frame]') || event.currentTarget.closest?.('[data-resize-frame]');
+        const node = resizeHandle?.closest('.doc-photo-frame') || event.currentTarget.closest?.('.doc-photo-frame') || event.currentTarget;
         if (arrowDrawMode && Number(node?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(node?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
-        const resizeHandle = event.currentTarget.closest?.('[data-resize-frame]') || event.currentTarget;
-        resizeHandle.setPointerCapture?.(event.pointerId);
+        resizeHandle?.setPointerCapture?.(event.pointerId);
         isFrameResizeActive = true;
         const frame = pageFrame(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.frameIndex));
         const canvas = node?.closest('.page-frames');
         if (!frame || !canvas || !node) {
           isFrameResizeActive = false;
-          resizeHandle.releasePointerCapture?.(event.pointerId);
+          resizeHandle?.releasePointerCapture?.(event.pointerId);
           return;
         }
         selectSingleFrame(frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex));
-        const handle = handleOverride || resizeHandle.dataset.resizeFrame || 'se';
+        const handle = handleOverride || resizeHandle?.dataset.resizeFrame || 'se';
         const canvasRect = canvas.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
+        const size = Math.max(MIN_FRAME_SIZE, (Number(frame.width || 16) / 100) * canvasRect.width);
         const initial = {
-          x: Number(frame.x || 0),
-          y: Number(frame.y || 0),
-          width: Number(frame.width || 20),
-          height: isProportionalFrameShape(frame.shape) ? Number(frame.width || 20) : Number(frame.height || 20),
+          left: (Number(frame.x || 0) / 100) * canvasRect.width,
+          top: (Number(frame.y || 0) / 100) * canvasRect.height,
+          size,
         };
+        initial.right = initial.left + initial.size;
+        initial.bottom = initial.top + initial.size;
 
         const move = (pointerEvent) => {
-          const dw = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
-          const dh = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
-          if (handle.includes('e')) frame.width = Math.max(8, Math.min(100 - initial.x, initial.width + dw));
-          if (handle.includes('s')) frame.height = Math.max(8, Math.min(100 - initial.y, initial.height + dh));
-          if (handle.includes('w')) {
-            const nextX = Math.max(0, Math.min(initial.x + initial.width - 8, initial.x + dw));
-            frame.x = nextX;
-            frame.width = Math.max(8, Math.min(100 - nextX, initial.width + (initial.x - nextX)));
-          }
-          if (handle.includes('n')) {
-            const nextY = Math.max(0, Math.min(initial.y + initial.height - 8, initial.y + dh));
-            frame.y = nextY;
-            frame.height = Math.max(8, Math.min(100 - nextY, initial.height + (initial.y - nextY)));
-          }
-          if (isProportionalFrameShape(frame.shape)) {
-            const size = handle === 'n' || handle === 's'
-              ? Number(frame.height || initial.height)
-              : handle === 'e' || handle === 'w'
-                ? Number(frame.width || initial.width)
-                : Math.max(Number(frame.width || initial.width), Number(frame.height || initial.height));
-            const maxSize = Math.min(100 - Number(frame.x || 0), 100 - Number(frame.y || 0));
-            const nextSize = Math.max(8, Math.min(maxSize, size));
-            frame.width = nextSize;
-            frame.height = nextSize;
-          }
+          const next = resizeSquareFromHandle(
+            initial,
+            handle,
+            pointerEvent.clientX - startX,
+            pointerEvent.clientY - startY,
+            { width: canvasRect.width, height: canvasRect.height }
+          );
+          frame.x = (next.left / canvasRect.width) * 100;
+          frame.y = (next.top / canvasRect.height) * 100;
+          frame.width = (next.size / canvasRect.width) * 100;
+          frame.height = (next.size / canvasRect.height) * 100;
           node.style.left = `${frame.x}%`;
           node.style.top = `${frame.y}%`;
           node.style.width = `${frame.width}%`;
-          node.style.height = `${frame.height}%`;
+          node.style.removeProperty('height');
         };
 
         const up = () => {
           isFrameResizeActive = false;
-          resizeHandle.releasePointerCapture?.(event.pointerId);
+          resizeHandle?.releasePointerCapture?.(event.pointerId);
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
           window.removeEventListener('pointercancel', up);
-          if (isProportionalFrameShape(frame.shape)) frame.height = frame.width;
           persistWithoutRender();
         };
 
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
         window.addEventListener('pointercancel', up);
+      }
+
+      function startPreviewFrameResize(event, handleOverride = '') {
+        return startPreviewFrameResizeStable(event, handleOverride);
       }
 
       function frameResizeHandleAtPoint(event, node) {
@@ -4014,81 +4033,70 @@
         return '';
       }
 
-      function startDetailFrameResize(event, handleOverride = '') {
+      function startDetailFrameResizeStable(event, handleOverride = '') {
         if (!isEditablePreview) return;
-        const node = event.currentTarget.closest('[data-page-detail-frame]');
+        const resizeHandle = event.target.closest?.('[data-resize-detail]') || event.currentTarget.closest?.('[data-resize-detail]');
+        const node = resizeHandle?.closest('[data-page-detail-frame]') || event.currentTarget.closest?.('[data-page-detail-frame]');
         if (arrowDrawMode && Number(node?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(node?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         event.preventDefault();
         event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        resizeHandle?.setPointerCapture?.(event.pointerId);
         const pageNode = node?.closest('[data-page-frames]');
         const annotation = pageAnnotation(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.annotationIndex));
-        if (!node || !pageNode || !annotation) return;
+        if (!node || !pageNode || !annotation) {
+          resizeHandle?.releasePointerCapture?.(event.pointerId);
+          return;
+        }
         selectSinglePageAnnotation(pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex));
-        const handle = handleOverride || event.currentTarget.dataset.resizeDetail || 'se';
+        const handle = handleOverride || resizeHandle?.dataset.resizeDetail || 'se';
         const canvasRect = pageNode.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
+        const size = Math.max(MIN_FRAME_SIZE, (pageDetailSize(annotation) / 100) * canvasRect.width);
+        const centerX = (Number(annotation.fromX || 0) / 100) * canvasRect.width;
+        const centerY = (Number(annotation.fromY || 0) / 100) * canvasRect.height;
         const initial = {
-          x: Number(annotation.fromX || 0),
-          y: Number(annotation.fromY || 0),
-          width: pageDetailSize(annotation),
-          height: ['circle', 'square'].includes(pageDetailShape(annotation))
-            ? pageDetailSize(annotation)
-            : Number(annotation.detailHeight ?? pageDetailSize(annotation) * .68),
+          left: centerX - size / 2,
+          top: centerY - size / 2,
+          size,
         };
-        const initialBox = {
-          left: initial.x - initial.width / 2,
-          right: initial.x + initial.width / 2,
-          top: initial.y - initial.height / 2,
-          bottom: initial.y + initial.height / 2,
-        };
-        const keepSquare = ['circle', 'square'].includes(pageDetailShape(annotation));
+        initial.right = initial.left + initial.size;
+        initial.bottom = initial.top + initial.size;
 
         const move = (pointerEvent) => {
-          const dw = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
-          const dh = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
-          let left = initialBox.left;
-          let right = initialBox.right;
-          let top = initialBox.top;
-          let bottom = initialBox.bottom;
-
-          if (handle.includes('e')) right = initialBox.right + dw;
-          if (handle.includes('w')) left = initialBox.left + dw;
-          if (handle.includes('s')) bottom = initialBox.bottom + dh;
-          if (handle.includes('n')) top = initialBox.top + dh;
-
-          let nextWidth = Math.max(7, Math.min(60, right - left));
-          let nextHeight = Math.max(6, Math.min(44, bottom - top));
-          let nextX = (left + right) / 2;
-          let nextY = (top + bottom) / 2;
-
-          if (keepSquare) {
-            const size = handle === 'n' || handle === 's'
-              ? nextHeight
-              : handle === 'e' || handle === 'w'
-                ? nextWidth
-                : Math.max(nextWidth, nextHeight);
-            nextWidth = size;
-            nextHeight = size;
-          }
-
-          annotation.fromX = Math.max(0, Math.min(100, nextX));
-          annotation.fromY = Math.max(0, Math.min(100, nextY));
-          annotation.detailSize = nextWidth;
-          annotation.detailHeight = nextHeight;
+          const next = resizeSquareFromHandle(
+            initial,
+            handle,
+            pointerEvent.clientX - startX,
+            pointerEvent.clientY - startY,
+            { width: canvasRect.width, height: canvasRect.height }
+          );
+          annotation.fromX = ((next.left + next.size / 2) / canvasRect.width) * 100;
+          annotation.fromY = ((next.top + next.size / 2) / canvasRect.height) * 100;
+          annotation.detailSize = (next.size / canvasRect.width) * 100;
+          annotation.detailHeight = (next.size / canvasRect.height) * 100;
           updatePageDetailFrame(node, annotation);
           const id = `${node.dataset.environmentIndex}-${node.dataset.pageIndex}-${node.dataset.annotationIndex}`;
           updatePageAnnotationLine(pageNode.querySelector(`[data-page-annotation-line="${id}"]`), annotation, pageNode);
+          updatePageAnnotationArrowHead(pageNode.querySelector(`[data-page-annotation-arrow-head="${id}"]`), annotation, pageNode);
         };
 
         const up = () => {
+          resizeHandle?.releasePointerCapture?.(event.pointerId);
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
+          window.removeEventListener('pointercancel', up);
           persistWithoutRender();
         };
 
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
+        window.addEventListener('pointercancel', up);
+      }
+
+      function startDetailFrameResize(event, handleOverride = '') {
+        return startDetailFrameResizeStable(event, handleOverride);
       }
 
       function handleFrameDragOver(event) {
@@ -4310,6 +4318,7 @@
         if (!pageNode || !annotation) return;
         const key = pageAnnotationKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.annotationIndex);
         if (node.matches('[data-page-detail-frame]')) {
+          if (event.target.closest('[data-resize-detail]')) return;
           const resizeHandle = event.target.closest('[data-resize-detail]') ? '' : detailResizeHandleAtPoint(event, node);
           if (resizeHandle) {
             startDetailFrameResize(event, resizeHandle);
@@ -4919,8 +4928,9 @@
         applyFrameLayout(frame, frameIndex);
         const hasPhoto = Boolean(frame.photo);
         const shape = supportedFrameShapes().includes(frame.shape) ? frame.shape : 'square';
-        const frameHeight = isProportionalFrameShape(shape) ? Number(frame.width) : Number(frame.height);
-        const frameStyle = `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${frameHeight}%`;
+        const frameStyle = isProportionalFrameShape(shape)
+          ? `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%`
+          : `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${Number(frame.height)}%`;
         const imageStyle = `transform:translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
         const handles = ['nw','n','ne','e','se','s','sw','w'].map(handle => `<span class="frame-resize-handle" data-resize-frame="${handle}"></span>`).join('');
         return `
@@ -4958,10 +4968,7 @@
             </label>
             <select class="shape-select" data-frame-shape data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">
               <option value="square" ${frame.shape === 'square' ? 'selected' : ''}>Quadrado</option>
-              <option value="circle" ${frame.shape === 'circle' ? 'selected' : ''}>Círculo</option>
-              <option value="triangle" ${frame.shape === 'triangle' ? 'selected' : ''}>Triângulo</option>
-              <option value="diamond" ${frame.shape === 'diamond' ? 'selected' : ''}>Losango</option>
-              <option value="hexagon" ${frame.shape === 'hexagon' ? 'selected' : ''}>Hexágono</option>
+              <option value="circle" ${frame.shape === 'circle' ? 'selected' : ''}>C&iacute;rculo</option>
             </select>
             <button type="button" data-add-annotation data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">Seta</button>
           </div>

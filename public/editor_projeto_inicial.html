@@ -2098,11 +2098,11 @@ function ensurePageFrames(page) {
       id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
       title: page.title || 'Moldura 1',
       photo: page.photo,
-      shape: 'rounded',
+      shape: 'square',
       x: 18,
       y: 8,
-      width: 64,
-      height: 64,
+      width: 16,
+      height: 16,
       annotations: [],
     }] : [];
   }
@@ -2111,7 +2111,7 @@ function ensurePageFrames(page) {
     frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
     frame.title ||= 'Moldura';
     frame.photo ||= '';
-    frame.shape = ['oval', 'circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded';
+    frame.shape = ['circle', 'square'].includes(frame.shape) ? frame.shape : 'square';
     frame.x = normalizePercent(frame.x, layout.x, 0, 98);
     frame.y = normalizePercent(frame.y, layout.y, 0, 98);
     frame.width = normalizePercent(frame.width, layout.width, 8, 100 - frame.x);
@@ -2132,11 +2132,11 @@ function normalizePercent(value, fallback, min = 0, max = 100) {
 
 function frameDefaultLayout(index) {
   const presets = [
-    { x: 18, y: 8, width: 64, height: 64 },
-    { x: 5, y: 18, width: 43, height: 46 },
-    { x: 52, y: 18, width: 43, height: 46 },
-    { x: 10, y: 58, width: 34, height: 34 },
-    { x: 48, y: 58, width: 42, height: 34 },
+    { x: 18, y: 8, width: 16, height: 16 },
+    { x: 38, y: 8, width: 16, height: 16 },
+    { x: 58, y: 8, width: 16, height: 16 },
+    { x: 18, y: 30, width: 16, height: 16 },
+    { x: 38, y: 30, width: 16, height: 16 },
   ];
   return presets[index % presets.length];
 }
@@ -2146,7 +2146,7 @@ function normalizedPageFrames(page) {
     id: frame.id,
     title: frame.title || `Moldura ${frameIndex + 1}`,
     photo: frame.photo || '',
-    shape: ['oval', 'circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded',
+    shape: ['circle', 'square'].includes(frame.shape) ? frame.shape : 'square',
     x: Number(frame.x),
     y: Number(frame.y),
     width: Number(frame.width),
@@ -2183,7 +2183,7 @@ function addPageFrame(ambId, pageId) {
     id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
     title: `Moldura ${frames.length + 1}`,
     photo: '',
-    shape: 'rounded',
+    shape: 'square',
     ...frameDefaultLayout(frames.length),
     annotations: [],
   });
@@ -2586,7 +2586,7 @@ function mergePreviewDocument(preview) {
           id: frame.id || `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
           title: frame.title || 'Moldura',
           photo: frame.photo || '',
-          shape: ['oval', 'circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded',
+          shape: ['circle', 'square'].includes(frame.shape) ? frame.shape : 'square',
           x: frame.x,
           y: frame.y,
           width: frame.width,
