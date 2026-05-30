@@ -37,9 +37,22 @@ export function openDcorattoDb() {
 
 export async function saveLocalProjectSnapshot(projectId, snapshot) {
   if (!projectId) return null;
+  const existing = await getRecord(SNAPSHOTS_STORE, projectId).catch(() => null);
+  const previous = existing?.snapshot || {};
+  const incoming = snapshot || {};
+  const mergedSnapshot = {
+    ...previous,
+    ...incoming,
+    draft: incoming.draft || previous.draft || null,
+    preview: incoming.preview || previous.preview || null,
+    settings: incoming.settings || previous.settings || null,
+    settingsMutation: incoming.settingsMutation || previous.settingsMutation || null,
+    action: incoming.action || previous.action || '',
+    actor: incoming.actor || previous.actor || null,
+  };
   const record = {
     projectId,
-    snapshot,
+    snapshot: mergedSnapshot,
     updatedAt: new Date().toISOString(),
   };
   await putRecord(SNAPSHOTS_STORE, record);
@@ -64,6 +77,7 @@ export async function enqueueMutation(mutation) {
     draft: mutation.draft || null,
     preview: mutation.preview || null,
     settings: mutation.settings || null,
+    settingsMutation: mutation.settingsMutation || null,
     saveHtml: Boolean(mutation.saveHtml),
     assetIds: Array.isArray(mutation.assetIds) ? mutation.assetIds : [],
     createdAt: mutation.createdAt || now,

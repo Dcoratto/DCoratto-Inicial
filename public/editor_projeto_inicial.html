@@ -652,9 +652,12 @@ function loadBuilderDraft() {
 
 function saveEditorSettings(settingsMutation = null) {
   editorSettings = normalizeEditorSettings(editorSettings);
+  const mutationPayload = settingsMutation
+    ? { ...settingsMutation, createdAt: settingsMutation.createdAt || new Date().toISOString() }
+    : null;
   safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
-  persistSettingsDirectly(editorSettings, settingsMutation);
-  postEditorEvent('settings_saved', { settings: editorSettings, settingsMutation });
+  persistSettingsDirectly(editorSettings, mutationPayload);
+  postEditorEvent('settings_saved', { settings: editorSettings, settingsMutation: mutationPayload });
 }
 
 async function persistSettingsDirectly(settings, settingsMutation = null) {
@@ -1277,7 +1280,9 @@ function removeManualCatalogItem(id) {
     quality: item.quality || item.materialType,
     name: item.name,
   });
-  editorSettings.catalogItems = (editorSettings.catalogItems || []).filter(entry => entry.id !== id);
+  editorSettings.catalogItems = (editorSettings.catalogItems || []).filter(entry => (
+    entry.id !== id && (entry.catalogKey || entry.catalog_key) !== catalogKey
+  ));
   saveEditorSettings({ type: 'catalog-item-delete', id, catalogKey });
   applyEditorSettings();
   rerenderAllSwatches();
@@ -1286,15 +1291,17 @@ function removeManualCatalogItem(id) {
 
 function clearManualCatalogColors() {
   const items = editorSettings.catalogItems || [];
-  const colorCount = items.filter(item => item.type === 'color').length;
+  const manualColorItems = items.filter(item => item.type === 'color' && isManualCatalogItem(item));
+  const colorCount = manualColorItems.length;
   if (!colorCount) {
     alert('Não há cores manuais cadastradas.');
     return;
   }
   if (!confirm(`Excluir ${colorCount} cor(es) manual(is) do catálogo?`)) return;
-  if ((editorSettings.catalogItems || []).some(item => item.id === editingCatalogItemId && item.type === 'color')) resetCatalogForm();
-  const removedItems = items.filter(item => item.type === 'color').map(item => ({
+  if ((editorSettings.catalogItems || []).some(item => item.id === editingCatalogItemId && item.type === 'color' && isManualCatalogItem(item))) resetCatalogForm();
+  const removedItems = manualColorItems.map(item => ({
     id: item.id || '',
+    key: colorKey(item),
     catalogKey: item.catalogKey || item.catalog_key || stableCatalogKey({
       category: item.type || item.category,
       factory: item.manufacturer || item.factory,
@@ -1303,9 +1310,10 @@ function clearManualCatalogColors() {
       name: item.name,
     }),
   }));
-  editorSettings.catalogItems = items.filter(item => item.type !== 'color');
+  const removedKeys = new Set(removedItems.flatMap(item => [item.id, item.key, item.catalogKey]).filter(Boolean));
+  editorSettings.catalogItems = items.filter(item => !removedKeys.has(item.id) && !removedKeys.has(item.catalogKey || item.catalog_key));
   Object.values(state).forEach(envState => {
-    envState.cores = [];
+    envState.cores = (envState.cores || []).filter(color => !removedKeys.has(color.id) && !removedKeys.has(color.catalogKey) && !removedKeys.has(color.key));
   });
   saveEditorSettings({ type: 'catalog-items-delete', items: removedItems });
   saveBuilderDraft();
@@ -1821,7 +1829,7 @@ function updateCoverPhotoLabel(ambId, photoIndex, value) {
 
 applyEditorSettings();
 pruneUnavailableColors();
-saveBuilderDraft();
+if (!builderDraft) saveBuilderDraft();
 renderAmbientes();
 
 function handleFactoryChange() {
@@ -1925,6 +1933,11 @@ function toggleMaterialImageOption(ambId, field, value) {
   refreshPuxadorSelects();
   updateSummary(ambId);
   syncPreviewDocument();
+}
+
+function isManualCatalogItem(item = {}) {
+  const source = String(item.source || '').toLowerCase();
+  return source === 'manual' || source === 'upload';
 }
 
 function toggleHandle(ambId, value) {
@@ -2126,6 +2139,7 @@ function saveBuilderDraft() {
     state,
     updatedAt: new Date().toISOString(),
   };
+  builderDraft = draft;
   safeSetLocalStorage(BUILDER_STORAGE_KEY, JSON.stringify(draft));
   return draft;
 }

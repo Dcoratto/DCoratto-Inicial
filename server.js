@@ -868,6 +868,10 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
   }
 
   if (await hasAuditEvent(eventId)) return;
+  if (isStaleProjectEvent(existingProject, createdAt)) {
+    await persistAuditLog({ projectId, actor, action, draft, preview, settings, eventId, createdAt });
+    return;
+  }
 
   const client = preview?.client || {};
   const actorEmail = normalizeEmail(actor?.email);
@@ -913,6 +917,14 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
     .upsert(projectPayload, { onConflict: 'id' });
   if (error) throw error;
   await persistAuditLog({ projectId, actor, action, draft, preview, settings, eventId, createdAt });
+}
+
+function isStaleProjectEvent(existingProject, createdAt) {
+  if (!existingProject?.data?.lastEventAt || !createdAt) return false;
+  const lastEventTime = Date.parse(existingProject.data.lastEventAt);
+  const incomingTime = Date.parse(createdAt);
+  if (!Number.isFinite(lastEventTime) || !Number.isFinite(incomingTime)) return false;
+  return incomingTime < lastEventTime;
 }
 
 async function loadProjectForWrite(projectId) {
@@ -967,7 +979,7 @@ async function loadSharedEditorSettings() {
   const payload = normalizeEditorSettingsPayload(storedPayload);
   return {
     ...payload,
-    catalogItems: mergeCatalogItemsPayload(tableSettings.catalogItems, payload.catalogItems),
+    catalogItems: mergeCatalogItemsPayload(tableSettings.catalogItems, payload.catalogItems, { preferIncoming: false }),
     materialOptions: mergeMaterialOptionsPayload(tableSettings.materialOptions, payload.materialOptions),
   };
 }
@@ -977,7 +989,7 @@ async function saveSharedEditorSettings(incomingSettings, actor = null, settings
   const actorEmail = normalizeEmail(actor?.email);
   const hasIncomingSettings = incomingSettings && Object.keys(incomingSettings).length > 0;
   const mergedSettings = hasIncomingSettings
-    ? mergeEditorSettingsPayload(currentSettings, incomingSettings)
+    ? mergeEditorSettingsPayload(currentSettings, incomingSettings, { protectCatalogCollections: true })
     : normalizeEditorSettingsPayload(currentSettings);
   const mutatedSettings = applySettingsMutation(mergedSettings, settingsMutation, actorEmail);
   const payload = await promoteSettingsImagesToStorage(mutatedSettings);
@@ -1116,35 +1128,53 @@ function normalizeEditorSettingsPayload(settings = {}) {
   };
 }
 
-function mergeEditorSettingsPayload(current = {}, incoming = {}) {
+function mergeEditorSettingsPayload(current = {}, incoming = {}, options = {}) {
   const currentSettings = current || {};
   const incomingSettings = incoming || {};
-  const mergedCatalogItems = mergeCatalogItemsPayload(currentSettings.catalogItems, incomingSettings.catalogItems);
+  const currentCatalogItems = normalizeCatalogItemsPayload(currentSettings.catalogItems);
+  const incomingCatalogItems = normalizeCatalogItemsPayload(incomingSettings.catalogItems);
+  const currentMaterialOptions = normalizeMaterialOptionsPayload(currentSettings.materialOptions);
+  const catalogItems = options.protectCatalogCollections && currentCatalogItems.length
+    ? currentCatalogItems
+    : mergeCatalogItemsPayload(currentCatalogItems, incomingCatalogItems, { preferIncoming: false });
+  const materialOptions = options.protectCatalogCollections && hasMaterialOptionsPayload(currentMaterialOptions)
+    ? currentMaterialOptions
+    : mergeMaterialOptionsPayload(currentMaterialOptions, incomingSettings.materialOptions);
   return {
     ...currentSettings,
     ...incomingSettings,
     logo: incomingSettings.logo || currentSettings.logo || '',
-    catalogItems: mergedCatalogItems,
+    catalogItems,
     observations: [...new Set([...(currentSettings.observations || []), ...(incomingSettings.observations || [])])],
-    materialOptions: mergeMaterialOptionsPayload(currentSettings.materialOptions, incomingSettings.materialOptions),
+    materialOptions,
   };
+}
+
+function hasMaterialOptionsPayload(options = {}) {
+  return Object.values(options || {}).some(values => Array.isArray(values) && values.length);
 }
 
 function applySettingsMutation(settings = {}, mutation = null, actorEmail = '') {
   const payload = normalizeEditorSettingsPayload(settings);
   if (!mutation?.type) return payload;
   if (mutation.type === 'catalog-item-upsert' && mutation.item) {
+    if (isStaleCatalogMutation(payload.catalogItems, mutation, [mutation.previousId, mutation.previousCatalogKey])) return payload;
+    const mutationTimestamp = mutation.createdAt || new Date().toISOString();
     payload.catalogItems = upsertCatalogItemPayload(payload.catalogItems, {
       ...mutation.item,
       updatedBy: actorEmail || mutation.item.updatedBy || '',
-      updatedAt: new Date().toISOString(),
+      updatedAt: mutationTimestamp,
     }, [mutation.previousId, mutation.previousCatalogKey]);
   }
   if (mutation.type === 'catalog-item-delete') {
+    if (isStaleCatalogMutation(payload.catalogItems, mutation)) return payload;
     payload.catalogItems = removeCatalogItemsPayload(payload.catalogItems, [mutation]);
   }
   if (mutation.type === 'catalog-items-delete') {
-    payload.catalogItems = removeCatalogItemsPayload(payload.catalogItems, mutation.items || []);
+    payload.catalogItems = removeCatalogItemsPayload(
+      payload.catalogItems,
+      (mutation.items || []).filter(item => !isStaleCatalogMutation(payload.catalogItems, { ...item, createdAt: mutation.createdAt }))
+    );
   }
   if (mutation.type === 'material-option-upsert' && mutation.group && mutation.value) {
     payload.materialOptions = upsertMaterialOptionPayload(payload.materialOptions, mutation);
@@ -1153,6 +1183,16 @@ function applySettingsMutation(settings = {}, mutation = null, actorEmail = '') 
     payload.materialOptions = deleteMaterialOptionPayload(payload.materialOptions, mutation.group, mutation.value);
   }
   return payload;
+}
+
+function isStaleCatalogMutation(items = [], mutation = {}, previousKeys = []) {
+  if (!mutation?.createdAt) return false;
+  const incomingTime = Date.parse(mutation.createdAt);
+  if (!Number.isFinite(incomingTime)) return false;
+  const existingItem = findCatalogItemForMutation(items, mutation.item || mutation, previousKeys);
+  if (!existingItem) return false;
+  const existingTime = Date.parse(existingItem.updatedAt || existingItem.updated_at || existingItem.uploadedAt || existingItem.createdAt || '');
+  return Number.isFinite(existingTime) && existingTime > incomingTime;
 }
 
 function catalogItemTextureUrlPayload(item = {}) {
@@ -1198,13 +1238,16 @@ function preferAdminCatalogItems(items = []) {
   return items;
 }
 
-function mergeCatalogItemsPayload(current = [], incoming = []) {
+function mergeCatalogItemsPayload(current = [], incoming = [], options = {}) {
   let merged = [];
-  normalizeCatalogItemsPayload(current).forEach((item) => {
+  const preferIncoming = options.preferIncoming !== false;
+  const firstItems = preferIncoming ? current : incoming;
+  const secondItems = preferIncoming ? incoming : current;
+  normalizeCatalogItemsPayload(firstItems).forEach((item) => {
     if (!item || !item.name) return;
     merged = upsertCatalogItemPayload(merged, item);
   });
-  normalizeCatalogItemsPayload(incoming).forEach((item) => {
+  normalizeCatalogItemsPayload(secondItems).forEach((item) => {
     if (!item || !item.name) return;
     merged = upsertCatalogItemPayload(merged, item);
   });
@@ -1378,6 +1421,7 @@ function settingsTypeFromCatalogGroup(groupKey) {
 async function persistSharedCatalogMutation(settings = {}, mutation = null, actorEmail = '') {
   if (!mutation?.type) return;
   if (mutation.type === 'catalog-item-upsert' && mutation.item) {
+    if (isStaleCatalogMutation(settings.catalogItems || [], mutation, [mutation.previousId, mutation.previousCatalogKey])) return;
     const item = findCatalogItemForMutation(settings.catalogItems || [], mutation.item, [mutation.previousId, mutation.previousCatalogKey]);
     if (!item) return;
     await upsertSharedCatalogItem(item, actorEmail);
@@ -1388,11 +1432,13 @@ async function persistSharedCatalogMutation(settings = {}, mutation = null, acto
     return;
   }
   if (mutation.type === 'catalog-item-delete') {
+    if (isStaleCatalogMutation(settings.catalogItems || [], mutation)) return;
     await softDeleteSharedCatalogItem(mutation, actorEmail, 'catalog_item_removed');
     return;
   }
   if (mutation.type === 'catalog-items-delete') {
     for (const item of mutation.items || []) {
+      if (isStaleCatalogMutation(settings.catalogItems || [], { ...item, createdAt: mutation.createdAt })) continue;
       await softDeleteSharedCatalogItem(item, actorEmail, 'catalog_item_removed');
     }
     return;

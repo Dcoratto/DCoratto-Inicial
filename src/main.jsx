@@ -131,9 +131,24 @@ function App() {
         draft: draft || null,
         preview: preview || null,
         settings: settings || null,
+        settingsMutation: settingsMutation || null,
         action,
         actor,
       }).catch((error) => console.warn('Falha ao salvar snapshot local imediato.', error));
+
+      if (settings || settingsMutation) {
+        persistEditorEvent(payload).then((result) => {
+          if (result?.projectId) {
+            iframeRef.current?.contentWindow?.postMessage({
+              type: 'dcoratto:project-meta',
+              projectId: result.projectId,
+            }, window.location.origin);
+          }
+        }).catch((error) => {
+          console.warn('Falha ao persistir configuracoes remotas.', error);
+        });
+        return;
+      }
 
       if (action === 'save_as_draft') {
         persistEditorEvent(payload).then((result) => {
