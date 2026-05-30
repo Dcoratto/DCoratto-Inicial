@@ -76,6 +76,7 @@ create table if not exists public.catalog_options (
 
 create table if not exists public.catalog_materials (
   id uuid primary key default gen_random_uuid(),
+  catalog_key text,
   group_key text not null,
   name text not null,
   code text,
@@ -83,18 +84,46 @@ create table if not exists public.catalog_materials (
   manufacturer text,
   line_name text,
   quality text,
+  material_type text,
+  category text,
   hex text,
   texture_url text,
+  image_url text,
+  image_data text,
+  storage_bucket text,
+  storage_path text,
+  public_url text,
+  mime_type text,
+  width integer,
+  height integer,
+  owner_email text not null default 'dcorattoinovacao@gmail.com',
+  created_by text not null default '',
+  updated_by text not null default '',
   sort_order integer not null default 0,
   active boolean not null default true,
   data jsonb not null default '{}'::jsonb,
-  unique (group_key, name)
+  unique (group_key, name),
+  unique (catalog_key)
 );
 
 alter table public.catalog_materials
   add column if not exists manufacturer text,
   add column if not exists line_name text,
-  add column if not exists quality text;
+  add column if not exists quality text,
+  add column if not exists catalog_key text,
+  add column if not exists material_type text,
+  add column if not exists category text,
+  add column if not exists image_url text,
+  add column if not exists image_data text,
+  add column if not exists storage_bucket text,
+  add column if not exists storage_path text,
+  add column if not exists public_url text,
+  add column if not exists mime_type text,
+  add column if not exists width integer,
+  add column if not exists height integer,
+  add column if not exists owner_email text not null default 'dcorattoinovacao@gmail.com',
+  add column if not exists created_by text not null default '',
+  add column if not exists updated_by text not null default '';
 
 create table if not exists public.environment_colors (
   id uuid primary key default gen_random_uuid(),
@@ -228,6 +257,8 @@ create index if not exists document_html_versions_project_idx on public.document
 create index if not exists document_versions_project_idx on public.document_versions(project_id, created_at desc);
 create index if not exists document_projects_updated_idx on public.document_projects(updated_at desc);
 create index if not exists catalog_materials_manufacturer_idx on public.catalog_materials(manufacturer, line_name, sort_order);
+create index if not exists catalog_materials_filter_idx on public.catalog_materials(group_key, manufacturer, line_name, quality, sort_order);
+create unique index if not exists catalog_materials_catalog_key_uidx on public.catalog_materials(catalog_key) where catalog_key is not null;
 create index if not exists editor_audit_logs_project_idx on public.editor_audit_logs(project_id, created_at desc);
 create index if not exists editor_audit_logs_actor_idx on public.editor_audit_logs(actor_email, created_at desc);
 create index if not exists document_html_versions_shared_idx on public.document_html_versions(shared_with_client, shared_at desc);

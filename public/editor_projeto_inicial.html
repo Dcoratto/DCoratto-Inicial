@@ -186,6 +186,11 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
 .ghost-btn,.danger-btn{border:1px solid var(--border);background:transparent;color:var(--gold-l);padding:9px 12px;border-radius:2px;font-family:'Montserrat',sans-serif;font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer}
 .danger-btn{color:#ff8a78;border-color:rgba(255,106,85,.35)}
 .catalog-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;max-height:300px;overflow:auto;padding-right:4px}
+.catalog-filter-bar{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr)) auto;gap:10px;align-items:end;margin:14px 0 4px}
+.catalog-filter-bar.compact{grid-template-columns:repeat(5,minmax(110px,1fr)) auto;margin:16px 0 0}
+.catalog-filter-bar input,.catalog-filter-bar select{width:100%;box-sizing:border-box;background:#1f1c18;border:1px solid rgba(184,151,106,.28);color:#fff8eb;padding:9px;border-radius:3px;font-size:12px}
+.catalog-filter-bar label{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:6px}
+.catalog-filter-bar button{white-space:nowrap}
 .catalog-item{border:1px solid var(--border);border-radius:4px;background:rgba(0,0,0,.2);overflow:hidden}
 .catalog-thumb{width:100%;aspect-ratio:1/1;background:#111;border-bottom:1px solid var(--border);overflow:hidden}
 .catalog-thumb img{width:100%;height:100%;object-fit:cover;display:block}
@@ -239,7 +244,7 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
   .settings-head h2{font-size:26px}
   .settings-body{grid-template-columns:1fr;padding:16px;gap:14px}
   .catalog-card,.technical-card{grid-column:1}
-  .catalog-form,.option-form{grid-template-columns:1fr}
+  .catalog-form,.option-form,.catalog-filter-bar,.catalog-filter-bar.compact{grid-template-columns:1fr}
   .settings-actions,.settings-actions.split,.logo-actions{grid-template-columns:1fr;display:grid;justify-content:stretch}
   .settings-actions .hbtn,.settings-actions .danger-btn,.settings-actions .ghost-btn,.option-form .hbtn{width:100%}
   .catalog-list,.option-list{max-height:none}
@@ -302,6 +307,14 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
 <!-- AMBIENTES -->
 <div class="ambientes">
   <div class="ambientes-head"><div><h2 class="ambientes-title">Ambientes</h2><p class="ambientes-sub">Adicione apenas os ambientes usados neste projeto.</p></div><button class="hbtn" type="button" onclick="addEnvironment()">Adicionar ambiente</button></div>
+  <div class="catalog-filter-bar compact" id="builderCatalogFilterBar">
+    <div><label>Categoria</label><select data-catalog-filter="category"></select></div>
+    <div><label>Fábrica</label><select data-catalog-filter="factory"></select></div>
+    <div><label>Linha</label><select data-catalog-filter="line"></select></div>
+    <div><label>Qualidade</label><select data-catalog-filter="quality"></select></div>
+    <div><label>Busca</label><input type="search" data-catalog-filter="search" placeholder="Nome ou código"></div>
+    <button class="ghost-btn" type="button" onclick="clearCatalogFilters()">Limpar</button>
+  </div>
   <div class="amb-grid" id="ambGrid"></div>
 </div>
 
@@ -393,6 +406,14 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
             </div>
           </div>
         </div>
+        <div class="catalog-filter-bar" id="catalogFilterBar">
+          <div><label>Categoria</label><select data-catalog-filter="category"></select></div>
+          <div><label>Fábrica</label><select data-catalog-filter="factory"></select></div>
+          <div><label>Linha</label><select data-catalog-filter="line"></select></div>
+          <div><label>Qualidade</label><select data-catalog-filter="quality"></select></div>
+          <div><label>Busca</label><input type="search" data-catalog-filter="search" placeholder="Nome ou código"></div>
+          <button class="ghost-btn" type="button" onclick="clearCatalogFilters()">Limpar</button>
+        </div>
         <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>
       </section>
 
@@ -481,6 +502,8 @@ let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'd
 let clientHistoryItems = [];
 let currentProjectId = '';
 let projectStatus = 'draft';
+let catalogVisibleItems = null;
+let catalogFilters = { category: '', factory: '', line: '', quality: '', search: '' };
 
 function loadEditorSettings() {
   try {
@@ -617,6 +640,123 @@ function manualCatalogItems(type) {
   return (editorSettings.catalogItems || []).filter(item => !type || item.type === type);
 }
 
+function visibleCatalogItems(type) {
+  const source = catalogVisibleItems || editorSettings.catalogItems || [];
+  return source.filter(item => (!type || item.type === type) && matchesCatalogFilters(item));
+}
+
+function matchesCatalogFilters(item = {}) {
+  const category = catalogFilters.category;
+  const factory = catalogFilters.factory;
+  const line = catalogFilters.line;
+  const quality = catalogFilters.quality;
+  const search = normalizeSearchText(catalogFilters.search);
+  if (category && item.type !== category) return false;
+  if (factory && (item.manufacturer || item.factory || '') !== factory) return false;
+  if (line && (item.line || item.lineName || '') !== line) return false;
+  if (quality && (item.quality || item.materialType || '') !== quality) return false;
+  if (search) {
+    const haystack = normalizeSearchText([
+      item.name,
+      item.code,
+      item.id,
+      item.catalogKey,
+      item.manufacturer,
+      item.line,
+      item.quality,
+      item.type,
+    ].filter(Boolean).join(' '));
+    if (!haystack.includes(search)) return false;
+  }
+  return true;
+}
+
+function catalogFilterOptions(field) {
+  const items = editorSettings.catalogItems || [];
+  const values = items.map(item => {
+    if (field === 'category') return item.type || '';
+    if (field === 'factory') return item.manufacturer || item.factory || '';
+    if (field === 'line') return item.line || item.lineName || '';
+    if (field === 'quality') return item.quality || item.materialType || '';
+    return '';
+  }).filter(Boolean);
+  return [...new Set(values)].sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'));
+}
+
+function renderCatalogFilters() {
+  document.querySelectorAll('[data-catalog-filter]').forEach(control => {
+    const field = control.dataset.catalogFilter;
+    if (!field) return;
+    if (control.tagName === 'SELECT') {
+      const label = field === 'category' ? 'Todas' : 'Todos';
+      const current = catalogFilters[field] || '';
+      const options = catalogFilterOptions(field);
+      control.innerHTML = `<option value="">${label}</option>${options.map(value => `<option value="${escapeAttribute(value)}">${escapeHTML(field === 'category' ? catalogTypeLabel(value) : value)}</option>`).join('')}`;
+      control.value = options.includes(current) ? current : '';
+      catalogFilters[field] = control.value;
+    } else {
+      control.value = catalogFilters[field] || '';
+    }
+  });
+}
+
+function bindCatalogFilterEvents() {
+  document.querySelectorAll('[data-catalog-filter]').forEach(control => {
+    if (control.dataset.bound === 'true') return;
+    const eventName = control.tagName === 'INPUT' ? 'input' : 'change';
+    control.addEventListener(eventName, debounceCatalogFilterChange);
+    control.dataset.bound = 'true';
+  });
+}
+
+let catalogFilterTimer = null;
+function debounceCatalogFilterChange(event) {
+  const field = event.target.dataset.catalogFilter;
+  catalogFilters[field] = event.target.value || '';
+  window.clearTimeout(catalogFilterTimer);
+  catalogFilterTimer = window.setTimeout(applyCatalogFilters, field === 'search' ? 250 : 0);
+}
+
+async function applyCatalogFilters() {
+  if (hasCatalogFilters()) {
+    await loadFilteredCatalogFromServer().catch(error => {
+      catalogVisibleItems = null;
+      console.warn('Filtro remoto de catalogo indisponivel; usando filtro local.', error);
+    });
+  } else {
+    catalogVisibleItems = null;
+  }
+  renderCatalogFilters();
+  renderManualCatalogList();
+  renderAmbientes();
+}
+
+function clearCatalogFilters() {
+  catalogFilters = { category: '', factory: '', line: '', quality: '', search: '' };
+  catalogVisibleItems = null;
+  renderCatalogFilters();
+  renderManualCatalogList();
+  renderAmbientes();
+}
+
+function hasCatalogFilters() {
+  return Object.values(catalogFilters).some(value => String(value || '').trim());
+}
+
+async function loadFilteredCatalogFromServer() {
+  const params = new URLSearchParams();
+  if (catalogFilters.category) params.set('category', catalogFilters.category);
+  if (catalogFilters.factory) params.set('factory', catalogFilters.factory);
+  if (catalogFilters.line) params.set('line', catalogFilters.line);
+  if (catalogFilters.quality) params.set('quality', catalogFilters.quality);
+  if (catalogFilters.search) params.set('search', catalogFilters.search);
+  params.set('limit', '250');
+  const response = await fetch(`/api/catalog-materials?${params.toString()}`, { cache: 'no-store' });
+  if (!response.ok) throw new Error('Nao foi possivel filtrar catalogo no servidor.');
+  const result = await response.json();
+  catalogVisibleItems = Array.isArray(result.items) ? result.items.map(normalizeCatalogItem) : [];
+}
+
 function applyEditorSettings() {
   const logo = editorSettings.logo || DEFAULT_LOGO;
   document.getElementById('companyLogo').src = logo;
@@ -625,6 +765,8 @@ function applyEditorSettings() {
   if (logoPreview) logoPreview.src = logo;
   renderManualCatalogList();
   renderMaterialOptionList();
+  renderCatalogFilters();
+  bindCatalogFilterEvents();
   refreshPuxadorSelects();
   bindMaterialOptionEvents();
 }
@@ -885,6 +1027,8 @@ async function addManualCatalogItem() {
     editorSettings.catalogItems = items.map(item => item.id === editingCatalogItemId ? {
       ...item,
       type,
+      category: type,
+      catalogKey: stableCatalogKey({ category: type, factory: manufacturer, line, quality, name }),
       manufacturer,
       line,
       name,
@@ -899,7 +1043,9 @@ async function addManualCatalogItem() {
       ...items,
       {
       id: crypto.randomUUID(),
+      catalogKey: stableCatalogKey({ category: type, factory: manufacturer, line, quality, name }),
       type,
+      category: type,
       manufacturer,
       line,
       name,
@@ -915,6 +1061,13 @@ async function addManualCatalogItem() {
   applyEditorSettings();
   rerenderAllSwatches();
   syncPreviewDocument();
+}
+
+function stableCatalogKey({ category, factory, line, quality, name }) {
+  return [category, factory, line, quality, name]
+    .map(value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''))
+    .filter(Boolean)
+    .join('-') || crypto.randomUUID();
 }
 
 function startManualCatalogEdit(id) {
@@ -1010,7 +1163,7 @@ function clearManualCatalogColors() {
 function renderManualCatalogList() {
   const list = document.getElementById('manualCatalogList');
   if (!list) return;
-  const items = editorSettings.catalogItems || [];
+  const items = visibleCatalogItems();
   list.innerHTML = items.length ? items.map(item => {
     const textureUrl = catalogItemTextureUrl(item);
     return `
@@ -1027,7 +1180,7 @@ function renderManualCatalogList() {
         </div>
       </div>
     `;
-  }).join('') : '<div class="amb-summary">Nenhum item manual cadastrado ainda.</div>';
+  }).join('') : '<div class="amb-summary">Nenhum item encontrado para os filtros atuais.</div>';
 }
 
 function catalogTypeLabel(type) {
@@ -1143,7 +1296,7 @@ function bindMaterialOptionEvents() {
 
 function availableColors() {
   const factories = selectedFactories();
-  const manualColors = manualCatalogItems('color').filter(color => factories.includes(color.manufacturer));
+  const manualColors = visibleCatalogItems('color').filter(color => factories.includes(color.manufacturer));
   return [
     ...(factories.includes('VITTA') ? LEGACY_COLORS : []),
     ...(factories.includes('BOA VISTA') ? BOA_VISTA_COLORS : []),
@@ -1168,7 +1321,8 @@ function catalogOptionValue(item) {
 }
 
 function allMaterialOptionsWithCatalog(group, type) {
-  const manualOptions = manualCatalogItems(type).map(catalogOptionValue);
+  const manualOptions = visibleCatalogItems(type).map(catalogOptionValue);
+  if (hasCatalogFilters()) return [...new Set(manualOptions)];
   return [...new Set([...(editorSettings.materialOptions?.[group] || DEFAULT_MATERIAL_OPTIONS[group] || []), ...manualOptions])];
 }
 function obsOptions() {
@@ -1321,7 +1475,7 @@ function buildObsHTML(ambId) {
 
 function buildMaterialImagePickerHTML(ambId, field, type) {
   const factories = selectedFactories();
-  const items = manualCatalogItems(type).filter(item => factories.includes(item.manufacturer));
+  const items = visibleCatalogItems(type).filter(item => factories.includes(item.manufacturer));
   if (!items.length) return '';
   return `
     <div class="handle-picker">

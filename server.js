@@ -103,6 +103,11 @@ createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/catalog-materials') {
+    await handleCatalogMaterialsGet(url, response);
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/editor-settings') {
     await handleEditorSettingsPost(request, response);
     return;
@@ -404,6 +409,54 @@ async function handleEditorSettingsGet(response) {
       ok: true,
       source: 'server-supabase',
       settings,
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: String(error?.message || error) });
+  }
+}
+
+async function handleCatalogMaterialsGet(url, response) {
+  try {
+    if (!supabaseServer) {
+      sendJson(response, 503, {
+        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar catalogos.',
+      });
+      return;
+    }
+
+    const filters = {
+      category: String(url.searchParams.get('category') || '').trim(),
+      factory: String(url.searchParams.get('factory') || '').trim(),
+      line: String(url.searchParams.get('line') || '').trim(),
+      quality: String(url.searchParams.get('quality') || '').trim(),
+      search: String(url.searchParams.get('search') || '').trim(),
+      limit: Math.min(500, Math.max(25, Number(url.searchParams.get('limit') || 250))),
+    };
+
+    let query = supabaseServer
+      .from('catalog_materials')
+      .select('id,catalog_key,group_key,name,code,manufacturer,line_name,quality,material_type,category,hex,texture_url,image_url,storage_bucket,storage_path,public_url,mime_type,width,height,active,sort_order,created_by,updated_by,created_at,updated_at,data')
+      .eq('active', true)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
+      .limit(filters.limit);
+
+    if (filters.category) query = query.eq('group_key', catalogItemGroup(filters.category));
+    if (filters.factory) query = query.eq('manufacturer', filters.factory);
+    if (filters.line) query = query.eq('line_name', filters.line);
+    if (filters.quality) query = query.eq('quality', filters.quality);
+    if (filters.search) {
+      const term = escapePostgrestLike(filters.search);
+      query = query.or(`name.ilike.%${term}%,code.ilike.%${term}%,catalog_key.ilike.%${term}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    sendJson(response, 200, {
+      ok: true,
+      source: 'server-supabase',
+      filters,
+      items: (data || []).map(catalogMaterialToSettingsItem).filter(Boolean),
     });
   } catch (error) {
     sendJson(response, 500, { error: String(error?.message || error) });
@@ -1042,10 +1095,10 @@ async function loadSettingsFromSharedCatalogTables() {
   const [materialsResult, optionsResult] = await Promise.all([
     supabaseServer
       .from('catalog_materials')
-      .select('group_key, name, manufacturer, line_name, quality, hex, texture_url, image_url, image_data, sort_order, data')
+      .select('id,catalog_key,group_key,name,code,manufacturer,line_name,quality,material_type,category,hex,texture_url,image_url,storage_bucket,storage_path,public_url,mime_type,width,height,active,sort_order,created_by,updated_by,created_at,updated_at,data')
       .eq('active', true)
-      .eq('owner_email', primaryAccountEmail)
-      .order('sort_order', { ascending: true }),
+      .order('sort_order', { ascending: true })
+      .limit(500),
     supabaseServer
       .from('catalog_options')
       .select('group_key, label, sort_order')
@@ -1072,16 +1125,39 @@ function catalogMaterialToSettingsItem(row) {
   const data = row?.data && typeof row.data === 'object' ? row.data : {};
   const type = data.type || settingsTypeFromCatalogGroup(row?.group_key);
   if (!type || !row?.name) return null;
-  const textureUrl = data.textureUrl || data.imageUrl || row.image_data || row.image_url || row.texture_url || '';
+  const textureUrl = data.textureUrl || data.imageUrl || row.public_url || row.image_url || row.texture_url || '';
   return {
-    id: data.id || `${row.group_key}-${row.name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    id: data.id || row.catalog_key || `${row.group_key}-${row.name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    catalogKey: row.catalog_key || data.catalogKey || '',
+    catalog_key: row.catalog_key || data.catalogKey || '',
     type,
+    category: data.category || row.category || row.group_key || '',
+    factory: data.factory || data.manufacturer || row.manufacturer || '',
     manufacturer: data.manufacturer || row.manufacturer || '',
     line: data.line || data.line_name || row.line_name || '',
     name: data.name || row.name,
     quality: data.quality || row.quality || '',
+    materialType: data.materialType || row.material_type || row.quality || '',
     hex: data.hex || row.hex || '#b8976a',
     textureUrl,
+    imageUrl: textureUrl,
+    storageBucket: data.storageBucket || row.storage_bucket || '',
+    storagePath: data.storagePath || row.storage_path || '',
+    publicUrl: data.publicUrl || row.public_url || row.image_url || '',
+    storage_path: data.storagePath || row.storage_path || '',
+    public_url: data.publicUrl || row.public_url || row.image_url || '',
+    mimeType: data.mimeType || row.mime_type || '',
+    mime_type: data.mimeType || row.mime_type || '',
+    width: data.width || row.width || null,
+    height: data.height || row.height || null,
+    active: row.active !== false,
+    sort_order: row.sort_order ?? 0,
+    createdBy: data.createdBy || row.created_by || '',
+    updatedBy: data.updatedBy || row.updated_by || '',
+    created_by: data.createdBy || row.created_by || '',
+    updated_by: data.updatedBy || row.updated_by || '',
+    created_at: row.created_at || '',
+    updated_at: row.updated_at || '',
     source: data.source || 'shared',
   };
 }
@@ -1106,26 +1182,46 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
 
   const materialRows = catalogItems
     .filter(item => item?.name)
-    .map((item, index) => ({
-      group_key: catalogItemGroup(item.type),
+    .map((item, index) => {
+      const groupKey = catalogItemGroup(item.type);
+      const catalogKey = stableCatalogKey({
+        category: groupKey,
+        factory: item.manufacturer || item.factory || '',
+        line: item.line || item.line_name || '',
+        quality: item.quality || item.materialType || '',
+        name: item.name,
+      });
+      return {
+      catalog_key: catalogKey,
+      group_key: groupKey,
       name: item.name,
-      code: item.id || null,
+      code: item.code || item.id || null,
       brand: item.brand || item.manufacturer || null,
       manufacturer: item.manufacturer || null,
       line_name: item.line || item.line_name || null,
       quality: item.quality || null,
+      material_type: item.materialType || item.quality || null,
+      category: item.category || groupKey,
       hex: item.hex || null,
       texture_url: item.textureUrl || item.imageUrl || null,
       image_data: null,
       image_url: String(item.textureUrl || item.imageUrl || '').startsWith('http') || String(item.textureUrl || item.imageUrl || '').startsWith('/')
         ? (item.textureUrl || item.imageUrl)
         : null,
+      storage_bucket: item.storageBucket || photoBucket,
+      storage_path: item.storagePath || null,
+      public_url: item.publicUrl || item.imageUrl || item.textureUrl || null,
+      mime_type: item.mimeType || (String(item.textureUrl || '').includes('.webp') ? 'image/webp' : null),
+      width: Number(item.width) || null,
+      height: Number(item.height) || null,
       sort_order: index,
       active: true,
       owner_email: primaryAccountEmail,
+      created_by: item.createdBy || actorEmail || primaryAccountEmail,
       updated_by: actorEmail || primaryAccountEmail,
-      data: item,
-    }));
+      data: { ...item, catalogKey },
+    };
+    });
 
   if (catalogGroups.length) {
     const { error } = await supabaseServer
@@ -1134,7 +1230,6 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
         active: false,
         updated_by: actorEmail || primaryAccountEmail,
       })
-      .eq('owner_email', primaryAccountEmail)
       .in('group_key', catalogGroups);
     if (error) throw error;
   }
@@ -1142,7 +1237,7 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
   if (materialRows.length) {
     const { error } = await supabaseServer
       .from('catalog_materials')
-      .upsert(materialRows, { onConflict: 'group_key,name' });
+      .upsert(materialRows, { onConflict: 'catalog_key' });
     if (error) throw error;
   }
 
@@ -1178,7 +1273,6 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
         active: false,
         updated_by: actorEmail || primaryAccountEmail,
       })
-      .eq('owner_email', primaryAccountEmail)
       .in('group_key', optionGroups);
     if (error) throw error;
   }
@@ -1198,6 +1292,23 @@ function catalogItemGroup(type) {
     door: 'porta',
     slide: 'corredica',
   }[type] || String(type || 'material');
+}
+
+function stableCatalogKey({ category, factory, line, quality, name }) {
+  return normalizeCatalogKey([category, factory, line, quality, name].join(':'));
+}
+
+function normalizeCatalogKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'catalog-item';
+}
+
+function escapePostgrestLike(value) {
+  return String(value || '').replace(/[,%]/g, '');
 }
 
 function catalogItemOptionGroup(type) {
