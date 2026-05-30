@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Login, PRIMARY_ACCOUNT_EMAIL } from './Login'
-import { persistEditorEvent, flushOfflineQueue, loadLatestEditorState } from './auditPersistence'
+import { getActiveProjectId, persistEditorEvent, flushOfflineQueue, loadLatestEditorState } from './auditPersistence'
+import { loadLocalProjectSnapshot, saveLocalProjectSnapshot, savePendingAsset } from './offlinePersistence'
+import { optimizeImageToWebp } from './imageOptimizer'
 import './styles.css'
 
 function App() {
@@ -11,6 +13,8 @@ function App() {
   const [remoteDocument, setRemoteDocument] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const iframeRef = useRef(null);
+  const autosaveTimerRef = useRef(null);
+  const pendingAutosaveRef = useRef(null);
   const actor = useMemo(() => ({
     email: currentUser?.email || PRIMARY_ACCOUNT_EMAIL,
     name: currentUser?.name || "D'Coratto Inovacao",
@@ -39,6 +43,12 @@ function App() {
         if (remote?.settings) setRemoteSettings(remote.settings);
       } catch (error) {
         console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
+        const local = await loadLocalProjectSnapshot(getActiveProjectId(actor)).catch(() => null);
+        if (!cancelled && local) {
+          hydrateBrowserStorage(local);
+          setRemoteDocument(local);
+          if (local?.settings) setRemoteSettings(local.settings);
+        }
       }
     }
 
@@ -54,8 +64,29 @@ function App() {
   useEffect(() => {
     if (!isLogged) return undefined;
 
-    function handleMessage(event) {
+    async function handleMessage(event) {
       if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'dcoratto:pending-asset') {
+        const optimized = await optimizeImageToWebp(event.data.file).catch(() => null);
+        savePendingAsset({
+          id: event.data.assetId,
+          projectId: getActiveProjectId(actor),
+          file: optimized?.blob || event.data.file,
+          metadata: {
+            ...(event.data.metadata || {}),
+            fileName: optimized?.fileName || event.data.file?.name || '',
+            mimeType: optimized?.mimeType || event.data.file?.type || '',
+            width: optimized?.width || 0,
+            height: optimized?.height || 0,
+            originalSize: optimized?.originalSize || event.data.file?.size || 0,
+            optimizedSize: optimized?.optimizedSize || event.data.file?.size || 0,
+            compressionRatio: optimized?.compressionRatio || 1,
+            convertedToWebp: Boolean(optimized?.converted),
+          },
+          actor,
+        }).catch((error) => console.warn('Falha ao guardar asset offline.', error));
+        return;
+      }
       if (event.data?.type === 'dcoratto:load-project') {
         const projectId = event.data.projectId || '';
         loadLatestEditorState(actor, projectId)
@@ -69,6 +100,7 @@ function App() {
               preview: remote?.preview || null,
               settings: remote?.settings || remoteSettings,
               projectId: remote?.projectId || projectId || null,
+              status: remote?.status || 'draft',
             }, window.location.origin);
           })
           .catch((error) => {
@@ -85,14 +117,44 @@ function App() {
       const { action, draft, preview, settings } = event.data;
       if (settings) setRemoteSettings(settings);
 
-      persistEditorEvent({
+      const payload = {
         action,
         actor,
         draft,
         preview,
         settings,
         saveHtml: action === 'generate_project_initial',
-      }).then((result) => {
+      };
+
+      saveLocalProjectSnapshot(getActiveProjectId(actor), {
+        draft: draft || null,
+        preview: preview || null,
+        settings: settings || null,
+        action,
+        actor,
+      }).catch((error) => console.warn('Falha ao salvar snapshot local imediato.', error));
+
+      if (action !== 'generate_project_initial') {
+        pendingAutosaveRef.current = payload;
+        window.clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = window.setTimeout(() => {
+          const queuedPayload = pendingAutosaveRef.current;
+          pendingAutosaveRef.current = null;
+          persistEditorEvent(queuedPayload).then((result) => {
+            if (result?.projectId) {
+              iframeRef.current?.contentWindow?.postMessage({
+                type: 'dcoratto:project-meta',
+                projectId: result.projectId,
+              }, window.location.origin);
+            }
+          }).catch((error) => {
+            console.warn('Falha ao persistir autosave remoto.', error);
+          });
+        }, 900);
+        return;
+      }
+
+      persistEditorEvent(payload).then((result) => {
         if (action !== 'generate_project_initial') return;
         iframeRef.current?.contentWindow?.postMessage({
           type: 'dcoratto:client-link',
@@ -115,7 +177,10 @@ function App() {
     }
 
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      window.clearTimeout(autosaveTimerRef.current);
+    };
   }, [isLogged, actor, remoteSettings]);
 
   function sendStateToEditor() {
@@ -135,6 +200,7 @@ function App() {
       preview: remoteDocument?.preview || null,
       settings: remoteSettings,
       projectId: remoteDocument?.projectId || null,
+      status: remoteDocument?.status || 'draft',
     }, window.location.origin);
   }
 

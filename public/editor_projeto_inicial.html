@@ -23,6 +23,9 @@ header{background:rgba(14,13,11,0.96);border-bottom:1px solid var(--border);padd
 .hlogo img{height:32px;filter:brightness(0) invert(1);opacity:.9}
 .htitle{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;color:var(--gold-l);letter-spacing:.05em}
 .header-actions{display:flex;align-items:center;gap:10px}
+.sold-lock-banner{display:none;background:#3a2117;color:#f7dfbf;border-bottom:1px solid rgba(184,151,106,.32);padding:10px 40px;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+body.project-sold .sold-lock-banner{display:block}
+body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
 .icon-btn{width:38px;height:38px;border:1px solid var(--border);border-radius:50%;background:transparent;color:var(--gold-l);cursor:pointer;font-size:18px;line-height:1;display:inline-grid;place-items:center;transition:all .2s}
 .icon-btn:hover{border-color:var(--gold);background:rgba(184,151,106,.12)}
 .hbtn{background:var(--gold);color:var(--dark);border:none;padding:10px 24px;font-family:'Montserrat',sans-serif;font-size:11px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;border-radius:2px;transition:all .2s}
@@ -262,11 +265,13 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
     <button class="icon-btn" type="button" onclick="openClientHistory()" title="Histórico de clientes" aria-label="Histórico de clientes">📋</button>
     <button class="icon-btn" type="button" onclick="openSettings()" title="Configurações" aria-label="Configurações">⚙</button>
     <button class="ghost-btn" type="button" onclick="openHtmlPreview()">Preview HTML</button>
+    <button class="ghost-btn" type="button" id="sellProjectBtn" onclick="markProjectSold()">Marcar vendido</button>
     <button class="hbtn" type="button" onclick="publishClientHtml()">Gerar link para cliente</button>
   </div>
 </header>
 
 <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+<div class="sold-lock-banner" id="soldLockBanner">Projeto vendido. Este projeto está bloqueado para alterações.</div>
 
 <!-- COVER DATA -->
 <div class="cover-section">
@@ -474,6 +479,8 @@ let editingCatalogItemId = null;
 let editingMaterialOption = null;
 let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
 let clientHistoryItems = [];
+let currentProjectId = '';
+let projectStatus = 'draft';
 
 function loadEditorSettings() {
   try {
@@ -623,17 +630,128 @@ function applyEditorSettings() {
 }
 
 function fileToDataURL(file) {
+  return optimizeImageForPersistence(file).then(result => result.previewDataUrl);
+}
+
+async function optimizeImageForPersistence(file, options = {}) {
+  const fallbackDataUrl = () => readBlobAsDataURL(file);
+  const originalSize = Number(file?.size || 0);
+  if (!file || !String(file.type || '').startsWith('image/')) {
+    return {
+      blob: file,
+      fileName: file?.name || 'image',
+      mimeType: file?.type || 'application/octet-stream',
+      width: 0,
+      height: 0,
+      originalSize,
+      optimizedSize: originalSize,
+      compressionRatio: 1,
+      previewDataUrl: await fallbackDataUrl(),
+      converted: false,
+    };
+  }
+  if (typeof createImageBitmap === 'undefined') {
+    return {
+      blob: file,
+      fileName: file.name || 'image',
+      mimeType: file.type || 'application/octet-stream',
+      width: 0,
+      height: 0,
+      originalSize,
+      optimizedSize: originalSize,
+      compressionRatio: 1,
+      previewDataUrl: await fallbackDataUrl(),
+      converted: false,
+    };
+  }
+
+  const image = await createImageBitmap(file).catch(() => null);
+  if (!image) {
+    return {
+      blob: file,
+      fileName: file.name || 'image',
+      mimeType: file.type || 'application/octet-stream',
+      width: 0,
+      height: 0,
+      originalSize,
+      optimizedSize: originalSize,
+      compressionRatio: 1,
+      previewDataUrl: await fallbackDataUrl(),
+      converted: false,
+    };
+  }
+
+  const maxSize = Number(options.maxSize || 1920);
+  const quality = Number(options.quality || 0.82);
+  const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    image.close?.();
+    return {
+      blob: file,
+      fileName: file.name || 'image',
+      mimeType: file.type || 'application/octet-stream',
+      width: image.width || 0,
+      height: image.height || 0,
+      originalSize,
+      optimizedSize: originalSize,
+      compressionRatio: 1,
+      previewDataUrl: await fallbackDataUrl(),
+      converted: false,
+    };
+  }
+
+  context.drawImage(image, 0, 0, width, height);
+  image.close?.();
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', quality));
+  if (!blob || blob.type !== 'image/webp') {
+    return {
+      blob: file,
+      fileName: file.name || 'image',
+      mimeType: file.type || 'application/octet-stream',
+      width,
+      height,
+      originalSize,
+      optimizedSize: originalSize,
+      compressionRatio: 1,
+      previewDataUrl: await fallbackDataUrl(),
+      converted: false,
+    };
+  }
+
+  const optimizedSize = Number(blob.size || 0);
+  return {
+    blob,
+    fileName: `${String(file.name || 'image').replace(/\.[^.]+$/, '') || 'image'}.webp`,
+    mimeType: 'image/webp',
+    width,
+    height,
+    originalSize,
+    optimizedSize,
+    compressionRatio: originalSize ? optimizedSize / originalSize : 1,
+    previewDataUrl: await readBlobAsDataURL(blob),
+    converted: true,
+  };
+}
+
+function readBlobAsDataURL(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = reject;
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
 }
 
 async function handleLogoUpload(input) {
   const file = input.files?.[0];
   if (!file) return;
+  trackPendingAsset(file, { area: 'settings.logo' });
   editorSettings.logo = await fileToDataURL(file);
   saveEditorSettings();
   applyEditorSettings();
@@ -649,10 +767,6 @@ function resetLogo() {
 }
 
 function openSettings() {
-  if (editorActor && editorActor.isPrimary === false) {
-    alert('Os cadastros de materiais são administrados pela conta principal dcorattoinovacao@gmail.com.');
-    return;
-  }
   applyEditorSettings();
   document.getElementById('settingsOverlay').classList.add('active');
 }
@@ -765,6 +879,7 @@ async function addManualCatalogItem() {
     return;
   }
 
+  if (file) trackPendingAsset(file, { area: 'catalog', type, name, line, manufacturer });
   const textureUrl = file ? await fileToDataURL(file) : currentTextureUrl;
   if (editingCatalogItemId && currentItem) {
     editorSettings.catalogItems = items.map(item => item.id === editingCatalogItemId ? {
@@ -1360,6 +1475,7 @@ async function handleCoverPhotosUpload(ambId, input) {
   const existing = environmentCoverPhotos(amb).filter(photo => photo.src && photo.src !== DEFAULT_AMBIENTE_IMG);
   const uploaded = [];
   for (const file of files) {
+    trackPendingAsset(file, { area: 'environment.cover', environmentId: ambId });
     uploaded.push({
       label: '',
       src: await fileToDataURL(file),
@@ -1844,6 +1960,7 @@ async function handleFramePhotoUpload(ambId, pageId, frameId, input) {
   const page = environmentPages(ambId).find(item => item.id === pageId);
   const frame = ensurePageFrames(page).find(item => item.id === frameId);
   if (!frame) return;
+  trackPendingAsset(file, { area: 'environment.page.frame', environmentId: ambId, pageId, frameId });
   frame.photo = await fileToDataURL(file);
   renderAmbientes();
   syncPreviewDocument('environment_page_frame_photo_uploaded');
@@ -2006,6 +2123,7 @@ async function handlePagePhotoUpload(ambId, pageId, input) {
   if (!file) return;
   const page = environmentPages(ambId).find(item => item.id === pageId);
   if (!page) return;
+  trackPendingAsset(file, { area: 'environment.page', environmentId: ambId, pageId });
   page.photo = await fileToDataURL(file);
   renderAmbientes();
   syncPreviewDocument('environment_page_photo_uploaded');
@@ -2063,6 +2181,7 @@ window.addEventListener('message', event => {
   if (event.data?.type === 'dcoratto:client-link') {
     const status = document.getElementById('previewStatus');
     if (event.data.ok && event.data.publicUrl) {
+      currentProjectId = event.data.projectId || currentProjectId;
       if (status) status.textContent = 'Link persistente gerado com sucesso. Use o link abaixo para enviar ao cliente.';
       showClientLink(event.data.publicUrl);
     } else if (status) {
@@ -2070,6 +2189,12 @@ window.addEventListener('message', event => {
         ? `O servidor nao confirmou o link agora. O evento ficou na fila local e sera reenviado automaticamente. Detalhe: ${event.data.error || 'erro desconhecido'}`
         : `Nao foi possivel gerar o link persistente: ${event.data.error || 'erro desconhecido'}`;
     }
+    return;
+  }
+  if (event.data?.type === 'dcoratto:project-meta') {
+    currentProjectId = event.data.projectId || currentProjectId;
+    projectStatus = event.data.status || projectStatus;
+    updateSoldLockUi();
     return;
   }
   if (event.data?.type === 'dcoratto:hydrate-document') {
@@ -2086,6 +2211,8 @@ function applyHydratedDocument(payload = {}) {
   const incomingSettings = payload.settings || null;
   const incomingDraft = payload.draft || null;
   const incomingPreview = payload.preview || null;
+  currentProjectId = payload.projectId || currentProjectId || '';
+  projectStatus = payload.status || projectStatus || 'draft';
 
   if (incomingSettings) {
     applyRemoteEditorSettings(incomingSettings);
@@ -2113,6 +2240,7 @@ function applyHydratedDocument(payload = {}) {
   if (incomingDraft || incomingPreview) {
     syncPreviewDocument('remote_document_loaded');
   }
+  updateSoldLockUi();
 }
 
 function resetBuilderState(incomingState = {}) {
@@ -2222,11 +2350,90 @@ function mergePreviewDocument(preview) {
 }
 
 function syncPreviewDocument(action = 'editor_sync') {
+  if (isProjectSold()) return;
   const draft = saveBuilderDraft();
   const preview = buildPreviewDocumentData();
   safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
   postEditorEvent(action, { draft, preview });
 }
+
+function trackPendingAsset(file, metadata = {}) {
+  if (!file || window.parent === window) return '';
+  const assetId = crypto.randomUUID();
+  window.parent.postMessage({
+    type: 'dcoratto:pending-asset',
+    assetId,
+    file,
+    metadata: {
+      ...metadata,
+      name: file.name || '',
+      mimeType: file.type || '',
+      size: file.size || 0,
+      createdAt: new Date().toISOString(),
+    },
+  }, window.location.origin);
+  return assetId;
+}
+
+function isProjectSold() {
+  return projectStatus === 'sold';
+}
+
+function updateSoldLockUi() {
+  document.body.classList.toggle('project-sold', isProjectSold());
+  const button = document.getElementById('sellProjectBtn');
+  if (button) {
+    button.disabled = isProjectSold();
+    button.textContent = isProjectSold() ? 'Vendido' : 'Marcar vendido';
+  }
+}
+
+async function markProjectSold() {
+  if (isProjectSold()) return;
+  syncPreviewDocument('before_mark_sold');
+  if (!currentProjectId) {
+    alert('Salve ou gere o link do projeto antes de marcar como vendido.');
+    return;
+  }
+  if (!confirm('Marcar este projeto como Vendido? Depois disso ele ficará bloqueado para alterações.')) return;
+  try {
+    const response = await fetch('/api/project-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: currentProjectId, status: 'sold', actor: editorActor }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result?.error || 'Não foi possível marcar como vendido.');
+    projectStatus = 'sold';
+    updateSoldLockUi();
+    alert('Projeto marcado como vendido e bloqueado.');
+  } catch (error) {
+    alert(String(error?.message || error));
+  }
+}
+
+document.addEventListener('click', event => {
+  if (!isProjectSold()) return;
+  const target = event.target;
+  if (target.closest('#sellProjectBtn,.preview-overlay,.history-overlay,.settings-close')) return;
+  if (target.closest('button,label.file-input,input,select,textarea')) {
+    event.preventDefault();
+    event.stopPropagation();
+    alert('Projeto vendido. Alterações estão bloqueadas.');
+  }
+}, true);
+
+document.addEventListener('input', event => {
+  if (!isProjectSold()) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
+
+document.addEventListener('change', event => {
+  if (!isProjectSold()) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 
 window.addEventListener('beforeunload', () => {
   syncPreviewDocument('before_unload_autosave');

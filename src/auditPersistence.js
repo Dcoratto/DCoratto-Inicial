@@ -1,7 +1,12 @@
+import {
+  enqueueMutation,
+  listPendingMutations,
+  markMutationFailed,
+  markMutationSynced,
+  saveLocalProjectSnapshot,
+} from './offlinePersistence';
+
 const PROJECT_ID_KEY = 'dcoratto.active.project.id.v1';
-const OFFLINE_QUEUE_KEY = 'dcoratto.persistence.queue.v1';
-const MAX_QUEUE_EVENTS = 25;
-const MAX_QUEUE_BYTES = 8_000_000;
 
 let queueFlushPromise = null;
 
@@ -32,17 +37,14 @@ function currentActorEmail() {
 }
 
 export function readOfflineQueue() {
-  try {
-    return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
-  } catch {
-    return [];
-  }
+  return listPendingMutations().catch(() => []);
 }
 
 export async function persistEditorEvent({ action, actor, draft, preview, settings, saveHtml = false }) {
   if (actor?.email) sessionStorage.setItem('dcoratto.current.actor.v1', JSON.stringify(actor));
   const payload = {
     id: crypto.randomUUID(),
+    eventId: crypto.randomUUID(),
     action,
     actor,
     draft: draft || null,
@@ -51,6 +53,18 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
     saveHtml,
     createdAt: new Date().toISOString(),
   };
+  payload.id = payload.eventId;
+
+  const projectId = getActiveProjectId(actor);
+  if (draft || preview || settings) {
+    saveLocalProjectSnapshot(projectId, {
+      draft: draft || null,
+      preview: preview || null,
+      settings: settings || null,
+      action,
+      actor: actor || null,
+    }).catch((error) => console.warn('Nao foi possivel salvar snapshot local no IndexedDB.', error));
+  }
 
   if (saveHtml && preview?.environments) {
     try {
@@ -60,7 +74,7 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
       return result;
     } catch (error) {
       console.warn('Persistencia do link pelo servidor indisponivel. Evento mantido na fila local para reenvio.', error);
-      enqueue(payload);
+      await enqueue(payload);
       return { source: 'server-error', projectId: getActiveProjectId(actor), error: String(error?.message || error), queued: true };
     }
   }
@@ -76,7 +90,7 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
     }
   }
 
-  enqueue(payload);
+  await enqueue(payload);
   return { source: 'local-queue', projectId: getActiveProjectId(actor), error: 'server_unavailable' };
 }
 
@@ -108,7 +122,7 @@ async function persistEditorEventWithServer(event) {
       draft: event.draft,
       preview: event.preview,
       settings: event.settings,
-      eventId: event.id,
+      eventId: event.eventId || event.id,
       createdAt: event.createdAt,
     }),
   });
@@ -131,23 +145,21 @@ export async function flushOfflineQueue() {
 }
 
 async function flushOfflineQueueNow() {
-  const queue = readOfflineQueue();
+  const queue = await readOfflineQueue();
   if (!queue.length) return;
 
-  const remaining = [];
   for (const event of queue) {
     try {
       const result = event.saveHtml && event.preview?.environments
         ? await publishClientHtmlWithServer(event)
         : await persistEditorEventWithServer(event);
       if (result?.projectId) setActiveProjectId(result.projectId, event.actor);
+      await markMutationSynced(event.id);
     } catch (error) {
-      remaining.push(event);
+      await markMutationFailed(event.id, error);
       console.warn('Falha ao reenviar evento persistente', error);
     }
   }
-
-  writeOfflineQueue(remaining);
 }
 
 async function publishClientHtmlWithServer(event) {
@@ -160,7 +172,7 @@ async function publishClientHtmlWithServer(event) {
       actor: event.actor,
       draft: event.draft,
       preview: event.preview,
-      eventId: event.id,
+      eventId: event.eventId || event.id,
       createdAt: event.createdAt,
     }),
   });
@@ -184,35 +196,11 @@ async function publishClientHtmlWithServer(event) {
   };
 }
 
-function enqueue(event) {
-  const queue = readOfflineQueue();
-  queue.push(compactQueuedEvent(event));
-  writeOfflineQueue(queue);
-}
-
-function writeOfflineQueue(events) {
-  const queue = events.filter(Boolean).slice(-MAX_QUEUE_EVENTS).map(compactQueuedEvent);
-  while (queue.length) {
-    const serialized = JSON.stringify(queue);
-    if (serialized.length <= MAX_QUEUE_BYTES && trySetQueue(serialized)) return;
-    queue.shift();
-  }
-  trySetQueue('[]');
-}
-
-function trySetQueue(serialized) {
-  try {
-    localStorage.setItem(OFFLINE_QUEUE_KEY, serialized);
-    return true;
-  } catch (error) {
-    console.warn('Fila local cheia. Eventos antigos foram descartados para manter o editor responsivo.', error);
-    return false;
-  }
-}
-
-function compactQueuedEvent(event) {
-  return {
+async function enqueue(event) {
+  return enqueueMutation({
     id: event.id,
+    eventId: event.eventId || event.id,
+    projectId: getActiveProjectId(event.actor),
     action: event.action,
     actor: event.actor,
     draft: event.draft || null,
@@ -220,7 +208,7 @@ function compactQueuedEvent(event) {
     settings: event.settings || null,
     saveHtml: Boolean(event.saveHtml),
     createdAt: event.createdAt,
-  };
+  });
 }
 
 if (typeof window !== 'undefined' && window.navigator?.onLine !== false) {

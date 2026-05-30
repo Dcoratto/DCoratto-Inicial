@@ -9,7 +9,7 @@ create table if not exists public.document_projects (
   address text not null default '',
   project_code text not null default '',
   document_type text not null default 'projeto_inicial',
-  status text not null default 'draft' check (status in ('draft', 'review', 'approved', 'archived')),
+  status text not null default 'draft' check (status in ('draft', 'review', 'approved', 'archived', 'sold')),
   data jsonb not null default '{}'::jsonb,
   current_html_id uuid,
   created_at timestamptz not null default now(),

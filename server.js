@@ -2,6 +2,7 @@ import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 
 const localEnvKeys = new Set();
@@ -13,6 +14,7 @@ const root = resolve('dist');
 const publicRoot = resolve('public');
 const indexFile = join(root, 'index.html');
 const htmlBucket = process.env.SUPABASE_HTML_BUCKET || process.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
+const photoBucket = process.env.SUPABASE_PHOTOS_BUCKET || process.env.VITE_SUPABASE_PHOTOS_BUCKET || 'dcoratto-photos';
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   || process.env.SUPABASE_SERVICE_KEY
@@ -106,6 +108,11 @@ createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/project-status') {
+    await handleProjectStatusRequest(request, response);
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/client-history') {
     await handleClientHistoryRequest(response);
     return;
@@ -196,8 +203,13 @@ async function handleClientLinkRequest(request, response) {
     }
 
     const body = await readJsonBody(request);
-    const preview = body.preview || {};
     const projectId = safeId(body.projectId) || crypto.randomUUID();
+    const promotedDocument = await promoteDocumentImages({
+      projectId,
+      draft: body.draft || null,
+      preview: body.preview || {},
+    });
+    const preview = promotedDocument.preview || {};
     if (!Array.isArray(preview.environments) || !preview.environments.length) {
       sendJson(response, 400, { error: 'Adicione ao menos um ambiente antes de gerar o link do cliente.' });
       return;
@@ -219,7 +231,7 @@ async function handleClientLinkRequest(request, response) {
       html,
       preview,
       actor: body.actor,
-      draft: body.draft,
+      draft: promotedDocument.draft,
       eventId: body.eventId,
       createdAt: body.createdAt,
     });
@@ -257,12 +269,17 @@ async function handleEditorEventRequest(request, response) {
 
     const body = await readJsonBody(request);
     const projectId = safeId(body.projectId) || crypto.randomUUID();
+    const promotedDocument = await promoteDocumentImages({
+      projectId,
+      draft: body.draft || null,
+      preview: body.preview || null,
+    });
     await persistEditorState({
       projectId,
       actor: body.actor,
       action: body.action,
-      draft: body.draft,
-      preview: body.preview,
+      draft: promotedDocument.draft,
+      preview: promotedDocument.preview,
       settings: body.settings,
       eventId: body.eventId,
       createdAt: body.createdAt,
@@ -295,7 +312,7 @@ async function handleLatestEditorStateRequest(url, response) {
     if (requestedProjectId) {
       const { data, error } = await supabaseServer
         .from('document_projects')
-        .select('id, data, updated_at')
+        .select('id, data, updated_at, status')
         .eq('id', requestedProjectId)
         .maybeSingle();
       if (error) throw error;
@@ -303,9 +320,9 @@ async function handleLatestEditorStateRequest(url, response) {
     } else {
       const { data: projects, error: projectError } = await supabaseServer
         .from('document_projects')
-        .select('id, data, updated_at')
+        .select('id, data, updated_at, status')
         .eq('document_type', 'projeto_inicial')
-        .eq('updated_by', actorEmail || primaryAccountEmail)
+        .eq('owner_email', primaryAccountEmail)
         .order('updated_at', { ascending: false })
         .limit(12);
       if (projectError) throw projectError;
@@ -324,6 +341,7 @@ async function handleLatestEditorStateRequest(url, response) {
       source: 'server-supabase',
       projectId: project?.id || null,
       updatedAt: project?.updated_at || null,
+      status: project?.status || 'draft',
       draft: project?.data?.draft || null,
       preview: project?.data?.preview || null,
       settings,
@@ -332,6 +350,43 @@ async function handleLatestEditorStateRequest(url, response) {
     sendJson(response, 500, {
       error: String(error?.message || error),
     });
+  }
+}
+
+async function handleProjectStatusRequest(request, response) {
+  try {
+    if (!supabaseServer) {
+      sendJson(response, 503, {
+        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para atualizar o status.',
+      });
+      return;
+    }
+    const body = await readJsonBody(request);
+    const projectId = safeId(body.projectId);
+    const status = String(body.status || '').trim();
+    if (!projectId || !['draft', 'review', 'approved', 'archived', 'sold'].includes(status)) {
+      sendJson(response, 400, { error: 'Status ou projeto invalido.' });
+      return;
+    }
+    const current = await loadProjectForWrite(projectId);
+    const currentData = current?.data && typeof current.data === 'object' ? current.data : {};
+
+    const { error } = await supabaseServer
+      .from('document_projects')
+      .update({
+        status,
+        updated_by: normalizeEmail(body.actor?.email),
+        data: {
+          ...currentData,
+          soldAt: status === 'sold' ? new Date().toISOString() : null,
+          soldBy: status === 'sold' ? normalizeEmail(body.actor?.email) : null,
+        },
+      })
+      .eq('id', projectId);
+    if (error) throw error;
+    sendJson(response, 200, { ok: true, projectId, status });
+  } catch (error) {
+    sendJson(response, 500, { error: String(error?.message || error) });
   }
 }
 
@@ -646,6 +701,13 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
 
   if (!hasPersistableContent(draft, preview)) return;
 
+  const existingProject = await loadProjectForWrite(projectId);
+  if (existingProject?.status === 'sold') {
+    throw new Error('Projeto vendido esta bloqueado para alteracoes.');
+  }
+
+  if (await hasAuditEvent(eventId)) return;
+
   const client = preview?.client || {};
   const actorEmail = normalizeEmail(actor?.email);
   const projectPayload = {
@@ -656,7 +718,7 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
     factory: Array.isArray(client.manufacturers) ? client.manufacturers.join(' + ') : '',
     address: client.address || draft?.fields?.endereco || '',
     document_type: 'projeto_inicial',
-    status: 'draft',
+    status: existingProject?.status || 'draft',
     owner_email: primaryAccountEmail,
     created_by: actorEmail,
     updated_by: actorEmail,
@@ -675,6 +737,47 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
     .from('document_projects')
     .upsert(projectPayload, { onConflict: 'id' });
   if (error) throw error;
+  await persistAuditLog({ projectId, actor, action, draft, preview, settings, eventId, createdAt });
+}
+
+async function loadProjectForWrite(projectId) {
+  const { data, error } = await supabaseServer
+    .from('document_projects')
+    .select('id, status, data')
+    .eq('id', projectId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function hasAuditEvent(eventId) {
+  if (!eventId) return false;
+  const { data: existing, error: readError } = await supabaseServer
+    .from('editor_audit_logs')
+    .select('id')
+    .eq('event_id', eventId)
+    .maybeSingle();
+  if (readError) throw readError;
+  return Boolean(existing?.id);
+}
+
+async function persistAuditLog({ projectId, actor, action, draft, preview, settings, eventId, createdAt }) {
+  if (!eventId) return;
+  const { error } = await supabaseServer
+    .from('editor_audit_logs')
+    .insert({
+      project_id: projectId,
+      event_id: eventId,
+      actor_email: normalizeEmail(actor?.email),
+      action: action || 'autosave',
+      payload: {
+        draft: draft ? { updatedAt: draft.updatedAt || null } : null,
+        preview: preview ? { environments: Array.isArray(preview.environments) ? preview.environments.length : 0 } : null,
+        settingsChanged: Boolean(settings),
+      },
+      created_at: createdAt || new Date().toISOString(),
+    });
+  if (error && error.code !== '23505') throw error;
 }
 
 async function loadSharedEditorSettings() {
@@ -699,10 +802,10 @@ async function loadSharedEditorSettings() {
 async function saveSharedEditorSettings(incomingSettings, actor = null) {
   const currentSettings = await loadSharedEditorSettings();
   const actorEmail = normalizeEmail(actor?.email);
-  const canUpdateSharedCatalog = !actorEmail || actorEmail === primaryAccountEmail;
-  const payload = canUpdateSharedCatalog
-    ? normalizeEditorSettingsPayload(incomingSettings)
-    : (currentSettings || mergeEditorSettingsPayload(currentSettings, {}));
+  const hasIncomingSettings = incomingSettings && Object.keys(incomingSettings).length > 0;
+  const payload = await promoteSettingsImagesToStorage(
+    hasIncomingSettings ? normalizeEditorSettingsPayload(incomingSettings) : normalizeEditorSettingsPayload(currentSettings),
+  );
   const { error } = await supabaseServer
     .from('editor_settings')
     .upsert({
@@ -711,12 +814,118 @@ async function saveSharedEditorSettings(incomingSettings, actor = null) {
       updated_by: actorEmail || '',
     }, { onConflict: 'settings_key' });
   if (error) throw error;
-  if (canUpdateSharedCatalog) {
-    await persistSharedCatalogTables(payload, actorEmail).catch((tableError) => {
-      console.warn('Configuracoes salvas, mas nao foi possivel espelhar catalogos nas tabelas.', tableError);
-    });
-  }
+  await persistSharedCatalogTables(payload, actorEmail).catch((tableError) => {
+    console.warn('Configuracoes salvas, mas nao foi possivel espelhar catalogos nas tabelas.', tableError);
+  });
   return payload;
+}
+
+async function promoteSettingsImagesToStorage(settings = {}) {
+  const promoted = { ...settings };
+  if (String(promoted.logo || '').startsWith('data:image/')) {
+    const asset = await uploadDataUrlAsset({
+      dataUrl: promoted.logo,
+      folder: 'settings/logo',
+      fileNameHint: 'logo',
+    });
+    promoted.logo = asset.publicUrl || promoted.logo;
+    promoted.logoAsset = asset;
+  }
+  promoted.catalogItems = await Promise.all((promoted.catalogItems || []).map(async (item) => {
+    const textureUrl = catalogItemTextureUrlPayload(item);
+    if (!String(textureUrl || '').startsWith('data:image/')) return item;
+    const asset = await uploadDataUrlAsset({
+      dataUrl: textureUrl,
+      folder: `catalog/${catalogItemGroup(item.type)}`,
+      fileNameHint: item.name || item.id || 'material',
+    });
+    return {
+      ...item,
+      textureUrl: asset.publicUrl || textureUrl,
+      imageUrl: asset.publicUrl || textureUrl,
+      storageBucket: asset.storageBucket,
+      storagePath: asset.storagePath,
+      mimeType: asset.mimeType,
+      size: asset.size,
+      uploadedAt: asset.uploadedAt,
+    };
+  }));
+  return promoted;
+}
+
+async function promoteDocumentImages({ projectId, draft, preview }) {
+  return {
+    draft: await promoteImageDataUrls(draft, `projects/${projectId}/draft`),
+    preview: await promoteImageDataUrls(preview, `projects/${projectId}/preview`),
+  };
+}
+
+async function promoteImageDataUrls(value, folder) {
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return Promise.all(value.map(item => promoteImageDataUrls(item, folder)));
+  }
+
+  const imageFields = new Set(['src', 'photo', 'logo', 'textureUrl', 'imageUrl', 'imageData', 'img']);
+  const promoted = {};
+  for (const [key, fieldValue] of Object.entries(value)) {
+    if (typeof fieldValue === 'string' && imageFields.has(key) && fieldValue.startsWith('data:image/')) {
+      const asset = await uploadDataUrlAsset({
+        dataUrl: fieldValue,
+        folder,
+        fileNameHint: key,
+      });
+      promoted[key] = asset.publicUrl || fieldValue;
+      promoted[`${key}Asset`] = asset;
+    } else {
+      promoted[key] = await promoteImageDataUrls(fieldValue, folder);
+    }
+  }
+  return promoted;
+}
+
+async function uploadDataUrlAsset({ dataUrl, folder, fileNameHint }) {
+  const parsed = parseDataUrl(dataUrl);
+  const hash = createHash('sha256').update(parsed.buffer).digest('hex');
+  const extension = extensionFromMime(parsed.mimeType);
+  const safeName = slugify(fileNameHint || 'asset') || 'asset';
+  const storagePath = `${folder}/${safeName}-${hash.slice(0, 24)}.${extension}`;
+  const { error } = await supabaseServer.storage
+    .from(photoBucket)
+    .upload(storagePath, parsed.buffer, {
+      cacheControl: '31536000',
+      contentType: parsed.mimeType,
+      upsert: true,
+    });
+  if (error) throw error;
+  const { data } = supabaseServer.storage.from(photoBucket).getPublicUrl(storagePath);
+  return {
+    id: hash,
+    storageBucket: photoBucket,
+    storagePath,
+    publicUrl: data?.publicUrl || '',
+    mimeType: parsed.mimeType,
+    size: parsed.buffer.length,
+    uploadedAt: new Date().toISOString(),
+  };
+}
+
+function parseDataUrl(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:([^;,]+);base64,(.+)$/);
+  if (!match) throw new Error('Imagem em data URL invalida.');
+  return {
+    mimeType: match[1],
+    buffer: Buffer.from(match[2], 'base64'),
+  };
+}
+
+function extensionFromMime(mimeType = '') {
+  return {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+  }[mimeType] || 'bin';
 }
 
 function normalizeEditorSettingsPayload(settings = {}) {
@@ -907,7 +1116,7 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
       quality: item.quality || null,
       hex: item.hex || null,
       texture_url: item.textureUrl || item.imageUrl || null,
-      image_data: String(item.textureUrl || '').startsWith('data:image/') ? item.textureUrl : null,
+      image_data: null,
       image_url: String(item.textureUrl || item.imageUrl || '').startsWith('http') || String(item.textureUrl || item.imageUrl || '').startsWith('/')
         ? (item.textureUrl || item.imageUrl)
         : null,
@@ -954,7 +1163,7 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
         label,
         sort_order: index,
         active: true,
-        image_data: String(image).startsWith('data:image/') ? image : null,
+        image_data: null,
         image_url: String(image).startsWith('http') || String(image).startsWith('/') ? image : null,
         updated_by: actorEmail || primaryAccountEmail,
         data: image ? { image } : {},
@@ -1012,6 +1221,10 @@ function hasPersistableContent(draft, preview) {
 async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt }) {
   const client = preview.client || {};
   const actorEmail = normalizeEmail(actor?.email);
+  const existingProject = await loadProjectForWrite(projectId);
+  if (existingProject?.status === 'sold') {
+    throw new Error('Projeto vendido esta bloqueado para alteracoes.');
+  }
 
   if (eventId) {
     const { data: existingVersion, error: existingError } = await supabaseServer
@@ -1043,7 +1256,7 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
       factory: Array.isArray(client.manufacturers) ? client.manufacturers.join(' + ') : '',
       address: client.address || draft?.fields?.endereco || '',
       document_type: 'projeto_inicial',
-      status: 'draft',
+      status: existingProject?.status || 'draft',
       owner_email: primaryAccountEmail,
       created_by: actorEmail,
       updated_by: actorEmail,

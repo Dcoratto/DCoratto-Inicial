@@ -1,4 +1,5 @@
 import { isSupabaseConfigured, supabase } from './supabaseClient';
+import { optimizeImageToWebp } from './imageOptimizer';
 
 const PHOTO_BUCKET = import.meta.env.VITE_SUPABASE_PHOTOS_BUCKET || 'dcoratto-photos';
 const HTML_BUCKET = import.meta.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
@@ -12,15 +13,17 @@ export function assertSupabaseReady() {
 export async function uploadEnvironmentPhoto({ projectId, environmentId, file, position, title }) {
   assertSupabaseReady();
 
-  const extension = extensionFromFile(file);
+  const optimized = await optimizeImageToWebp(file).catch(() => null);
+  const uploadFile = optimized?.blob || file;
+  const extension = optimized?.converted ? 'webp' : extensionFromFile(uploadFile);
   const photoId = crypto.randomUUID();
   const storagePath = `${projectId}/${environmentId}/${String(position).padStart(3, '0')}-${photoId}.${extension}`;
 
   const { error: uploadError } = await supabase.storage
     .from(PHOTO_BUCKET)
-    .upload(storagePath, file, {
+    .upload(storagePath, uploadFile, {
       cacheControl: '31536000',
-      contentType: file.type,
+      contentType: optimized?.mimeType || uploadFile.type,
       upsert: false,
     });
 
@@ -41,8 +44,16 @@ export async function uploadEnvironmentPhoto({ projectId, environmentId, file, p
       storage_path: storagePath,
       image_url: publicUrl.publicUrl,
       alt_text: title || `Vista ${position + 1}`,
-      mime_type: file.type,
-      file_size: file.size,
+      width: optimized?.width || null,
+      height: optimized?.height || null,
+      mime_type: optimized?.mimeType || uploadFile.type,
+      file_size: uploadFile.size,
+      data: {
+        originalSize: optimized?.originalSize || file.size,
+        optimizedSize: optimized?.optimizedSize || uploadFile.size,
+        compressionRatio: optimized?.compressionRatio || 1,
+        convertedToWebp: Boolean(optimized?.converted),
+      },
     })
     .select('*')
     .single();
