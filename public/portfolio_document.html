@@ -558,26 +558,38 @@
         min-height: 0;
       }
 
-      .doc-photo-frame.shape-oval .frame-clip {
-        border-radius: 50%;
-      }
-
       .doc-photo-frame.shape-square {
         aspect-ratio: 1 / 1;
         min-height: 0;
       }
 
+      .doc-photo-frame.shape-square .frame-clip,
       .doc-photo-frame.shape-rounded .frame-clip {
-        border-radius: 28px;
+        border-radius: 18px;
       }
 
-      .doc-photo-frame.shape-rectangle .frame-clip,
-      .doc-photo-frame.shape-square .frame-clip {
-        border-radius: 0;
+      .doc-photo-frame.shape-rectangle .frame-clip {
+        border-radius: 18px;
       }
 
-      .doc-photo-frame.shape-circle .frame-clip {
+      .doc-photo-frame.shape-circle .frame-clip,
+      .doc-photo-frame.shape-oval .frame-clip {
         border-radius: 50%;
+      }
+
+      .doc-photo-frame.shape-triangle .frame-clip {
+        border-radius: 18px;
+        clip-path: polygon(50% 5%, 95% 92%, 5% 92%);
+      }
+
+      .doc-photo-frame.shape-diamond .frame-clip {
+        border-radius: 18px;
+        clip-path: polygon(50% 3%, 97% 50%, 50% 97%, 3% 50%);
+      }
+
+      .doc-photo-frame.shape-hexagon .frame-clip {
+        border-radius: 18px;
+        clip-path: polygon(25% 5%, 75% 5%, 96% 50%, 75% 95%, 25% 95%, 4% 50%);
       }
 
       .frame-clip {
@@ -1078,9 +1090,9 @@
 
       .frame-resize-handle {
         position: absolute;
-        z-index: 12;
-        width: 16px;
-        height: 16px;
+        z-index: 80;
+        width: 18px;
+        height: 18px;
         border: 2px solid #7c46ff;
         border-radius: 50%;
         background: #fff;
@@ -1154,9 +1166,10 @@
       }
 
       .frame-format-preview {
-        width: 38px;
-        height: 30px;
+        width: 34px;
+        height: 34px;
         border: 2px solid #8f7044;
+        border-radius: 9px;
         background: rgba(184,151,106,.16);
       }
 
@@ -1171,8 +1184,16 @@
         border-radius: 999px;
       }
 
-      .frame-format-preview.shape-rounded {
-        border-radius: 8px;
+      .frame-format-preview.shape-triangle {
+        clip-path: polygon(50% 5%, 95% 92%, 5% 92%);
+      }
+
+      .frame-format-preview.shape-diamond {
+        clip-path: polygon(50% 3%, 97% 50%, 50% 97%, 3% 50%);
+      }
+
+      .frame-format-preview.shape-hexagon {
+        clip-path: polygon(25% 5%, 75% 5%, 96% 50%, 75% 95%, 25% 95%, 4% 50%);
       }
 
       .frame-selection-toolbar {
@@ -1943,7 +1964,7 @@
         }
         if (isModifierShortcut && !event.shiftKey && !event.altKey && ['1', '2'].includes(event.key)) {
           event.preventDefault();
-          addFrameWithFormatFromShortcut(event.key === '1' ? 'circle' : 'square-small');
+          addFrameWithFormatFromShortcut(event.key === '1' ? 'circle' : 'square');
         }
         if (isModifierShortcut && event.key.toLowerCase() === 'd') {
           event.preventDefault();
@@ -2308,7 +2329,7 @@
             if (!frame) return;
             frame.shape = select.value;
             frame.frameType = frame.shape;
-            if (frame.shape === 'circle' || frame.shape === 'square') frame.height = frame.width;
+            if (isProportionalFrameShape(frame.shape)) frame.height = frame.width;
             persistAndRender();
           });
         });
@@ -2614,7 +2635,7 @@
         });
 
         document.querySelectorAll('[data-resize-frame]').forEach((node) => {
-          node.addEventListener('pointerdown', startPreviewFrameResize);
+          node.addEventListener('pointerdown', startPreviewFrameResize, { capture: true });
         });
 
         document.querySelectorAll('[data-resize-detail]').forEach((node) => {
@@ -3302,7 +3323,7 @@
           menuHTML += `
             <button type="button" data-menu-action="replace-frame-photo"><span>F</span><span>Trocar foto</span></button>
             <button type="button" data-menu-action="toggle-frame-image-edit"><span>M</span><span>Editar enquadramento</span></button>
-            ${frameShapeMenuOptions().map(option => `
+          ${frameShapeMenuOptions().map(option => `
               <button type="button" data-menu-action="frame-shape:${option.value}"><span>${option.short}</span><span>${option.label}</span></button>
             `).join('')}
             <button type="button" data-menu-action="add-frame-arrow"><span>S</span><span>Adicionar seta</span></button>
@@ -3356,20 +3377,20 @@
 
       function frameShapeMenuOptions() {
         return [
-          { value: 'circle', label: 'Formato circular', short: 'C' },
-          { value: 'oval', label: 'Formato oval', short: 'O' },
-          { value: 'square', label: 'Formato quadrado', short: 'Q' },
-          { value: 'rectangle', label: 'Formato retangular', short: 'R' },
-          { value: 'rounded', label: 'Cantos arredondados', short: 'A' },
+          { value: 'square', label: 'Quadrado', short: 'Q' },
+          { value: 'circle', label: 'Círculo', short: 'C' },
+          { value: 'triangle', label: 'Triângulo', short: 'T' },
+          { value: 'diamond', label: 'Losango', short: 'L' },
+          { value: 'hexagon', label: 'Hexágono', short: 'H' },
         ];
       }
 
       function setSelectedFrameShape(shape) {
-        if (!['circle', 'oval', 'square', 'rectangle', 'rounded'].includes(shape)) return;
+        if (!supportedFrameShapes().includes(shape)) return;
         selectedFrameRefs().forEach(({ frame }) => {
           frame.shape = shape;
           frame.frameType = shape;
-          if (shape === 'circle' || shape === 'square') {
+          if (isProportionalFrameShape(shape)) {
             frame.height = frame.width;
           } else if (!Number.isFinite(Number(frame.height)) || Number(frame.height) === Number(frame.width)) {
             frame.height = Math.max(8, Math.min(100 - Number(frame.y || 0), Number(frame.width || 20) * .68));
@@ -3518,13 +3539,13 @@
         const format = frameFormatOptions()[formatIndex];
         if (!format) return;
         const position = getRandomPosition();
-        const shape = ['circle', 'oval', 'square', 'rectangle', 'rounded'].includes(format.shape) ? format.shape : 'rounded';
+        const shape = supportedFrameShapes().includes(format.shape) ? format.shape : 'square';
         const width = Number(format.width || 30);
-        const height = shape === 'circle' || shape === 'square' ? width : Number(format.height || width);
+        const height = isProportionalFrameShape(shape) ? width : Number(format.height || width);
         
         const frame = {
           id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
-          title: `Moldura ${page.frames.length + 1}`,
+          title: `${format.name || 'Moldura'} ${page.frames.length + 1}`,
           photo: '',
           frameType: shape,
           shape,
@@ -3551,6 +3572,14 @@
         const index = frameFormatOptions().findIndex(option => option.key === formatKey);
         if (!target || index < 0) return;
         addFrameWithFormat(target.environmentIndex, target.pageIndex, index);
+      }
+
+      function supportedFrameShapes() {
+        return ['square', 'circle', 'triangle', 'diamond', 'hexagon', 'oval', 'rectangle', 'rounded'];
+      }
+
+      function isProportionalFrameShape(shape) {
+        return ['circle', 'square', 'triangle', 'diamond', 'hexagon'].includes(shape);
       }
 
       function currentFrameInsertionTarget() {
@@ -3741,26 +3770,13 @@
         const nextIndex = (currentIndex + 1) % nearby.length;
         selectSinglePageAnnotation(nearby[nextIndex].key);
       }
-
-      function legacyFrameFormatOptions() {
-        return [
-          { name: 'Quadrada Pequena', width: 25, height: 25 },
-          { name: 'Retangular Pequena', width: 35, height: 25 },
-          { name: 'Quadrada Média', width: 35, height: 35 },
-          { name: 'Retangular Média', width: 45, height: 30 },
-          { name: 'Grande', width: 45, height: 45 },
-        ];
-      }
-
       function frameFormatOptions() {
         return [
-          { key: 'circle', name: 'Circular', width: 30, height: 30, shape: 'circle' },
-          { key: 'square-small', name: 'Quadrada Pequena', width: 25, height: 25, shape: 'square' },
-          { key: 'rectangle-small', name: 'Retangular Pequena', width: 35, height: 25, shape: 'rectangle' },
-          { key: 'square-medium', name: 'Quadrada Media', width: 35, height: 35, shape: 'square' },
-          { key: 'rectangle-medium', name: 'Retangular Media', width: 45, height: 30, shape: 'rectangle' },
-          { key: 'oval', name: 'Oval', width: 38, height: 26, shape: 'oval' },
-          { key: 'large', name: 'Grande', width: 45, height: 45, shape: 'square' },
+          { key: 'square', name: 'Quadrado', width: 22, height: 22, shape: 'square' },
+          { key: 'circle', name: 'Círculo', width: 22, height: 22, shape: 'circle' },
+          { key: 'triangle', name: 'Triângulo', width: 22, height: 22, shape: 'triangle' },
+          { key: 'diamond', name: 'Losango', width: 22, height: 22, shape: 'diamond' },
+          { key: 'hexagon', name: 'Hexágono', width: 22, height: 22, shape: 'hexagon' },
         ];
       }
 
@@ -3784,15 +3800,14 @@
 
       function applyFrameLayout(frame, index) {
         const fallback = frameDefaultLayout(index);
-        frame.shape = ['circle', 'oval', 'square', 'rounded', 'rectangle'].includes(frame.shape || frame.frameType)
+        frame.shape = supportedFrameShapes().includes(frame.shape || frame.frameType)
           ? (frame.shape || frame.frameType)
-          : 'rounded';
+          : 'square';
         frame.frameType = frame.shape;
         frame.x = Number.isFinite(Number(frame.x)) ? Number(frame.x) : fallback.x;
         frame.y = Number.isFinite(Number(frame.y)) ? Number(frame.y) : fallback.y;
         frame.width = Number.isFinite(Number(frame.width)) ? Number(frame.width) : fallback.width;
         frame.height = Number.isFinite(Number(frame.height)) ? Number(frame.height) : fallback.height;
-        if (frame.shape === 'circle' || frame.shape === 'square') frame.height = frame.width;
         frame.imgScale = Number.isFinite(Number(frame.imgScale)) ? Number(frame.imgScale) : 1;
         frame.imgX = Number.isFinite(Number(frame.imgX)) ? Number(frame.imgX) : 0;
         frame.imgY = Number.isFinite(Number(frame.imgY)) ? Number(frame.imgY) : 0;
@@ -3801,6 +3816,11 @@
         frame.y = Math.max(0, Math.min(98, frame.y));
         frame.width = Math.max(8, Math.min(100 - frame.x, frame.width));
         frame.height = Math.max(8, Math.min(100 - frame.y, frame.height));
+        if (isProportionalFrameShape(frame.shape)) {
+          const size = Math.max(8, Math.min(frame.width, frame.height, 100 - frame.x, 100 - frame.y));
+          frame.width = size;
+          frame.height = size;
+        }
         frame.imgScale = Math.max(1, Math.min(3, frame.imgScale));
         frame.imgX = Math.max(-100, Math.min(100, frame.imgX));
         frame.imgY = Math.max(-100, Math.min(100, frame.imgY));
@@ -3812,6 +3832,11 @@
         // Se modo de desenho de setas está ativo, não permitir arrastar frames
         if (arrowDrawMode && Number(event.currentTarget.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(event.currentTarget.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         if (event.target.closest('.preview-frame-tools, .frame-selection-toolbar, .annotation-edit-row, [data-drag-annotation], [data-resize-frame]')) return;
+        const edgeResizeHandle = frameResizeHandleAtPoint(event, event.currentTarget);
+        if (edgeResizeHandle) {
+          startPreviewFrameResize(event, edgeResizeHandle);
+          return;
+        }
         event.preventDefault();
         const node = event.currentTarget;
         const key = frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex);
@@ -3854,15 +3879,15 @@
         window.addEventListener('pointerup', up);
       }
 
-      function startPreviewFrameResize(event) {
+      function startPreviewFrameResize(event, handleOverride = '') {
         if (!isEditablePreview) return;
         // Se modo de desenho de setas está ativo, não permitir redimensionar frames
-        const node = event.currentTarget.closest('.doc-photo-frame');
+        const node = event.currentTarget.closest?.('.doc-photo-frame') || event.currentTarget;
         if (arrowDrawMode && Number(node?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(node?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         event.preventDefault();
         event.stopPropagation();
-        event.stopImmediatePropagation();
-        const resizeHandle = event.currentTarget;
+        event.stopImmediatePropagation?.();
+        const resizeHandle = event.currentTarget.closest?.('[data-resize-frame]') || event.currentTarget;
         resizeHandle.setPointerCapture?.(event.pointerId);
         isFrameResizeActive = true;
         const frame = pageFrame(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.frameIndex));
@@ -3873,7 +3898,7 @@
           return;
         }
         selectSingleFrame(frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex));
-        const handle = event.currentTarget.dataset.resizeFrame || 'se';
+        const handle = handleOverride || resizeHandle.dataset.resizeFrame || 'se';
         const canvasRect = canvas.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
@@ -3881,7 +3906,7 @@
           x: Number(frame.x || 0),
           y: Number(frame.y || 0),
           width: Number(frame.width || 20),
-          height: ['circle', 'square'].includes(frame.shape) ? Number(frame.width || 20) : Number(frame.height || 20),
+          height: isProportionalFrameShape(frame.shape) ? Number(frame.width || 20) : Number(frame.height || 20),
         };
 
         const move = (pointerEvent) => {
@@ -3899,14 +3924,16 @@
             frame.y = nextY;
             frame.height = Math.max(8, Math.min(100 - nextY, initial.height + (initial.y - nextY)));
           }
-          if (['circle', 'square'].includes(frame.shape)) {
+          if (isProportionalFrameShape(frame.shape)) {
             const size = handle === 'n' || handle === 's'
               ? Number(frame.height || initial.height)
               : handle === 'e' || handle === 'w'
                 ? Number(frame.width || initial.width)
                 : Math.max(Number(frame.width || initial.width), Number(frame.height || initial.height));
-            frame.width = Math.max(8, Math.min(100 - Number(frame.x || 0), size));
-            frame.height = Math.max(8, Math.min(100 - Number(frame.y || 0), size));
+            const maxSize = Math.min(100 - Number(frame.x || 0), 100 - Number(frame.y || 0));
+            const nextSize = Math.max(8, Math.min(maxSize, size));
+            frame.width = nextSize;
+            frame.height = nextSize;
           }
           node.style.left = `${frame.x}%`;
           node.style.top = `${frame.y}%`;
@@ -3920,13 +3947,34 @@
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
           window.removeEventListener('pointercancel', up);
-          if (['circle', 'square'].includes(frame.shape)) frame.height = frame.width;
+          if (isProportionalFrameShape(frame.shape)) frame.height = frame.width;
           persistWithoutRender();
         };
 
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
         window.addEventListener('pointercancel', up);
+      }
+
+      function frameResizeHandleAtPoint(event, node) {
+        if (!node) return '';
+        const rect = node.getBoundingClientRect();
+        const edge = 16;
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        const nearLeft = x <= edge;
+        const nearRight = x >= rect.width - edge;
+        const nearTop = y <= edge;
+        const nearBottom = y >= rect.height - edge;
+        if (nearTop && nearLeft) return 'nw';
+        if (nearTop && nearRight) return 'ne';
+        if (nearBottom && nearLeft) return 'sw';
+        if (nearBottom && nearRight) return 'se';
+        if (nearTop) return 'n';
+        if (nearRight) return 'e';
+        if (nearBottom) return 's';
+        if (nearLeft) return 'w';
+        return '';
       }
 
       function detailResizeHandleAtPoint(event, node) {
@@ -4855,9 +4903,9 @@
             frame.id ||= `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
             frame.title ||= `Moldura ${index + 1}`;
             frame.photo ||= frame.photos?.[0]?.src || '';
-            frame.shape = ['circle', 'oval', 'square', 'rounded', 'rectangle'].includes(frame.shape || frame.frameType)
+            frame.shape = supportedFrameShapes().includes(frame.shape || frame.frameType)
               ? (frame.shape || frame.frameType)
-              : 'rounded';
+              : 'square';
             frame.frameType = frame.shape;
             frame.annotations = [];
             applyFrameLayout(frame, index);
@@ -4870,8 +4918,8 @@
       function renderDocumentFrame(frame, page, frameIndex, environmentIndex, pageIndex) {
         applyFrameLayout(frame, frameIndex);
         const hasPhoto = Boolean(frame.photo);
-        const shape = ['circle', 'oval', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded';
-        const frameHeight = ['circle', 'square'].includes(shape) ? Number(frame.width) : Number(frame.height);
+        const shape = supportedFrameShapes().includes(frame.shape) ? frame.shape : 'square';
+        const frameHeight = isProportionalFrameShape(shape) ? Number(frame.width) : Number(frame.height);
         const frameStyle = `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${frameHeight}%`;
         const imageStyle = `transform:translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
         const handles = ['nw','n','ne','e','se','s','sw','w'].map(handle => `<span class="frame-resize-handle" data-resize-frame="${handle}"></span>`).join('');
@@ -4909,11 +4957,11 @@
               <input type="file" accept="image/*" data-frame-photo-input data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">
             </label>
             <select class="shape-select" data-frame-shape data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">
-              <option value="rounded" ${frame.shape === 'rounded' ? 'selected' : ''}>Arred.</option>
-              <option value="rectangle" ${frame.shape === 'rectangle' ? 'selected' : ''}>Retâng.</option>
-              <option value="oval" ${frame.shape === 'oval' ? 'selected' : ''}>Oval</option>
-              <option value="square" ${frame.shape === 'square' ? 'selected' : ''}>Quadr.</option>
+              <option value="square" ${frame.shape === 'square' ? 'selected' : ''}>Quadrado</option>
               <option value="circle" ${frame.shape === 'circle' ? 'selected' : ''}>Círculo</option>
+              <option value="triangle" ${frame.shape === 'triangle' ? 'selected' : ''}>Triângulo</option>
+              <option value="diamond" ${frame.shape === 'diamond' ? 'selected' : ''}>Losango</option>
+              <option value="hexagon" ${frame.shape === 'hexagon' ? 'selected' : ''}>Hexágono</option>
             </select>
             <button type="button" data-add-annotation data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">Seta</button>
           </div>
