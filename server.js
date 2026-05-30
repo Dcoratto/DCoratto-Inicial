@@ -493,15 +493,54 @@ async function handleCatalogMaterialsGet(url, response) {
 
     const { data, error } = await query;
     if (error) throw error;
+    const tableItems = (data || []).map(catalogMaterialToSettingsItem).filter(Boolean);
+    let items = tableItems;
+    try {
+      const settings = await loadSharedEditorSettings();
+      const payloadItems = (settings.catalogItems || []).filter(item => catalogItemMatchesFiltersPayload(item, filters));
+      items = mergeCatalogItemsPayload(tableItems, payloadItems).slice(0, filters.limit);
+    } catch (settingsError) {
+      console.warn('Catalogo filtrado carregado sem merge do payload de configuracoes.', settingsError);
+    }
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
       filters,
-      items: (data || []).map(catalogMaterialToSettingsItem).filter(Boolean),
+      items,
     });
   } catch (error) {
     sendJson(response, 500, { error: String(error?.message || error) });
   }
+}
+
+function catalogItemMatchesFiltersPayload(item = {}, filters = {}) {
+  if (!item?.name) return false;
+  if (filters.category && catalogItemGroup(item.type || item.category) !== catalogItemGroup(filters.category)) return false;
+  if (filters.factory && (item.manufacturer || item.factory || '') !== filters.factory) return false;
+  if (filters.line && (item.line || item.lineName || item.line_name || '') !== filters.line) return false;
+  if (filters.quality && (item.quality || item.materialType || '') !== filters.quality) return false;
+  if (filters.search) {
+    const term = normalizeCatalogSearch(filters.search);
+    const haystack = normalizeCatalogSearch([
+      item.name,
+      item.code,
+      item.id,
+      item.catalogKey,
+      item.catalog_key,
+      item.manufacturer,
+      item.line,
+      item.quality,
+    ].filter(Boolean).join(' '));
+    if (!haystack.includes(term)) return false;
+  }
+  return true;
+}
+
+function normalizeCatalogSearch(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 }
 
 async function handleEditorSettingsPost(request, response) {
@@ -1199,11 +1238,14 @@ function catalogItemTextureUrlPayload(item = {}) {
   return item.textureUrl
     || item.imageUrl
     || item.imageData
+    || item.publicUrl
     || item.texture_url
     || item.image_url
     || item.image_data
+    || item.public_url
     || item.data?.textureUrl
     || item.data?.imageUrl
+    || item.data?.publicUrl
     || item.data?.image
     || '';
 }
@@ -1214,7 +1256,9 @@ function normalizeCatalogItemsPayload(items = []) {
   (Array.isArray(items) ? items : []).forEach((item) => {
     if (!item || !item.name) return;
     const textureUrl = catalogItemTextureUrlPayload(item);
-    const normalizedItem = textureUrl && item.textureUrl !== textureUrl ? { ...item, textureUrl } : { ...item };
+    const normalizedItem = textureUrl
+      ? { ...item, textureUrl, imageUrl: item.imageUrl || textureUrl }
+      : { ...item };
     normalizedItem.catalogKey = stableCatalogKey({
       category: catalogItemGroup(normalizedItem.type || normalizedItem.category),
       factory: normalizedItem.manufacturer || normalizedItem.factory || '',
@@ -1282,12 +1326,31 @@ function upsertCatalogItemPayload(items = [], incomingItem, previousKeys = []) {
     const keys = catalogItemPayloadMatchKeys(item);
     if (!replaced && keys.some(key => matchKeys.has(key))) {
       replaced = true;
-      return normalizedItem;
+      return mergeCatalogItemPayload(item, normalizedItem);
     }
     return item;
   });
   if (!replaced) next.push(normalizedItem);
   return next;
+}
+
+function mergeCatalogItemPayload(existingItem = {}, incomingItem = {}) {
+  const existingImage = catalogItemTextureUrlPayload(existingItem);
+  const incomingImage = catalogItemTextureUrlPayload(incomingItem);
+  const image = incomingImage || existingImage;
+  const merged = {
+    ...existingItem,
+    ...incomingItem,
+  };
+  if (image) {
+    merged.textureUrl = image;
+    merged.imageUrl = image;
+  }
+  if (!incomingItem.storageBucket && existingItem.storageBucket) merged.storageBucket = existingItem.storageBucket;
+  if (!incomingItem.storagePath && existingItem.storagePath) merged.storagePath = existingItem.storagePath;
+  if (!incomingItem.publicUrl && existingItem.publicUrl) merged.publicUrl = existingItem.publicUrl;
+  if (!incomingItem.mimeType && existingItem.mimeType) merged.mimeType = existingItem.mimeType;
+  return normalizeCatalogItemsPayload([merged])[0] || merged;
 }
 
 function removeCatalogItemsPayload(items = [], selectors = []) {
