@@ -555,8 +555,6 @@
 
       .doc-photo-frame.shape-circle,
       .doc-photo-frame.shape-square {
-        aspect-ratio: 1 / 1;
-        height: auto;
         min-height: 0;
       }
 
@@ -710,8 +708,8 @@
         z-index: 31;
         width: var(--detail-width, 16%);
         height: var(--detail-height, 16%);
-        min-width: 92px;
-        min-height: 72px;
+        min-width: 40px;
+        min-height: 40px;
         transform: translate(-50%, -50%);
         overflow: visible;
         border: var(--detail-border-width, 1.2px) solid var(--detail-border-color, #d7c2a7);
@@ -729,16 +727,10 @@
       }
 
       .page-detail-frame.shape-circle {
-        aspect-ratio: 1 / 1;
-        height: auto;
-        min-height: 92px;
         border-radius: 50%;
       }
 
       .page-detail-frame.shape-square {
-        aspect-ratio: 1 / 1;
-        height: auto;
-        min-height: 92px;
         border-radius: 2px;
       }
 
@@ -2290,7 +2282,9 @@
             if (!frame) return;
             frame.shape = select.value;
             frame.frameType = frame.shape;
-            if (isProportionalFrameShape(frame.shape)) frame.height = frame.width;
+            if (isProportionalFrameShape(frame.shape)) {
+              fitFrameToSquare(frame, Number(select.dataset.environmentIndex), Number(select.dataset.pageIndex));
+            }
             persistAndRender();
           });
         });
@@ -2762,13 +2756,16 @@
         return Math.max(7, Math.min(34, Number.isFinite(size) ? size : 16));
       }
 
+      function detailHeightForWidthPercent(widthPercent, environmentIndex, pageIndex) {
+        const rect = pageFrameCanvas(environmentIndex, pageIndex)?.getBoundingClientRect?.();
+        if (!rect?.width || !rect?.height) return Number(widthPercent || 16);
+        return (Number(widthPercent || 16) * rect.width) / rect.height;
+      }
+
       function updatePageDetailFrame(node, annotation) {
         if (!node || !annotation) return;
         const size = pageDetailSize(annotation);
-        const shape = pageDetailShape(annotation);
-        const height = ['circle', 'square'].includes(shape)
-          ? size
-          : Math.max(6, Math.min(28, Number(annotation.detailHeight ?? size * .68)));
+        const height = Math.max(6, Math.min(44, Number(annotation.detailHeight ?? size)));
         node.style.left = `${Number(annotation.fromX ?? 0)}%`;
         node.style.top = `${Number(annotation.fromY ?? 0)}%`;
         node.style.setProperty('--detail-width', `${size}%`);
@@ -3402,10 +3399,10 @@
         if (!['circle', 'square'].includes(shape)) return;
         selectedPageAnnotationRefs()
           .filter(ref => isDetailAnnotation(ref.annotation))
-          .forEach(({ annotation }) => {
+          .forEach(({ annotation, environmentIndex, pageIndex }) => {
             const size = pageDetailSize(annotation);
             annotation.detailShape = shape;
-            annotation.detailHeight = size;
+            annotation.detailHeight = detailHeightForWidthPercent(size, environmentIndex, pageIndex);
           });
         persistAndRender();
       }
@@ -3546,7 +3543,8 @@
       }
 
       function frameDisplayHeightPercent(frame, canvas) {
-        if (!isProportionalFrameShape(frame?.shape)) return Number(frame?.height || frame?.width || 20);
+        const storedHeight = Number(frame?.height);
+        if (Number.isFinite(storedHeight) && storedHeight > 0) return storedHeight;
         const rect = canvas?.getBoundingClientRect?.();
         if (!rect?.width || !rect?.height) return Number(frame?.height || frame?.width || 20);
         return (Number(frame.width || 20) * rect.width) / rect.height;
@@ -3564,57 +3562,72 @@
         }
       }
 
-      function resizeSquareFromHandle(initial, handle, dx, dy, bounds, minSize = MIN_FRAME_SIZE) {
-        const horizontalSize = handle.includes('e')
-          ? initial.size + dx
-          : handle.includes('w')
-            ? initial.size - dx
-            : null;
-        const verticalSize = handle.includes('s')
-          ? initial.size + dy
-          : handle.includes('n')
-            ? initial.size - dy
-            : null;
-        let size = initial.size;
-        if (horizontalSize !== null && verticalSize !== null) {
-          size = Math.abs(horizontalSize - initial.size) >= Math.abs(verticalSize - initial.size)
-            ? horizontalSize
-            : verticalSize;
-        } else if (horizontalSize !== null) {
-          size = horizontalSize;
-        } else if (verticalSize !== null) {
-          size = verticalSize;
+      function clampResizeValue(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function resizeBoxFromHandle(initial, handle, dx, dy, bounds, minSize = MIN_FRAME_SIZE) {
+        const initialWidth = Math.max(1, Number(initial.width || initial.size || minSize));
+        const initialHeight = Math.max(1, Number(initial.height || initial.size || minSize));
+        const normalizedInitial = {
+          left: Number(initial.left || 0),
+          top: Number(initial.top || 0),
+          width: initialWidth,
+          height: initialHeight,
+        };
+        normalizedInitial.right = Number(initial.right ?? normalizedInitial.left + initialWidth);
+        normalizedInitial.bottom = Number(initial.bottom ?? normalizedInitial.top + initialHeight);
+
+        let left = normalizedInitial.left;
+        let top = normalizedInitial.top;
+        let width = normalizedInitial.width;
+        let height = normalizedInitial.height;
+        const isCorner = /^(nw|ne|se|sw)$/.test(handle);
+
+        if (isCorner) {
+          const widthDelta = handle.includes('e') ? dx : -dx;
+          const heightDelta = handle.includes('s') ? dy : -dy;
+          const desiredScale = Math.abs(widthDelta) >= Math.abs(heightDelta)
+            ? (normalizedInitial.width + widthDelta) / normalizedInitial.width
+            : (normalizedInitial.height + heightDelta) / normalizedInitial.height;
+          const anchorX = handle.includes('w') ? normalizedInitial.right : normalizedInitial.left;
+          const anchorY = handle.includes('n') ? normalizedInitial.bottom : normalizedInitial.top;
+          const maxWidth = Math.max(1, handle.includes('w') ? anchorX : bounds.width - anchorX);
+          const maxHeight = Math.max(1, handle.includes('n') ? anchorY : bounds.height - anchorY);
+          const maxScale = Math.max(0.01, Math.min(maxWidth / normalizedInitial.width, maxHeight / normalizedInitial.height));
+          const minScale = Math.min(maxScale, Math.max(minSize / normalizedInitial.width, minSize / normalizedInitial.height));
+          const scale = clampResizeValue(desiredScale, minScale, maxScale);
+          width = normalizedInitial.width * scale;
+          height = normalizedInitial.height * scale;
+          left = handle.includes('w') ? anchorX - width : anchorX;
+          top = handle.includes('n') ? anchorY - height : anchorY;
+        } else {
+          if (handle.includes('e')) {
+            const maxWidth = Math.max(1, bounds.width - normalizedInitial.left);
+            width = clampResizeValue(normalizedInitial.width + dx, Math.min(minSize, maxWidth), maxWidth);
+            left = normalizedInitial.left;
+          } else if (handle.includes('w')) {
+            const maxWidth = Math.max(1, normalizedInitial.right);
+            width = clampResizeValue(normalizedInitial.width - dx, Math.min(minSize, maxWidth), maxWidth);
+            left = normalizedInitial.right - width;
+          }
+
+          if (handle.includes('s')) {
+            const maxHeight = Math.max(1, bounds.height - normalizedInitial.top);
+            height = clampResizeValue(normalizedInitial.height + dy, Math.min(minSize, maxHeight), maxHeight);
+            top = normalizedInitial.top;
+          } else if (handle.includes('n')) {
+            const maxHeight = Math.max(1, normalizedInitial.bottom);
+            height = clampResizeValue(normalizedInitial.height - dy, Math.min(minSize, maxHeight), maxHeight);
+            top = normalizedInitial.bottom - height;
+          }
         }
 
-        const centerX = initial.left + initial.size / 2;
-        const centerY = initial.top + initial.size / 2;
-        const maxHorizontal = handle.includes('w')
-          ? initial.right
-          : handle.includes('e')
-            ? bounds.width - initial.left
-            : 2 * Math.min(centerX, bounds.width - centerX);
-        const maxVertical = handle.includes('n')
-          ? initial.bottom
-          : handle.includes('s')
-            ? bounds.height - initial.top
-            : 2 * Math.min(centerY, bounds.height - centerY);
-        const maxSize = Math.max(1, Math.min(maxHorizontal, maxVertical));
-        const safeMinSize = Math.min(minSize, maxSize);
-        size = Math.max(safeMinSize, Math.min(maxSize, size));
-
-        let left = handle.includes('w')
-          ? initial.right - size
-          : handle.includes('e')
-            ? initial.left
-            : centerX - size / 2;
-        let top = handle.includes('n')
-          ? initial.bottom - size
-          : handle.includes('s')
-            ? initial.top
-            : centerY - size / 2;
-        left = Math.max(0, Math.min(bounds.width - size, left));
-        top = Math.max(0, Math.min(bounds.height - size, top));
-        return { left, top, size };
+        width = Math.max(1, Math.min(bounds.width, width));
+        height = Math.max(1, Math.min(bounds.height, height));
+        left = Math.max(0, Math.min(bounds.width - width, left));
+        top = Math.max(0, Math.min(bounds.height - height, top));
+        return { left, top, width, height };
       }
 
       function currentFrameInsertionTarget() {
@@ -3929,17 +3942,19 @@
         const canvasRect = canvas.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
-        const size = Math.max(MIN_FRAME_SIZE, (Number(frame.width || 16) / 100) * canvasRect.width);
+        const width = Math.max(MIN_FRAME_SIZE, (Number(frame.width || 16) / 100) * canvasRect.width);
+        const height = Math.max(MIN_FRAME_SIZE, (frameDisplayHeightPercent(frame, canvas) / 100) * canvasRect.height);
         const initial = {
           left: (Number(frame.x || 0) / 100) * canvasRect.width,
           top: (Number(frame.y || 0) / 100) * canvasRect.height,
-          size,
+          width,
+          height,
         };
-        initial.right = initial.left + initial.size;
-        initial.bottom = initial.top + initial.size;
+        initial.right = initial.left + initial.width;
+        initial.bottom = initial.top + initial.height;
 
         const move = (pointerEvent) => {
-          const next = resizeSquareFromHandle(
+          const next = resizeBoxFromHandle(
             initial,
             handle,
             pointerEvent.clientX - startX,
@@ -3948,12 +3963,12 @@
           );
           frame.x = (next.left / canvasRect.width) * 100;
           frame.y = (next.top / canvasRect.height) * 100;
-          frame.width = (next.size / canvasRect.width) * 100;
-          frame.height = (next.size / canvasRect.height) * 100;
+          frame.width = (next.width / canvasRect.width) * 100;
+          frame.height = (next.height / canvasRect.height) * 100;
           node.style.left = `${frame.x}%`;
           node.style.top = `${frame.y}%`;
           node.style.width = `${frame.width}%`;
-          node.style.removeProperty('height');
+          node.style.height = `${frame.height}%`;
         };
 
         const up = () => {
@@ -4051,29 +4066,33 @@
         const canvasRect = pageNode.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
-        const size = Math.max(MIN_FRAME_SIZE, (pageDetailSize(annotation) / 100) * canvasRect.width);
+        const detailSize = pageDetailSize(annotation);
+        const detailHeight = Math.max(6, Math.min(44, Number(annotation.detailHeight ?? detailHeightForWidthPercent(detailSize, Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex)))));
+        const width = Math.max(MIN_FRAME_SIZE, (detailSize / 100) * canvasRect.width);
+        const height = Math.max(MIN_FRAME_SIZE, (detailHeight / 100) * canvasRect.height);
         const centerX = (Number(annotation.fromX || 0) / 100) * canvasRect.width;
         const centerY = (Number(annotation.fromY || 0) / 100) * canvasRect.height;
         const initial = {
-          left: centerX - size / 2,
-          top: centerY - size / 2,
-          size,
+          left: centerX - width / 2,
+          top: centerY - height / 2,
+          width,
+          height,
         };
-        initial.right = initial.left + initial.size;
-        initial.bottom = initial.top + initial.size;
+        initial.right = initial.left + initial.width;
+        initial.bottom = initial.top + initial.height;
 
         const move = (pointerEvent) => {
-          const next = resizeSquareFromHandle(
+          const next = resizeBoxFromHandle(
             initial,
             handle,
             pointerEvent.clientX - startX,
             pointerEvent.clientY - startY,
             { width: canvasRect.width, height: canvasRect.height }
           );
-          annotation.fromX = ((next.left + next.size / 2) / canvasRect.width) * 100;
-          annotation.fromY = ((next.top + next.size / 2) / canvasRect.height) * 100;
-          annotation.detailSize = (next.size / canvasRect.width) * 100;
-          annotation.detailHeight = (next.size / canvasRect.height) * 100;
+          annotation.fromX = ((next.left + next.width / 2) / canvasRect.width) * 100;
+          annotation.fromY = ((next.top + next.height / 2) / canvasRect.height) * 100;
+          annotation.detailSize = (next.width / canvasRect.width) * 100;
+          annotation.detailHeight = (next.height / canvasRect.height) * 100;
           updatePageDetailFrame(node, annotation);
           const id = `${node.dataset.environmentIndex}-${node.dataset.pageIndex}-${node.dataset.annotationIndex}`;
           updatePageAnnotationLine(pageNode.querySelector(`[data-page-annotation-line="${id}"]`), annotation, pageNode);
@@ -4191,6 +4210,7 @@
             annotation.image = '';
             annotation.detailShape = 'circle';
             annotation.detailSize = 16;
+            annotation.detailHeight = detailHeightForWidthPercent(annotation.detailSize, environmentIndex, pageIndex);
             annotation.detailBorderColor = pageAnnotationArrowColor(annotation);
             annotation.detailBorderWidth = 1.2;
             annotation.imgX = 0;
@@ -4415,9 +4435,7 @@
         annotation.type = 'detail-image';
         annotation.detailShape ||= 'circle';
         annotation.detailSize = Math.max(7, Math.min(60, Number(annotation.detailSize || 16)));
-        annotation.detailHeight = ['circle', 'square'].includes(pageDetailShape(annotation))
-          ? annotation.detailSize
-          : Math.max(6, Math.min(44, Number(annotation.detailHeight || annotation.detailSize * .68)));
+        annotation.detailHeight = Math.max(6, Math.min(44, Number(annotation.detailHeight || annotation.detailSize)));
         resetDetailPhotoPlacement(annotation);
         return true;
       }
@@ -4832,9 +4850,7 @@
             const detail = isDetailAnnotation(annotation);
             const detailShape = pageDetailShape(annotation);
             const detailSize = pageDetailSize(annotation);
-            const detailHeight = ['circle', 'square'].includes(detailShape)
-              ? detailSize
-              : Math.max(6, Math.min(28, Number(annotation.detailHeight ?? detailSize * .68)));
+            const detailHeight = Math.max(6, Math.min(44, Number(annotation.detailHeight ?? detailSize)));
             const detailImageStyle = `transform:translate(${Number(annotation.imgX || 0)}%, ${Number(annotation.imgY || 0)}%) scale(${Number(annotation.imgScale || 1)})`;
             const detailHandles = isEditablePreview
               ? ['nw','n','ne','e','se','s','sw','w'].map(handle => `<span class="frame-resize-handle" data-resize-detail="${handle}"></span>`).join('')
@@ -4926,9 +4942,7 @@
         applyFrameLayout(frame, frameIndex);
         const hasPhoto = Boolean(frame.photo);
         const shape = supportedFrameShapes().includes(frame.shape) ? frame.shape : 'square';
-        const frameStyle = isProportionalFrameShape(shape)
-          ? `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%`
-          : `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${Number(frame.height)}%`;
+        const frameStyle = `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${Number(frame.height)}%`;
         const imageStyle = `transform:translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
         const handles = ['nw','n','ne','e','se','s','sw','w'].map(handle => `<span class="frame-resize-handle" data-resize-frame="${handle}"></span>`).join('');
         return `
