@@ -558,6 +558,10 @@
         min-height: 0;
       }
 
+      .doc-photo-frame.shape-oval .frame-clip {
+        border-radius: 50%;
+      }
+
       .doc-photo-frame.shape-square {
         aspect-ratio: 1 / 1;
         min-height: 0;
@@ -2233,6 +2237,7 @@
             const frame = pageFrame(Number(select.dataset.environmentIndex), Number(select.dataset.pageIndex), Number(select.dataset.frameIndex));
             if (!frame) return;
             frame.shape = select.value;
+            if (frame.shape === 'circle' || frame.shape === 'square') frame.height = frame.width;
             persistAndRender();
           });
         });
@@ -3280,6 +3285,7 @@
       function frameShapeMenuOptions() {
         return [
           { value: 'circle', label: 'Formato circular', short: 'C' },
+          { value: 'oval', label: 'Formato oval', short: 'O' },
           { value: 'square', label: 'Formato quadrado', short: 'Q' },
           { value: 'rectangle', label: 'Formato retangular', short: 'R' },
           { value: 'rounded', label: 'Cantos arredondados', short: 'A' },
@@ -3287,7 +3293,7 @@
       }
 
       function setSelectedFrameShape(shape) {
-        if (!['circle', 'square', 'rectangle', 'rounded'].includes(shape)) return;
+        if (!['circle', 'oval', 'square', 'rectangle', 'rounded'].includes(shape)) return;
         selectedFrameRefs().forEach(({ frame }) => {
           frame.shape = shape;
           if (shape === 'circle' || shape === 'square') {
@@ -3755,6 +3761,8 @@
         if (arrowDrawMode && Number(node?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(node?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         event.preventDefault();
         event.stopPropagation();
+        event.stopImmediatePropagation();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
         const frame = pageFrame(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.frameIndex));
         const canvas = node?.closest('.page-frames');
         if (!frame || !canvas || !node) return;
@@ -3801,6 +3809,7 @@
         };
 
         const up = () => {
+          event.currentTarget.releasePointerCapture?.(event.pointerId);
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
           persistWithoutRender();
@@ -4748,7 +4757,7 @@
       function renderDocumentFrame(frame, page, frameIndex, environmentIndex, pageIndex) {
         applyFrameLayout(frame, frameIndex);
         const hasPhoto = Boolean(frame.photo);
-        const shape = ['circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded';
+        const shape = ['circle', 'oval', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded';
         const frameHeight = ['circle', 'square'].includes(shape) ? Number(frame.width) : Number(frame.height);
         const frameStyle = `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${frameHeight}%`;
         const imageStyle = `transform:translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
@@ -4789,6 +4798,7 @@
             <select class="shape-select" data-frame-shape data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">
               <option value="rounded" ${frame.shape === 'rounded' ? 'selected' : ''}>Arred.</option>
               <option value="rectangle" ${frame.shape === 'rectangle' ? 'selected' : ''}>Retâng.</option>
+              <option value="oval" ${frame.shape === 'oval' ? 'selected' : ''}>Oval</option>
               <option value="square" ${frame.shape === 'square' ? 'selected' : ''}>Quadr.</option>
               <option value="circle" ${frame.shape === 'circle' ? 'selected' : ''}>Círculo</option>
             </select>

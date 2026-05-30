@@ -134,6 +134,21 @@ function App() {
         actor,
       }).catch((error) => console.warn('Falha ao salvar snapshot local imediato.', error));
 
+      if (action === 'save_as_draft') {
+        persistEditorEvent(payload).then((result) => {
+          if (result?.projectId) {
+            iframeRef.current?.contentWindow?.postMessage({
+              type: 'dcoratto:project-meta',
+              projectId: result.projectId,
+              status: 'draft',
+            }, window.location.origin);
+          }
+        }).catch((error) => {
+          console.warn('Falha ao salvar rascunho remoto.', error);
+        });
+        return;
+      }
+
       if (action !== 'generate_project_initial') {
         pendingAutosaveRef.current = payload;
         window.clearTimeout(autosaveTimerRef.current);

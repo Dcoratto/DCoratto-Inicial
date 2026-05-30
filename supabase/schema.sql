@@ -9,7 +9,7 @@ create table if not exists public.document_projects (
   address text not null default '',
   project_code text not null default '',
   document_type text not null default 'projeto_inicial',
-  status text not null default 'draft' check (status in ('draft', 'review', 'approved', 'archived', 'sold')),
+  status text not null default 'draft' check (status in ('draft', 'active', 'review', 'approved', 'archived', 'sold')),
   data jsonb not null default '{}'::jsonb,
   current_html_id uuid,
   created_at timestamptz not null default now(),
@@ -102,6 +102,8 @@ create table if not exists public.catalog_materials (
   sort_order integer not null default 0,
   active boolean not null default true,
   data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   unique (group_key, name),
   unique (catalog_key)
 );
@@ -123,7 +125,9 @@ alter table public.catalog_materials
   add column if not exists height integer,
   add column if not exists owner_email text not null default 'dcorattoinovacao@gmail.com',
   add column if not exists created_by text not null default '',
-  add column if not exists updated_by text not null default '';
+  add column if not exists updated_by text not null default '',
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
 
 create table if not exists public.environment_colors (
   id uuid primary key default gen_random_uuid(),
@@ -198,7 +202,25 @@ alter table public.document_html_versions
   add column if not exists shared_with_client boolean not null default false,
   add column if not exists shared_at timestamptz,
   add column if not exists created_by text not null default '',
+  add column if not exists assigned_to_email text not null default '',
   add column if not exists share_slug text;
+
+alter table public.document_projects
+  add column if not exists owner_email text not null default 'dcorattoinovacao@gmail.com',
+  add column if not exists created_by text not null default '',
+  add column if not exists updated_by text not null default '',
+  add column if not exists assigned_to_email text not null default '',
+  add column if not exists last_editor_email text not null default '',
+  add column if not exists last_editor_name text not null default '',
+  add column if not exists is_draft boolean not null default false,
+  add column if not exists draft_owner_email text not null default '',
+  add column if not exists draft_saved_at timestamptz,
+  add column if not exists deleted_for_users text[] not null default '{}',
+  add column if not exists sold_at timestamptz,
+  add column if not exists sold_by text,
+  add column if not exists locked_at timestamptz,
+  add column if not exists locked_by text,
+  add column if not exists lock_reason text;
 
 alter table public.document_environments
   add column if not exists corredicas text not null default '';
@@ -254,8 +276,13 @@ create index if not exists environment_colors_environment_idx on public.environm
 create index if not exists environment_materials_environment_idx on public.environment_materials(environment_id, group_key, position);
 create index if not exists environment_notes_environment_idx on public.environment_notes(environment_id, note_type, position);
 create index if not exists document_html_versions_project_idx on public.document_html_versions(project_id, created_at desc);
+create index if not exists document_html_versions_created_idx on public.document_html_versions(created_by, created_at desc);
+create index if not exists document_html_versions_assigned_idx on public.document_html_versions(assigned_to_email, created_at desc);
 create index if not exists document_versions_project_idx on public.document_versions(project_id, created_at desc);
 create index if not exists document_projects_updated_idx on public.document_projects(updated_at desc);
+create index if not exists document_projects_assigned_updated_idx on public.document_projects(assigned_to_email, updated_at desc);
+create index if not exists document_projects_status_assigned_updated_idx on public.document_projects(status, assigned_to_email, updated_at desc);
+create index if not exists document_projects_draft_owner_updated_idx on public.document_projects(draft_owner_email, updated_at desc) where is_draft = true;
 create index if not exists catalog_materials_manufacturer_idx on public.catalog_materials(manufacturer, line_name, sort_order);
 create index if not exists catalog_materials_filter_idx on public.catalog_materials(group_key, manufacturer, line_name, quality, sort_order);
 create unique index if not exists catalog_materials_catalog_key_uidx on public.catalog_materials(catalog_key) where catalog_key is not null;
@@ -292,6 +319,11 @@ for each row execute function public.set_updated_at();
 drop trigger if exists set_environment_materials_updated_at on public.environment_materials;
 create trigger set_environment_materials_updated_at
 before update on public.environment_materials
+for each row execute function public.set_updated_at();
+
+drop trigger if exists set_catalog_materials_updated_at on public.catalog_materials;
+create trigger set_catalog_materials_updated_at
+before update on public.catalog_materials
 for each row execute function public.set_updated_at();
 
 drop trigger if exists set_environment_notes_updated_at on public.environment_notes;

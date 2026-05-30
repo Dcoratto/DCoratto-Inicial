@@ -119,7 +119,12 @@ createServer(async (request, response) => {
   }
 
   if (request.method === 'GET' && url.pathname === '/api/client-history') {
-    await handleClientHistoryRequest(response);
+    await handleClientHistoryRequest(url, response);
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/projects') {
+    await handleProjectsRequest(url, response);
     return;
   }
 
@@ -209,6 +214,12 @@ async function handleClientLinkRequest(request, response) {
 
     const body = await readJsonBody(request);
     const projectId = safeId(body.projectId) || crypto.randomUUID();
+    const actorEmail = normalizeEmail(body.actor?.email);
+    const existingProject = await loadProjectForWrite(projectId);
+    if (existingProject && !canAccessPrivateProject(existingProject, actorEmail)) {
+      sendJson(response, 403, { error: 'forbidden_project_access' });
+      return;
+    }
     const promotedDocument = await promoteDocumentImages({
       projectId,
       draft: body.draft || null,
@@ -274,6 +285,12 @@ async function handleEditorEventRequest(request, response) {
 
     const body = await readJsonBody(request);
     const projectId = safeId(body.projectId) || crypto.randomUUID();
+    const actorEmail = normalizeEmail(body.actor?.email);
+    const existingProject = await loadProjectForWrite(projectId);
+    if (existingProject && !canAccessPrivateProject(existingProject, actorEmail)) {
+      sendJson(response, 403, { error: 'forbidden_project_access' });
+      return;
+    }
     const promotedDocument = await promoteDocumentImages({
       projectId,
       draft: body.draft || null,
@@ -317,21 +334,30 @@ async function handleLatestEditorStateRequest(url, response) {
     if (requestedProjectId) {
       const { data, error } = await supabaseServer
         .from('document_projects')
-        .select('id, data, updated_at, status')
+        .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_for_users')
         .eq('id', requestedProjectId)
         .maybeSingle();
       if (error) throw error;
       project = data || null;
+      if (project && !canAccessPrivateProject(project, actorEmail)) {
+        sendJson(response, 403, { error: 'forbidden_project_access' });
+        return;
+      }
     } else {
-      const { data: projects, error: projectError } = await supabaseServer
+      let query = supabaseServer
         .from('document_projects')
-        .select('id, data, updated_at, status')
+        .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_for_users')
         .eq('document_type', 'projeto_inicial')
-        .eq('owner_email', primaryAccountEmail)
         .order('updated_at', { ascending: false })
-        .limit(12);
+        .limit(24);
+      if (!isAdminEmail(actorEmail)) {
+        query = query.or(privateProjectAccessOr(actorEmail));
+      }
+      const { data: projects, error: projectError } = await query;
       if (projectError) throw projectError;
-      project = (projects || []).find(item => hasPersistableContent(item?.data?.draft, item?.data?.preview)) || null;
+      project = (projects || [])
+        .filter(item => !isDeletedForUser(item, actorEmail))
+        .find(item => hasPersistableContent(item?.data?.draft, item?.data?.preview)) || null;
     }
 
     let settings = null;
@@ -369,22 +395,34 @@ async function handleProjectStatusRequest(request, response) {
     const body = await readJsonBody(request);
     const projectId = safeId(body.projectId);
     const status = String(body.status || '').trim();
-    if (!projectId || !['draft', 'review', 'approved', 'archived', 'sold'].includes(status)) {
+    if (!projectId || !['draft', 'active', 'review', 'approved', 'archived', 'sold'].includes(status)) {
       sendJson(response, 400, { error: 'Status ou projeto invalido.' });
       return;
     }
     const current = await loadProjectForWrite(projectId);
+    const actorEmail = normalizeEmail(body.actor?.email);
+    if (current && !canAccessPrivateProject(current, actorEmail)) {
+      sendJson(response, 403, { error: 'forbidden_project_access' });
+      return;
+    }
     const currentData = current?.data && typeof current.data === 'object' ? current.data : {};
 
     const { error } = await supabaseServer
       .from('document_projects')
       .update({
         status,
-        updated_by: normalizeEmail(body.actor?.email),
+        updated_by: actorEmail,
+        last_editor_email: actorEmail,
+        last_editor_name: String(body.actor?.name || ''),
+        sold_at: status === 'sold' ? new Date().toISOString() : null,
+        sold_by: status === 'sold' ? actorEmail : null,
+        locked_at: status === 'sold' ? new Date().toISOString() : null,
+        locked_by: status === 'sold' ? actorEmail : null,
+        lock_reason: status === 'sold' ? 'sold_project' : null,
         data: {
           ...currentData,
           soldAt: status === 'sold' ? new Date().toISOString() : null,
-          soldBy: status === 'sold' ? normalizeEmail(body.actor?.email) : null,
+          soldBy: status === 'sold' ? actorEmail : null,
         },
       })
       .eq('id', projectId);
@@ -484,7 +522,7 @@ async function handleEditorSettingsPost(request, response) {
   }
 }
 
-async function handleClientHistoryRequest(response) {
+async function handleClientHistoryRequest(url, response) {
   try {
     if (!supabaseServer) {
       sendJson(response, 503, {
@@ -493,12 +531,17 @@ async function handleClientHistoryRequest(response) {
       return;
     }
 
-    const { data: versions, error } = await supabaseServer
+    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+    let query = supabaseServer
       .from('document_html_versions')
-      .select('id, title, share_slug, project_id, created_at, created_by, data, is_current, replacement_public_url')
+      .select('id, title, share_slug, project_id, created_at, created_by, assigned_to_email, data, is_current, replacement_public_url')
       .eq('shared_with_client', true)
       .order('created_at', { ascending: false })
       .limit(50);
+    if (!isAdminEmail(actorEmail)) {
+      query = query.or(`created_by.eq.${escapePostgrestValue(actorEmail)},assigned_to_email.eq.${escapePostgrestValue(actorEmail)}`);
+    }
+    const { data: versions, error } = await query;
     
     if (error) throw error;
 
@@ -526,6 +569,61 @@ async function handleClientHistoryRequest(response) {
       source: 'server-supabase',
       history,
     });
+  } catch (error) {
+    sendJson(response, 500, {
+      error: String(error?.message || error),
+    });
+  }
+}
+
+async function handleProjectsRequest(url, response) {
+  try {
+    if (!supabaseServer) {
+      sendJson(response, 503, {
+        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar projetos.',
+      });
+      return;
+    }
+
+    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+    const folder = String(url.searchParams.get('folder') || 'active').trim();
+    let query = supabaseServer
+      .from('document_projects')
+      .select('id, title, client_name, contract_number, address, status, is_draft, draft_saved_at, updated_at, created_by, assigned_to_email, last_editor_name, last_editor_email, deleted_for_users')
+      .eq('document_type', 'projeto_inicial')
+      .order('updated_at', { ascending: false })
+      .limit(100);
+
+    if (folder === 'drafts') {
+      query = query.eq('is_draft', true);
+    } else if (folder === 'sold') {
+      query = query.eq('status', 'sold');
+    } else {
+      query = query.neq('status', 'sold').eq('is_draft', false);
+    }
+    if (!isAdminEmail(actorEmail)) {
+      query = query.or(privateProjectAccessOr(actorEmail));
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    const projects = (data || [])
+      .filter(project => !isDeletedForUser(project, actorEmail))
+      .map(project => ({
+        id: project.id,
+        title: project.title || 'Projeto Inicial',
+        clientName: project.client_name || 'Cliente',
+        contractNumber: project.contract_number || '',
+        address: project.address || '',
+        status: project.status || 'draft',
+        isDraft: Boolean(project.is_draft),
+        draftSavedAt: project.draft_saved_at || null,
+        updatedAt: project.updated_at || null,
+        designerEmail: normalizeEmail(project.assigned_to_email || project.created_by || project.last_editor_email),
+        designerName: project.last_editor_name || designerNameFromEmail(project.assigned_to_email || project.created_by || project.last_editor_email),
+      }));
+
+    sendJson(response, 200, { ok: true, source: 'server-supabase', projects });
   } catch (error) {
     sendJson(response, 500, {
       error: String(error?.message || error),
@@ -763,6 +861,10 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
 
   const client = preview?.client || {};
   const actorEmail = normalizeEmail(actor?.email);
+  const isDraftSave = action === 'save_as_draft';
+  const nowIso = new Date().toISOString();
+  const createdBy = normalizeEmail(existingProject?.created_by) || actorEmail;
+  const assignedToEmail = normalizeEmail(existingProject?.assigned_to_email) || actorEmail;
   const projectPayload = {
     id: projectId,
     title: preview?.projectType || 'Projeto Inicial',
@@ -771,18 +873,28 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
     factory: Array.isArray(client.manufacturers) ? client.manufacturers.join(' + ') : '',
     address: client.address || draft?.fields?.endereco || '',
     document_type: 'projeto_inicial',
-    status: existingProject?.status || 'draft',
+    status: isDraftSave ? 'draft' : (existingProject?.status || 'active'),
     owner_email: primaryAccountEmail,
-    created_by: actorEmail,
+    created_by: createdBy,
     updated_by: actorEmail,
+    assigned_to_email: assignedToEmail,
+    last_editor_email: actorEmail,
+    last_editor_name: String(actor?.name || ''),
+    is_draft: isDraftSave || Boolean(existingProject?.is_draft),
+    draft_owner_email: isDraftSave ? actorEmail : (normalizeEmail(existingProject?.draft_owner_email) || createdBy || actorEmail),
+    draft_saved_at: isDraftSave ? nowIso : existingProject?.draft_saved_at || null,
     data: {
       draft: draft || null,
       preview: preview || null,
       actor: actor || null,
       ownerEmail: primaryAccountEmail,
+      createdBy,
+      assignedToEmail,
+      lastEditorEmail: actorEmail,
+      lastEditorName: String(actor?.name || ''),
       lastAction: action || 'autosave',
       lastEventId: eventId || null,
-      lastEventAt: createdAt || new Date().toISOString(),
+      lastEventAt: createdAt || nowIso,
     },
   };
 
@@ -796,7 +908,7 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
 async function loadProjectForWrite(projectId) {
   const { data, error } = await supabaseServer
     .from('document_projects')
-    .select('id, status, data')
+    .select('id, status, data, owner_email, created_by, updated_by, assigned_to_email, last_editor_email, last_editor_name, is_draft, draft_owner_email, draft_saved_at, deleted_for_users')
     .eq('id', projectId)
     .maybeSingle();
   if (error) throw error;
@@ -1329,6 +1441,36 @@ function hasPersistableContent(draft, preview) {
   return hasPreviewContent || hasAmbientes || hasFields;
 }
 
+function isAdminEmail(email) {
+  return normalizeEmail(email) === primaryAccountEmail;
+}
+
+function privateProjectAccessOr(email) {
+  const safeEmail = escapePostgrestValue(normalizeEmail(email));
+  return `assigned_to_email.eq.${safeEmail},created_by.eq.${safeEmail},draft_owner_email.eq.${safeEmail}`;
+}
+
+function escapePostgrestValue(value) {
+  return String(value || '').replace(/"/g, '\\"');
+}
+
+function canAccessPrivateProject(project, actorEmail) {
+  const email = normalizeEmail(actorEmail);
+  if (isAdminEmail(email)) return true;
+  if (!email || !project) return false;
+  return [
+    project.assigned_to_email,
+    project.created_by,
+    project.draft_owner_email,
+  ].map(normalizeEmail).includes(email) && !isDeletedForUser(project, email);
+}
+
+function isDeletedForUser(project, actorEmail) {
+  if (isAdminEmail(actorEmail)) return false;
+  const deleted = Array.isArray(project?.deleted_for_users) ? project.deleted_for_users : [];
+  return deleted.map(normalizeEmail).includes(normalizeEmail(actorEmail));
+}
+
 async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt }) {
   const client = preview.client || {};
   const actorEmail = normalizeEmail(actor?.email);
@@ -1336,6 +1478,11 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
   if (existingProject?.status === 'sold') {
     throw new Error('Projeto vendido esta bloqueado para alteracoes.');
   }
+  if (existingProject && !canAccessPrivateProject(existingProject, actorEmail)) {
+    throw new Error('forbidden_project_access');
+  }
+  const createdBy = normalizeEmail(existingProject?.created_by) || actorEmail;
+  const assignedToEmail = normalizeEmail(existingProject?.assigned_to_email) || actorEmail;
 
   if (eventId) {
     const { data: existingVersion, error: existingError } = await supabaseServer
@@ -1367,11 +1514,15 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
       factory: Array.isArray(client.manufacturers) ? client.manufacturers.join(' + ') : '',
       address: client.address || draft?.fields?.endereco || '',
       document_type: 'projeto_inicial',
-      status: existingProject?.status || 'draft',
+      status: existingProject?.status || 'active',
       owner_email: primaryAccountEmail,
-      created_by: actorEmail,
+      created_by: createdBy,
       updated_by: actorEmail,
-      data: { draft: draft || null, preview, actor: actor || null, ownerEmail: primaryAccountEmail, lastEventId: eventId || null, lastEventAt: createdAt || new Date().toISOString() },
+      assigned_to_email: assignedToEmail,
+      last_editor_email: actorEmail,
+      last_editor_name: String(actor?.name || ''),
+      is_draft: false,
+      data: { draft: draft || null, preview, actor: actor || null, ownerEmail: primaryAccountEmail, createdBy, assignedToEmail, lastEditorEmail: actorEmail, lastEditorName: String(actor?.name || ''), lastEventId: eventId || null, lastEventAt: createdAt || new Date().toISOString() },
     });
   if (projectError) throw projectError;
 
@@ -1386,6 +1537,7 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
     shared_with_client: true,
     shared_at: new Date().toISOString(),
     created_by: actorEmail,
+    assigned_to_email: assignedToEmail,
     owner_email: primaryAccountEmail,
     share_slug: shareSlug,
     data: {
@@ -1397,6 +1549,7 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
       sharedWithClient: true,
       sharedAt: new Date().toISOString(),
       createdBy: actorEmail,
+      assignedToEmail,
       ownerEmail: primaryAccountEmail,
     },
   };

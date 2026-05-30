@@ -210,6 +210,9 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
 .history-head{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--border);padding:22px 26px}
 .history-head h2{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:300;color:var(--gold-l)}
 .history-body{padding:20px}
+.history-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.history-tab{border:1px solid var(--border);background:rgba(0,0,0,.18);color:#d8c09e;padding:8px 11px;border-radius:2px;font-family:'Montserrat',sans-serif;font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer}
+.history-tab.active{background:var(--gold);border-color:var(--gold);color:var(--dark)}
 .history-filter{margin-bottom:16px}
 .history-filter input{width:100%;background:rgba(0,0,0,.32);border:1px solid var(--border);border-radius:3px;color:var(--cream);padding:12px 14px;font-family:'Montserrat',sans-serif;font-size:11px;letter-spacing:.08em;text-transform:uppercase;outline:none}
 .history-filter input:focus{border-color:var(--gold);box-shadow:0 0 0 2px rgba(184,151,106,.12)}
@@ -270,6 +273,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
     <button class="icon-btn" type="button" onclick="openClientHistory()" title="Histórico de clientes" aria-label="Histórico de clientes">📋</button>
     <button class="icon-btn" type="button" onclick="openSettings()" title="Configurações" aria-label="Configurações">⚙</button>
     <button class="ghost-btn" type="button" onclick="openHtmlPreview()">Preview HTML</button>
+    <button class="ghost-btn" type="button" id="saveDraftBtn" onclick="saveProjectDraft()">Salvar como rascunho</button>
     <button class="ghost-btn" type="button" id="sellProjectBtn" onclick="markProjectSold()">Marcar vendido</button>
     <button class="hbtn" type="button" onclick="publishClientHtml()">Gerar link para cliente</button>
   </div>
@@ -439,6 +443,12 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
       <button class="settings-close" type="button" onclick="closeClientHistory()" aria-label="Fechar histórico">×</button>
     </div>
     <div class="history-body">
+      <div class="history-tabs" id="historyTabs">
+        <button class="history-tab active" type="button" data-history-folder="active" onclick="setHistoryFolder('active')">Meus projetos</button>
+        <button class="history-tab" type="button" data-history-folder="drafts" onclick="setHistoryFolder('drafts')">Rascunhos</button>
+        <button class="history-tab" type="button" data-history-folder="sold" onclick="setHistoryFolder('sold')">Vendidos</button>
+        <button class="history-tab" type="button" data-history-folder="links" onclick="setHistoryFolder('links')">Links</button>
+      </div>
       <div class="history-filter">
         <input type="search" id="historySearch" placeholder="Buscar por cliente, contrato ou projetista" oninput="renderClientHistory()">
       </div>
@@ -500,6 +510,8 @@ let editingCatalogItemId = null;
 let editingMaterialOption = null;
 let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
 let clientHistoryItems = [];
+let projectHistoryItems = [];
+let historyFolder = 'active';
 let currentProjectId = '';
 let projectStatus = 'draft';
 let catalogVisibleItems = null;
@@ -921,17 +933,32 @@ function openClientHistory() {
   document.getElementById('historyOverlay').classList.add('active');
   const search = document.getElementById('historySearch');
   if (search) search.value = '';
-  loadClientHistory();
+  loadHistoryPanel();
 }
 
 function closeClientHistory() {
   document.getElementById('historyOverlay').classList.remove('active');
 }
 
+function setHistoryFolder(folder) {
+  historyFolder = ['active', 'drafts', 'sold', 'links'].includes(folder) ? folder : 'active';
+  document.querySelectorAll('[data-history-folder]').forEach(button => {
+    button.classList.toggle('active', button.dataset.historyFolder === historyFolder);
+  });
+  loadHistoryPanel();
+}
+
+async function loadHistoryPanel() {
+  if (historyFolder === 'links') return loadClientHistory();
+  return loadProjectHistory(historyFolder);
+}
+
 async function loadClientHistory() {
   const historyList = document.getElementById('historyList');
   try {
-    const response = await fetch('/api/client-history', { cache: 'no-store' });
+    const params = new URLSearchParams();
+    if (editorActor?.email) params.set('actor', editorActor.email);
+    const response = await fetch(`/api/client-history?${params.toString()}`, { cache: 'no-store' });
     if (!response.ok) throw new Error('Não foi possível carregar histórico');
     
     const result = await response.json();
@@ -942,9 +969,30 @@ async function loadClientHistory() {
   }
 }
 
+async function loadProjectHistory(folder = 'active') {
+  const historyList = document.getElementById('historyList');
+  try {
+    if (historyList) historyList.innerHTML = '<div class="history-empty">Carregando...</div>';
+    const params = new URLSearchParams();
+    if (editorActor?.email) params.set('actor', editorActor.email);
+    params.set('folder', folder);
+    const response = await fetch(`/api/projects?${params.toString()}`, { cache: 'no-store' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result?.error || 'Não foi possível carregar projetos');
+    projectHistoryItems = result.projects || [];
+    renderClientHistory();
+  } catch (error) {
+    historyList.innerHTML = `<div class="history-empty">Erro ao carregar projetos: ${escapeHTML(error.message)}</div>`;
+  }
+}
+
 function renderClientHistory() {
   const historyList = document.getElementById('historyList');
   if (!historyList) return;
+  if (historyFolder !== 'links') {
+    renderProjectHistory();
+    return;
+  }
   const query = normalizeSearchText(document.getElementById('historySearch')?.value || '');
   const history = clientHistoryItems.filter(item => {
     if (!query) return true;
@@ -982,6 +1030,57 @@ function renderClientHistory() {
         </div>
       </div>
     `).join('');
+}
+
+function renderProjectHistory() {
+  const historyList = document.getElementById('historyList');
+  if (!historyList) return;
+  const query = normalizeSearchText(document.getElementById('historySearch')?.value || '');
+  const projects = projectHistoryItems.filter(item => {
+    if (!query) return true;
+    return [
+      item.clientName,
+      item.contractNumber || 'Sem número',
+      item.designerName,
+      item.designerEmail,
+      item.status,
+    ].some(value => normalizeSearchText(value).includes(query));
+  });
+
+  if (!projectHistoryItems.length) {
+    const empty = historyFolder === 'drafts'
+      ? 'Nenhum rascunho encontrado.'
+      : historyFolder === 'sold'
+        ? 'Nenhum projeto vendido encontrado.'
+        : 'Nenhum projeto ativo encontrado.';
+    historyList.innerHTML = `<div class="history-empty">${empty}</div>`;
+    return;
+  }
+
+  if (!projects.length) {
+    historyList.innerHTML = '<div class="history-empty">Nenhum projeto encontrado para esta busca.</div>';
+    return;
+  }
+
+  historyList.innerHTML = projects.map(item => {
+    const locked = item.status === 'sold';
+    const dateValue = item.draftSavedAt || item.updatedAt;
+    return `
+      <div class="history-item">
+        <div class="history-info">
+          <h3>${escapeHTML(item.clientName)}</h3>
+          <p>Contrato: ${escapeHTML(item.contractNumber || 'Sem número')}</p>
+          <p>Endereço: ${escapeHTML(item.address || 'Sem endereço')}</p>
+          <p>Projetista: ${escapeHTML(item.designerName || 'Não informado')}</p>
+          <p>Status: ${locked ? 'Vendido' : item.isDraft ? 'Rascunho' : 'Ativo'}</p>
+          <div class="history-date">${dateValue ? `${new Date(dateValue).toLocaleDateString('pt-BR')} às ${new Date(dateValue).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}` : 'Sem data'}</div>
+        </div>
+        <div class="history-actions">
+          <button class="history-action" type="button" onclick="editProjectFromHistory('${escapeJS(item.id)}')">${locked ? 'Visualizar' : 'Editar Projeto'}</button>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 function normalizeSearchText(value) {
@@ -2012,7 +2111,7 @@ function ensurePageFrames(page) {
     frame.annotations = Array.isArray(frame.annotations) ? frame.annotations : [];
     frame.title ||= 'Moldura';
     frame.photo ||= '';
-    frame.shape ||= 'rounded';
+    frame.shape = ['oval', 'circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded';
     frame.x = normalizePercent(frame.x, layout.x, 0, 98);
     frame.y = normalizePercent(frame.y, layout.y, 0, 98);
     frame.width = normalizePercent(frame.width, layout.width, 8, 100 - frame.x);
@@ -2047,7 +2146,7 @@ function normalizedPageFrames(page) {
     id: frame.id,
     title: frame.title || `Moldura ${frameIndex + 1}`,
     photo: frame.photo || '',
-    shape: frame.shape || 'rounded',
+    shape: ['oval', 'circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded',
     x: Number(frame.x),
     y: Number(frame.y),
     width: Number(frame.width),
@@ -2487,7 +2586,7 @@ function mergePreviewDocument(preview) {
           id: frame.id || `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
           title: frame.title || 'Moldura',
           photo: frame.photo || '',
-          shape: frame.shape || 'rounded',
+          shape: ['oval', 'circle', 'square', 'rounded', 'rectangle'].includes(frame.shape) ? frame.shape : 'rounded',
           x: frame.x,
           y: frame.y,
           width: frame.width,
@@ -2509,6 +2608,26 @@ function syncPreviewDocument(action = 'editor_sync') {
   const preview = buildPreviewDocumentData();
   safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
   postEditorEvent(action, { draft, preview });
+}
+
+function saveProjectDraft() {
+  if (isProjectSold()) {
+    alert('Projeto vendido. Alterações estão bloqueadas.');
+    return;
+  }
+  const draft = saveBuilderDraft();
+  const preview = buildPreviewDocumentData();
+  safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
+  postEditorEvent('save_as_draft', { draft, preview });
+  const button = document.getElementById('saveDraftBtn');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Salvando...';
+    window.setTimeout(() => {
+      button.disabled = false;
+      button.textContent = 'Salvar como rascunho';
+    }, 1400);
+  }
 }
 
 function trackPendingAsset(file, metadata = {}) {
@@ -2540,6 +2659,8 @@ function updateSoldLockUi() {
     button.disabled = isProjectSold();
     button.textContent = isProjectSold() ? 'Vendido' : 'Marcar vendido';
   }
+  const draftButton = document.getElementById('saveDraftBtn');
+  if (draftButton) draftButton.disabled = isProjectSold();
 }
 
 async function markProjectSold() {

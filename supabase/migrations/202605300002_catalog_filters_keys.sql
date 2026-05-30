@@ -8,7 +8,24 @@ alter table public.catalog_materials
   add column if not exists mime_type text,
   add column if not exists width integer,
   add column if not exists height integer,
-  add column if not exists created_by text not null default '';
+  add column if not exists created_by text not null default '',
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists set_catalog_materials_updated_at on public.catalog_materials;
+create trigger set_catalog_materials_updated_at
+before update on public.catalog_materials
+for each row execute function public.set_updated_at();
 
 update public.catalog_materials
 set catalog_key = lower(regexp_replace(
