@@ -334,7 +334,7 @@ async function handleLatestEditorStateRequest(url, response) {
     if (requestedProjectId) {
       const { data, error } = await supabaseServer
         .from('document_projects')
-        .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_for_users')
+        .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_at, deleted_for_users')
         .eq('id', requestedProjectId)
         .maybeSingle();
       if (error) throw error;
@@ -346,8 +346,9 @@ async function handleLatestEditorStateRequest(url, response) {
     } else {
       let query = supabaseServer
         .from('document_projects')
-        .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_for_users')
+        .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_at, deleted_for_users')
         .eq('document_type', 'projeto_inicial')
+        .is('deleted_at', null)
         .order('updated_at', { ascending: false })
         .limit(24);
       if (!isAdminEmail(actorEmail)) {
@@ -475,6 +476,7 @@ async function handleCatalogMaterialsGet(url, response) {
       .from('catalog_materials')
       .select('id,catalog_key,group_key,name,code,manufacturer,line_name,quality,material_type,category,hex,texture_url,image_url,storage_bucket,storage_path,public_url,mime_type,width,height,active,sort_order,created_by,updated_by,created_at,updated_at,data')
       .eq('active', true)
+      .is('deleted_at', null)
       .order('sort_order', { ascending: true })
       .order('name', { ascending: true })
       .limit(filters.limit);
@@ -532,12 +534,14 @@ async function handleClientHistoryRequest(url, response) {
     }
 
     const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+    const includeDeleted = url.searchParams.get('includeDeleted') === 'true' && isAdminEmail(actorEmail);
     let query = supabaseServer
       .from('document_html_versions')
       .select('id, title, share_slug, project_id, created_at, created_by, assigned_to_email, data, is_current, replacement_public_url')
       .eq('shared_with_client', true)
       .order('created_at', { ascending: false })
       .limit(50);
+    if (!includeDeleted) query = query.is('deleted_at', null);
     if (!isAdminEmail(actorEmail)) {
       query = query.or(`created_by.eq.${escapePostgrestValue(actorEmail)},assigned_to_email.eq.${escapePostgrestValue(actorEmail)}`);
     }
@@ -589,10 +593,12 @@ async function handleProjectsRequest(url, response) {
     const folder = String(url.searchParams.get('folder') || 'active').trim();
     let query = supabaseServer
       .from('document_projects')
-      .select('id, title, client_name, contract_number, address, status, is_draft, draft_saved_at, updated_at, created_by, assigned_to_email, last_editor_name, last_editor_email, deleted_for_users')
+      .select('id, title, client_name, contract_number, address, status, is_draft, draft_saved_at, updated_at, created_by, assigned_to_email, last_editor_name, last_editor_email, deleted_at, deleted_by, deleted_reason, deleted_for_users')
       .eq('document_type', 'projeto_inicial')
       .order('updated_at', { ascending: false })
       .limit(100);
+    const includeDeleted = url.searchParams.get('includeDeleted') === 'true' && isAdminEmail(actorEmail);
+    if (!includeDeleted) query = query.is('deleted_at', null);
 
     if (folder === 'drafts') {
       query = query.eq('is_draft', true);
@@ -619,6 +625,9 @@ async function handleProjectsRequest(url, response) {
         isDraft: Boolean(project.is_draft),
         draftSavedAt: project.draft_saved_at || null,
         updatedAt: project.updated_at || null,
+        deletedAt: project.deleted_at || null,
+        deletedBy: project.deleted_by || '',
+        deletedReason: project.deleted_reason || '',
         designerEmail: normalizeEmail(project.assigned_to_email || project.created_by || project.last_editor_email),
         designerName: project.last_editor_name || designerNameFromEmail(project.assigned_to_email || project.created_by || project.last_editor_email),
       }));
@@ -908,7 +917,7 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
 async function loadProjectForWrite(projectId) {
   const { data, error } = await supabaseServer
     .from('document_projects')
-    .select('id, status, data, owner_email, created_by, updated_by, assigned_to_email, last_editor_email, last_editor_name, is_draft, draft_owner_email, draft_saved_at, deleted_for_users')
+    .select('id, status, data, owner_email, created_by, updated_by, assigned_to_email, last_editor_email, last_editor_name, is_draft, draft_owner_email, draft_saved_at, deleted_at, deleted_for_users')
     .eq('id', projectId)
     .maybeSingle();
   if (error) throw error;
@@ -955,12 +964,10 @@ async function loadSharedEditorSettings() {
   const tableSettings = await loadSettingsFromSharedCatalogTables();
   const storedPayload = data?.payload || {};
   const payload = normalizeEditorSettingsPayload(storedPayload);
-  const hasPayloadCatalog = Array.isArray(storedPayload.catalogItems);
-  const hasPayloadOptions = storedPayload.materialOptions && typeof storedPayload.materialOptions === 'object';
   return {
     ...payload,
-    catalogItems: hasPayloadCatalog ? payload.catalogItems : tableSettings.catalogItems,
-    materialOptions: hasPayloadOptions ? payload.materialOptions : tableSettings.materialOptions,
+    catalogItems: mergeCatalogItemsPayload(tableSettings.catalogItems, payload.catalogItems),
+    materialOptions: mergeMaterialOptionsPayload(tableSettings.materialOptions, payload.materialOptions),
   };
 }
 
@@ -1209,12 +1216,14 @@ async function loadSettingsFromSharedCatalogTables() {
       .from('catalog_materials')
       .select('id,catalog_key,group_key,name,code,manufacturer,line_name,quality,material_type,category,hex,texture_url,image_url,storage_bucket,storage_path,public_url,mime_type,width,height,active,sort_order,created_by,updated_by,created_at,updated_at,data')
       .eq('active', true)
+      .is('deleted_at', null)
       .order('sort_order', { ascending: true })
       .limit(500),
     supabaseServer
       .from('catalog_options')
       .select('group_key, label, sort_order')
       .eq('active', true)
+      .is('deleted_at', null)
       .order('sort_order', { ascending: true }),
   ]);
 
@@ -1328,23 +1337,17 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
       height: Number(item.height) || null,
       sort_order: index,
       active: true,
+      deleted_at: null,
+      deleted_by: null,
+      deleted_reason: null,
+      restored_at: new Date().toISOString(),
+      restored_by: actorEmail || primaryAccountEmail,
       owner_email: primaryAccountEmail,
       created_by: item.createdBy || actorEmail || primaryAccountEmail,
       updated_by: actorEmail || primaryAccountEmail,
       data: { ...item, catalogKey },
     };
     });
-
-  if (catalogGroups.length) {
-    const { error } = await supabaseServer
-      .from('catalog_materials')
-      .update({
-        active: false,
-        updated_by: actorEmail || primaryAccountEmail,
-      })
-      .in('group_key', catalogGroups);
-    if (error) throw error;
-  }
 
   if (materialRows.length) {
     const { error } = await supabaseServer
@@ -1370,6 +1373,11 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
         label,
         sort_order: index,
         active: true,
+        deleted_at: null,
+        deleted_by: null,
+        deleted_reason: null,
+        restored_at: new Date().toISOString(),
+        restored_by: actorEmail || primaryAccountEmail,
         image_data: null,
         image_url: String(image).startsWith('http') || String(image).startsWith('/') ? image : null,
         updated_by: actorEmail || primaryAccountEmail,
@@ -1377,17 +1385,6 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
       };
     });
   });
-
-  if (optionGroups.length) {
-    const { error } = await supabaseServer
-      .from('catalog_options')
-      .update({
-        active: false,
-        updated_by: actorEmail || primaryAccountEmail,
-      })
-      .in('group_key', optionGroups);
-    if (error) throw error;
-  }
 
   if (optionRows.length) {
     const { error } = await supabaseServer
@@ -1458,6 +1455,7 @@ function canAccessPrivateProject(project, actorEmail) {
   const email = normalizeEmail(actorEmail);
   if (isAdminEmail(email)) return true;
   if (!email || !project) return false;
+  if (project.deleted_at) return false;
   return [
     project.assigned_to_email,
     project.created_by,

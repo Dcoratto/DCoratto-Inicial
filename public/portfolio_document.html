@@ -1110,6 +1110,71 @@
       .frame-resize-handle[data-resize-detail="sw"] { left: -9px; bottom: -9px; cursor: nesw-resize; }
       .frame-resize-handle[data-resize-detail="w"] { left: -9px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
 
+      .frame-format-menu {
+        position: fixed;
+        z-index: 10000;
+        display: none;
+        grid-template-columns: repeat(2, minmax(112px, 1fr));
+        gap: 8px;
+        width: min(288px, calc(100vw - 24px));
+        padding: 10px;
+        border: 1px solid rgba(17,17,17,.14);
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 14px 38px rgba(0,0,0,.2);
+      }
+
+      .frame-format-menu.is-open {
+        display: grid;
+      }
+
+      .frame-format-option {
+        display: grid;
+        grid-template-columns: 44px 1fr;
+        align-items: center;
+        gap: 9px;
+        min-height: 54px;
+        border: 1px solid rgba(17,17,17,.12);
+        border-radius: 6px;
+        background: #f8f4ec;
+        color: #1f1a15;
+        padding: 8px;
+        font-family: 'Montserrat', sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .08em;
+        text-align: left;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+
+      .frame-format-option:hover {
+        border-color: #8f7044;
+        background: #fff;
+      }
+
+      .frame-format-preview {
+        width: 38px;
+        height: 30px;
+        border: 2px solid #8f7044;
+        background: rgba(184,151,106,.16);
+      }
+
+      .frame-format-preview.shape-circle,
+      .frame-format-preview.shape-square {
+        width: 32px;
+        height: 32px;
+      }
+
+      .frame-format-preview.shape-circle,
+      .frame-format-preview.shape-oval {
+        border-radius: 999px;
+      }
+
+      .frame-format-preview.shape-rounded {
+        border-radius: 8px;
+      }
+
       .frame-selection-toolbar {
         position: absolute;
         left: 50%;
@@ -1780,6 +1845,7 @@
       let frameClipboard = [];
       let pageAnnotationClipboard = [];
       let freeElementClipboard = [];
+      let isFrameResizeActive = false;
       let arrowDrawMode = null;
       let lastCanvasPasteTarget = null;
       const historyLimit = 80;
@@ -1874,6 +1940,10 @@
             event.preventDefault();
             pasteCopiedElements();
           }
+        }
+        if (isModifierShortcut && !event.shiftKey && !event.altKey && ['1', '2'].includes(event.key)) {
+          event.preventDefault();
+          addFrameWithFormatFromShortcut(event.key === '1' ? 'circle' : 'square-small');
         }
         if (isModifierShortcut && event.key.toLowerCase() === 'd') {
           event.preventDefault();
@@ -2237,6 +2307,7 @@
             const frame = pageFrame(Number(select.dataset.environmentIndex), Number(select.dataset.pageIndex), Number(select.dataset.frameIndex));
             if (!frame) return;
             frame.shape = select.value;
+            frame.frameType = frame.shape;
             if (frame.shape === 'circle' || frame.shape === 'square') frame.height = frame.width;
             persistAndRender();
           });
@@ -2877,6 +2948,7 @@
       }
 
       function clearFrameSelection() {
+        if (isFrameResizeActive) return;
         selectedFrameKeys.clear();
         selectedPageAnnotationKeys.clear();
         selectedFreeElementKeys.clear();
@@ -3296,6 +3368,7 @@
         if (!['circle', 'oval', 'square', 'rectangle', 'rounded'].includes(shape)) return;
         selectedFrameRefs().forEach(({ frame }) => {
           frame.shape = shape;
+          frame.frameType = shape;
           if (shape === 'circle' || shape === 'square') {
             frame.height = frame.width;
           } else if (!Number.isFinite(Number(frame.height)) || Number(frame.height) === Number(frame.width)) {
@@ -3398,33 +3471,14 @@
           menu = document.createElement('div');
           menu.id = 'frameFormatMenu';
           menu.className = 'frame-format-menu';
-          menu.style.cssText = `
-            position: fixed;
-            background: white;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 8px 0;
-            min-width: 180px;
-            z-index: 10000;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-          `;
           document.body.appendChild(menu);
         }
 
         const options = frameFormatOptions();
         menu.innerHTML = options.map((opt, idx) => `
-          <button type="button" data-format-index="${idx}" style="
-            display: block;
-            width: 100%;
-            padding: 10px 15px;
-            text-align: left;
-            border: none;
-            background: none;
-            cursor: pointer;
-            font-size: 14px;
-            font-family: inherit;
-          " onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='none'">
-            ${opt.name}
+          <button type="button" class="frame-format-option" data-format-index="${idx}" title="${escapeAttribute(opt.name)}">
+            <span class="frame-format-preview shape-${escapeAttribute(opt.shape || 'rounded')}"></span>
+            <span>${escapeHTML(opt.name)}</span>
           </button>
         `).join('');
 
@@ -3436,20 +3490,20 @@
               Number(button.dataset.pageIndex),
               formatIndex
             );
-            menu.style.display = 'none';
+            menu.classList.remove('is-open');
           });
         });
 
         const rect = button.getBoundingClientRect();
-        menu.style.left = `${rect.left}px`;
+        menu.style.left = `${Math.max(8, Math.min(window.innerWidth - 300, rect.left))}px`;
         menu.style.top = `${rect.bottom + 5}px`;
-        menu.style.display = 'block';
+        menu.classList.add('is-open');
 
         // Fechar ao clicar fora
         setTimeout(() => {
           document.addEventListener('pointerdown', function closeMenuOnClickOut(e) {
             if (!menu.contains(e.target) && e.target !== button) {
-              menu.style.display = 'none';
+              menu.classList.remove('is-open');
               document.removeEventListener('pointerdown', closeMenuOnClickOut);
             }
           });
@@ -3462,24 +3516,53 @@
         page.frames = Array.isArray(page.frames) ? page.frames : [];
         
         const format = frameFormatOptions()[formatIndex];
+        if (!format) return;
         const position = getRandomPosition();
+        const shape = ['circle', 'oval', 'square', 'rectangle', 'rounded'].includes(format.shape) ? format.shape : 'rounded';
+        const width = Number(format.width || 30);
+        const height = shape === 'circle' || shape === 'square' ? width : Number(format.height || width);
         
-        page.frames.push({
+        const frame = {
           id: `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
           title: `Moldura ${page.frames.length + 1}`,
           photo: '',
-          shape: 'rounded',
+          frameType: shape,
+          shape,
           x: position.x,
           y: position.y,
-          width: format.width,
-          height: format.height,
+          width,
+          height,
           imgScale: 1,
           imgX: 0,
           imgY: 0,
           editImage: false,
           annotations: [],
-        });
+        };
+        page.frames.push(frame);
+        selectedFrameKeys.clear();
+        selectedPageAnnotationKeys.clear();
+        selectedFreeElementKeys.clear();
+        selectedFrameKeys.add(frameKey(environmentIndex, pageIndex, page.frames.length - 1));
         persistAndRender();
+      }
+
+      function addFrameWithFormatFromShortcut(formatKey) {
+        const target = currentFrameInsertionTarget();
+        const index = frameFormatOptions().findIndex(option => option.key === formatKey);
+        if (!target || index < 0) return;
+        addFrameWithFormat(target.environmentIndex, target.pageIndex, index);
+      }
+
+      function currentFrameInsertionTarget() {
+        const selected = selectedFrameRefs()[0];
+        if (selected) return { environmentIndex: selected.environmentIndex, pageIndex: selected.pageIndex };
+        if (lastCanvasPasteTarget) return { environmentIndex: lastCanvasPasteTarget.environmentIndex, pageIndex: lastCanvasPasteTarget.pageIndex };
+        const pageNode = document.querySelector('[data-page-frames]');
+        if (!pageNode) return null;
+        return {
+          environmentIndex: Number(pageNode.dataset.environmentIndex),
+          pageIndex: Number(pageNode.dataset.pageIndex),
+        };
       }
 
       function openAnnotationContextMenu(clientX, clientY) {
@@ -3659,13 +3742,25 @@
         selectSinglePageAnnotation(nearby[nextIndex].key);
       }
 
-      function frameFormatOptions() {
+      function legacyFrameFormatOptions() {
         return [
           { name: 'Quadrada Pequena', width: 25, height: 25 },
           { name: 'Retangular Pequena', width: 35, height: 25 },
           { name: 'Quadrada Média', width: 35, height: 35 },
           { name: 'Retangular Média', width: 45, height: 30 },
           { name: 'Grande', width: 45, height: 45 },
+        ];
+      }
+
+      function frameFormatOptions() {
+        return [
+          { key: 'circle', name: 'Circular', width: 30, height: 30, shape: 'circle' },
+          { key: 'square-small', name: 'Quadrada Pequena', width: 25, height: 25, shape: 'square' },
+          { key: 'rectangle-small', name: 'Retangular Pequena', width: 35, height: 25, shape: 'rectangle' },
+          { key: 'square-medium', name: 'Quadrada Media', width: 35, height: 35, shape: 'square' },
+          { key: 'rectangle-medium', name: 'Retangular Media', width: 45, height: 30, shape: 'rectangle' },
+          { key: 'oval', name: 'Oval', width: 38, height: 26, shape: 'oval' },
+          { key: 'large', name: 'Grande', width: 45, height: 45, shape: 'square' },
         ];
       }
 
@@ -3689,10 +3784,15 @@
 
       function applyFrameLayout(frame, index) {
         const fallback = frameDefaultLayout(index);
+        frame.shape = ['circle', 'oval', 'square', 'rounded', 'rectangle'].includes(frame.shape || frame.frameType)
+          ? (frame.shape || frame.frameType)
+          : 'rounded';
+        frame.frameType = frame.shape;
         frame.x = Number.isFinite(Number(frame.x)) ? Number(frame.x) : fallback.x;
         frame.y = Number.isFinite(Number(frame.y)) ? Number(frame.y) : fallback.y;
         frame.width = Number.isFinite(Number(frame.width)) ? Number(frame.width) : fallback.width;
         frame.height = Number.isFinite(Number(frame.height)) ? Number(frame.height) : fallback.height;
+        if (frame.shape === 'circle' || frame.shape === 'square') frame.height = frame.width;
         frame.imgScale = Number.isFinite(Number(frame.imgScale)) ? Number(frame.imgScale) : 1;
         frame.imgX = Number.isFinite(Number(frame.imgX)) ? Number(frame.imgX) : 0;
         frame.imgY = Number.isFinite(Number(frame.imgY)) ? Number(frame.imgY) : 0;
@@ -3762,10 +3862,16 @@
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
-        event.currentTarget.setPointerCapture?.(event.pointerId);
+        const resizeHandle = event.currentTarget;
+        resizeHandle.setPointerCapture?.(event.pointerId);
+        isFrameResizeActive = true;
         const frame = pageFrame(Number(node?.dataset.environmentIndex), Number(node?.dataset.pageIndex), Number(node?.dataset.frameIndex));
         const canvas = node?.closest('.page-frames');
-        if (!frame || !canvas || !node) return;
+        if (!frame || !canvas || !node) {
+          isFrameResizeActive = false;
+          resizeHandle.releasePointerCapture?.(event.pointerId);
+          return;
+        }
         selectSingleFrame(frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex));
         const handle = event.currentTarget.dataset.resizeFrame || 'se';
         const canvasRect = canvas.getBoundingClientRect();
@@ -3809,14 +3915,18 @@
         };
 
         const up = () => {
-          event.currentTarget.releasePointerCapture?.(event.pointerId);
+          isFrameResizeActive = false;
+          resizeHandle.releasePointerCapture?.(event.pointerId);
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', up);
+          window.removeEventListener('pointercancel', up);
+          if (['circle', 'square'].includes(frame.shape)) frame.height = frame.width;
           persistWithoutRender();
         };
 
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
+        window.addEventListener('pointercancel', up);
       }
 
       function detailResizeHandleAtPoint(event, node) {
@@ -4745,7 +4855,10 @@
             frame.id ||= `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
             frame.title ||= `Moldura ${index + 1}`;
             frame.photo ||= frame.photos?.[0]?.src || '';
-            frame.shape ||= 'rounded';
+            frame.shape = ['circle', 'oval', 'square', 'rounded', 'rectangle'].includes(frame.shape || frame.frameType)
+              ? (frame.shape || frame.frameType)
+              : 'rounded';
+            frame.frameType = frame.shape;
             frame.annotations = [];
             applyFrameLayout(frame, index);
           });

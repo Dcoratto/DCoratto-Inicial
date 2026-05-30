@@ -62,7 +62,17 @@ create table if not exists public.catalog_colors (
   name text not null unique,
   hex text not null,
   sort_order integer not null default 0,
-  active boolean not null default true
+  active boolean not null default true,
+  deleted_at timestamptz,
+  deleted_by text,
+  deleted_reason text,
+  deleted_for_users text[] not null default '{}',
+  restored_at timestamptz,
+  restored_by text,
+  created_by text not null default '',
+  updated_by text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists public.catalog_options (
@@ -71,6 +81,12 @@ create table if not exists public.catalog_options (
   label text not null,
   sort_order integer not null default 0,
   active boolean not null default true,
+  deleted_at timestamptz,
+  deleted_by text,
+  deleted_reason text,
+  deleted_for_users text[] not null default '{}',
+  restored_at timestamptz,
+  restored_by text,
   unique (group_key, label)
 );
 
@@ -101,6 +117,12 @@ create table if not exists public.catalog_materials (
   updated_by text not null default '',
   sort_order integer not null default 0,
   active boolean not null default true,
+  deleted_at timestamptz,
+  deleted_by text,
+  deleted_reason text,
+  deleted_for_users text[] not null default '{}',
+  restored_at timestamptz,
+  restored_by text,
   data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -203,7 +225,13 @@ alter table public.document_html_versions
   add column if not exists shared_at timestamptz,
   add column if not exists created_by text not null default '',
   add column if not exists assigned_to_email text not null default '',
-  add column if not exists share_slug text;
+  add column if not exists share_slug text,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by text,
+  add column if not exists deleted_reason text,
+  add column if not exists deleted_for_users text[] not null default '{}',
+  add column if not exists restored_at timestamptz,
+  add column if not exists restored_by text;
 
 alter table public.document_projects
   add column if not exists owner_email text not null default 'dcorattoinovacao@gmail.com',
@@ -220,7 +248,12 @@ alter table public.document_projects
   add column if not exists sold_by text,
   add column if not exists locked_at timestamptz,
   add column if not exists locked_by text,
-  add column if not exists lock_reason text;
+  add column if not exists lock_reason text,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by text,
+  add column if not exists deleted_reason text,
+  add column if not exists restored_at timestamptz,
+  add column if not exists restored_by text;
 
 alter table public.document_environments
   add column if not exists corredicas text not null default '';
@@ -242,6 +275,14 @@ create table if not exists public.editor_audit_logs (
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+
+alter table public.editor_audit_logs
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by text,
+  add column if not exists deleted_reason text,
+  add column if not exists deleted_for_users text[] not null default '{}',
+  add column if not exists restored_at timestamptz,
+  add column if not exists restored_by text;
 
 create table if not exists public.editor_settings (
   id uuid primary key default gen_random_uuid(),
@@ -278,13 +319,18 @@ create index if not exists environment_notes_environment_idx on public.environme
 create index if not exists document_html_versions_project_idx on public.document_html_versions(project_id, created_at desc);
 create index if not exists document_html_versions_created_idx on public.document_html_versions(created_by, created_at desc);
 create index if not exists document_html_versions_assigned_idx on public.document_html_versions(assigned_to_email, created_at desc);
+create index if not exists document_html_versions_soft_delete_idx on public.document_html_versions(deleted_at, created_at desc);
 create index if not exists document_versions_project_idx on public.document_versions(project_id, created_at desc);
 create index if not exists document_projects_updated_idx on public.document_projects(updated_at desc);
 create index if not exists document_projects_assigned_updated_idx on public.document_projects(assigned_to_email, updated_at desc);
 create index if not exists document_projects_status_assigned_updated_idx on public.document_projects(status, assigned_to_email, updated_at desc);
 create index if not exists document_projects_draft_owner_updated_idx on public.document_projects(draft_owner_email, updated_at desc) where is_draft = true;
+create index if not exists document_projects_soft_delete_idx on public.document_projects(deleted_at, updated_at desc);
 create index if not exists catalog_materials_manufacturer_idx on public.catalog_materials(manufacturer, line_name, sort_order);
 create index if not exists catalog_materials_filter_idx on public.catalog_materials(group_key, manufacturer, line_name, quality, sort_order);
+create index if not exists catalog_materials_soft_delete_idx on public.catalog_materials(active, deleted_at, group_key, updated_at desc);
+create index if not exists catalog_options_soft_delete_idx on public.catalog_options(active, deleted_at, group_key, updated_at desc);
+create index if not exists catalog_colors_soft_delete_idx on public.catalog_colors(active, deleted_at, updated_at desc);
 create unique index if not exists catalog_materials_catalog_key_uidx on public.catalog_materials(catalog_key) where catalog_key is not null;
 create index if not exists editor_audit_logs_project_idx on public.editor_audit_logs(project_id, created_at desc);
 create index if not exists editor_audit_logs_actor_idx on public.editor_audit_logs(actor_email, created_at desc);
