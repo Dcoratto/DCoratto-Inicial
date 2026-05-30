@@ -562,36 +562,57 @@ function normalizeCatalogItem(item) {
 }
 
 function preferAdminCatalogItems(items = []) {
-  const adminManagedTypes = new Set(items
-    .filter(item => ['manual', 'admin', 'upload'].includes(String(item.source || '').toLowerCase()))
-    .map(item => item.type));
-  if (!adminManagedTypes.size) return items;
-  return items.filter(item => !adminManagedTypes.has(item.type) || String(item.source || '').toLowerCase() !== 'shared');
+  return items;
 }
 
 function catalogItemKey(item) {
-  const textureUrl = catalogItemTextureUrl(item);
+  return catalogItemMatchKeys(item)[0] || '';
+}
+
+function catalogItemMatchKeys(item) {
+  if (!item) return [];
   return [
-    item?.id,
-    item?.type,
-    item?.manufacturer,
-    item?.line,
-    item?.name,
-    item?.quality,
-    textureUrl || item?.hex || '',
-  ].filter(Boolean).join('|').toLowerCase();
+    item.id,
+    item.catalogKey,
+    item.catalog_key,
+    stableCatalogKey({
+      category: item.type || item.category,
+      factory: item.manufacturer || item.factory,
+      line: item.line || item.lineName || item.line_name,
+      quality: item.quality || item.materialType,
+      name: item.name,
+    }),
+  ].filter(Boolean).map(value => String(value).toLowerCase());
+}
+
+function upsertCatalogItem(items = [], incomingItem, previousKeys = []) {
+  const normalizedItem = normalizeCatalogItem(incomingItem);
+  const matchKeys = new Set([
+    ...catalogItemMatchKeys(normalizedItem),
+    ...previousKeys.filter(Boolean).map(value => String(value).toLowerCase()),
+  ]);
+  let replaced = false;
+  const next = (items || []).map(item => {
+    const itemKeys = catalogItemMatchKeys(item);
+    if (!replaced && itemKeys.some(key => matchKeys.has(key))) {
+      replaced = true;
+      return normalizedItem;
+    }
+    return item;
+  });
+  if (!replaced) next.push(normalizedItem);
+  return next;
 }
 
 function mergeCatalogItems(current = [], incoming = []) {
-  const merged = [];
-  const seen = new Set();
-  [...current, ...incoming].forEach(item => {
+  let merged = [];
+  (current || []).forEach(item => {
     if (!item || !item.name) return;
-    const normalizedItem = normalizeCatalogItem(item);
-    const key = catalogItemKey(normalizedItem);
-    if (seen.has(key)) return;
-    seen.add(key);
-    merged.push(normalizedItem);
+    merged = upsertCatalogItem(merged, item);
+  });
+  (incoming || []).forEach(item => {
+    if (!item || !item.name) return;
+    merged = upsertCatalogItem(merged, item);
   });
   return preferAdminCatalogItems(merged);
 }
@@ -629,19 +650,19 @@ function loadBuilderDraft() {
   }
 }
 
-function saveEditorSettings() {
+function saveEditorSettings(settingsMutation = null) {
   editorSettings = normalizeEditorSettings(editorSettings);
   safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
-  persistSettingsDirectly(editorSettings);
-  postEditorEvent('settings_saved', { settings: editorSettings });
+  persistSettingsDirectly(editorSettings, settingsMutation);
+  postEditorEvent('settings_saved', { settings: editorSettings, settingsMutation });
 }
 
-async function persistSettingsDirectly(settings) {
+async function persistSettingsDirectly(settings, settingsMutation = null) {
   try {
     await fetch('/api/editor-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings, actor: editorActor }),
+      body: JSON.stringify({ settings, settingsMutation, actor: editorActor }),
     });
   } catch (error) {
     console.warn('Nao foi possivel salvar configuracoes compartilhadas agora.', error);
@@ -1122,9 +1143,18 @@ async function addManualCatalogItem() {
 
   if (file) trackPendingAsset(file, { area: 'catalog', type, name, line, manufacturer });
   const textureUrl = file ? await fileToDataURL(file) : currentTextureUrl;
+  let settingsMutation = null;
   if (editingCatalogItemId && currentItem) {
-    editorSettings.catalogItems = items.map(item => item.id === editingCatalogItemId ? {
-      ...item,
+    const previousCatalogKey = currentItem.catalogKey || currentItem.catalog_key || stableCatalogKey({
+      category: currentItem.type || currentItem.category,
+      factory: currentItem.manufacturer || currentItem.factory,
+      line: currentItem.line || currentItem.lineName || currentItem.line_name,
+      quality: currentItem.quality || currentItem.materialType,
+      name: currentItem.name,
+    });
+    const updatedItem = {
+      ...currentItem,
+      id: currentItem.id || editingCatalogItemId,
       type,
       category: type,
       catalogKey: stableCatalogKey({ category: type, factory: manufacturer, line, quality, name }),
@@ -1132,15 +1162,20 @@ async function addManualCatalogItem() {
       line,
       name,
       quality,
-      hex: item.hex || '#b8976a',
+      hex: currentItem.hex || '#b8976a',
       textureUrl,
-      source: ['manual', 'admin', 'upload'].includes(String(item.source || '').toLowerCase()) ? item.source : 'manual',
+      source: ['manual', 'admin', 'upload'].includes(String(currentItem.source || '').toLowerCase()) ? currentItem.source : 'manual',
       updatedAt: new Date().toISOString(),
-    } : item);
+    };
+    editorSettings.catalogItems = upsertCatalogItem(items, updatedItem, [editingCatalogItemId, previousCatalogKey]);
+    settingsMutation = {
+      type: 'catalog-item-upsert',
+      item: updatedItem,
+      previousId: currentItem.id || editingCatalogItemId,
+      previousCatalogKey,
+    };
   } else {
-    editorSettings.catalogItems = [
-      ...items,
-      {
+    const newItem = {
       id: crypto.randomUUID(),
       catalogKey: stableCatalogKey({ category: type, factory: manufacturer, line, quality, name }),
       type,
@@ -1152,10 +1187,11 @@ async function addManualCatalogItem() {
       hex: '#b8976a',
       textureUrl,
       source: 'manual',
-      },
-    ];
+    };
+    editorSettings.catalogItems = upsertCatalogItem(items, newItem);
+    settingsMutation = { type: 'catalog-item-upsert', item: newItem };
   }
-  saveEditorSettings();
+  saveEditorSettings(settingsMutation);
   resetCatalogForm();
   applyEditorSettings();
   rerenderAllSwatches();
@@ -1232,8 +1268,17 @@ function updateCatalogEditControls(item = null) {
 
 function removeManualCatalogItem(id) {
   if (editingCatalogItemId === id) resetCatalogForm();
-  editorSettings.catalogItems = (editorSettings.catalogItems || []).filter(item => item.id !== id);
-  saveEditorSettings();
+  const item = (editorSettings.catalogItems || []).find(entry => entry.id === id);
+  if (!item) return;
+  const catalogKey = item.catalogKey || item.catalog_key || stableCatalogKey({
+    category: item.type || item.category,
+    factory: item.manufacturer || item.factory,
+    line: item.line || item.lineName || item.line_name,
+    quality: item.quality || item.materialType,
+    name: item.name,
+  });
+  editorSettings.catalogItems = (editorSettings.catalogItems || []).filter(entry => entry.id !== id);
+  saveEditorSettings({ type: 'catalog-item-delete', id, catalogKey });
   applyEditorSettings();
   rerenderAllSwatches();
   syncPreviewDocument();
@@ -1248,11 +1293,21 @@ function clearManualCatalogColors() {
   }
   if (!confirm(`Excluir ${colorCount} cor(es) manual(is) do catálogo?`)) return;
   if ((editorSettings.catalogItems || []).some(item => item.id === editingCatalogItemId && item.type === 'color')) resetCatalogForm();
+  const removedItems = items.filter(item => item.type === 'color').map(item => ({
+    id: item.id || '',
+    catalogKey: item.catalogKey || item.catalog_key || stableCatalogKey({
+      category: item.type || item.category,
+      factory: item.manufacturer || item.factory,
+      line: item.line || item.lineName || item.line_name,
+      quality: item.quality || item.materialType,
+      name: item.name,
+    }),
+  }));
   editorSettings.catalogItems = items.filter(item => item.type !== 'color');
   Object.values(state).forEach(envState => {
     envState.cores = [];
   });
-  saveEditorSettings();
+  saveEditorSettings({ type: 'catalog-items-delete', items: removedItems });
   saveBuilderDraft();
   applyEditorSettings();
   rerenderAllSwatches();
@@ -1305,6 +1360,7 @@ function addMaterialOption() {
   const value = input.value.trim();
   if (!value) return;
   editorSettings.materialOptions = normalizeMaterialOptions(editorSettings.materialOptions);
+  let settingsMutation = { type: 'material-option-upsert', group, value };
   if (editingMaterialOption) {
     const { group: oldGroup, value: oldValue } = editingMaterialOption;
     editorSettings.materialOptions[oldGroup] = (editorSettings.materialOptions[oldGroup] || []).filter(option => option !== oldValue);
@@ -1313,12 +1369,13 @@ function addMaterialOption() {
       state[amb.id][oldGroup] = state[amb.id][oldGroup].filter(option => option !== oldValue);
       if (oldGroup === group && !state[amb.id][group].includes(value)) state[amb.id][group].push(value);
     });
+    settingsMutation = { type: 'material-option-upsert', group, value, previousGroup: oldGroup, previousValue: oldValue };
   }
   editorSettings.materialOptions[group] = [...new Set([...(editorSettings.materialOptions[group] || []), value])];
   editingMaterialOption = null;
   input.value = '';
   document.getElementById('saveMaterialOptionBtn').textContent = 'Salvar';
-  saveEditorSettings();
+  saveEditorSettings(settingsMutation);
   renderMaterialOptionList();
   renderAmbientes();
   syncPreviewDocument();
@@ -1330,7 +1387,7 @@ function removeMaterialOption(group, value) {
   AMBIENTES.forEach(amb => {
     if (state[amb.id]?.[group]) state[amb.id][group] = state[amb.id][group].filter(option => option !== value);
   });
-  saveEditorSettings();
+  saveEditorSettings({ type: 'material-option-delete', group, value });
   renderMaterialOptionList();
   renderAmbientes();
   syncPreviewDocument();

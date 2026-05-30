@@ -114,7 +114,7 @@ function App() {
       }
       if (event.data?.type !== 'dcoratto:editor-state') return;
 
-      const { action, draft, preview, settings } = event.data;
+      const { action, draft, preview, settings, settingsMutation } = event.data;
       if (settings) setRemoteSettings(settings);
 
       const payload = {
@@ -123,6 +123,7 @@ function App() {
         draft,
         preview,
         settings,
+        settingsMutation,
         saveHtml: action === 'generate_project_initial',
       };
 

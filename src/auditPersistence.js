@@ -40,7 +40,7 @@ export function readOfflineQueue() {
   return listPendingMutations().catch(() => []);
 }
 
-export async function persistEditorEvent({ action, actor, draft, preview, settings, saveHtml = false }) {
+export async function persistEditorEvent({ action, actor, draft, preview, settings, settingsMutation = null, saveHtml = false }) {
   if (actor?.email) sessionStorage.setItem('dcoratto.current.actor.v1', JSON.stringify(actor));
   const payload = {
     id: crypto.randomUUID(),
@@ -50,6 +50,7 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
     draft: draft || null,
     preview: preview || null,
     settings: settings || null,
+    settingsMutation: settingsMutation || null,
     saveHtml,
     createdAt: new Date().toISOString(),
   };
@@ -122,6 +123,7 @@ async function persistEditorEventWithServer(event) {
       draft: event.draft,
       preview: event.preview,
       settings: event.settings,
+      settingsMutation: event.settingsMutation || null,
       eventId: event.eventId || event.id,
       createdAt: event.createdAt,
     }),
@@ -206,6 +208,7 @@ async function enqueue(event) {
     draft: event.draft || null,
     preview: event.preview || null,
     settings: event.settings || null,
+    settingsMutation: event.settingsMutation || null,
     saveHtml: Boolean(event.saveHtml),
     createdAt: event.createdAt,
   });

@@ -303,6 +303,7 @@ async function handleEditorEventRequest(request, response) {
       draft: promotedDocument.draft,
       preview: promotedDocument.preview,
       settings: body.settings,
+      settingsMutation: body.settingsMutation || null,
       eventId: body.eventId,
       createdAt: body.createdAt,
     });
@@ -513,7 +514,7 @@ async function handleEditorSettingsPost(request, response) {
     }
 
     const body = await readJsonBody(request);
-    const settings = await saveSharedEditorSettings(body.settings || {}, body.actor || null);
+    const settings = await saveSharedEditorSettings(body.settings || {}, body.actor || null, body.settingsMutation || null);
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
@@ -854,9 +855,9 @@ async function uploadHtmlSnapshotToStorage(storagePath, html) {
   }
 }
 
-async function persistEditorState({ projectId, actor, action, draft, preview, settings, eventId, createdAt }) {
+async function persistEditorState({ projectId, actor, action, draft, preview, settings, settingsMutation, eventId, createdAt }) {
   if (settings) {
-    await saveSharedEditorSettings(settings, actor);
+    await saveSharedEditorSettings(settings, actor, settingsMutation || null);
   }
 
   if (!hasPersistableContent(draft, preview)) return;
@@ -971,13 +972,15 @@ async function loadSharedEditorSettings() {
   };
 }
 
-async function saveSharedEditorSettings(incomingSettings, actor = null) {
+async function saveSharedEditorSettings(incomingSettings, actor = null, settingsMutation = null) {
   const currentSettings = await loadSharedEditorSettings();
   const actorEmail = normalizeEmail(actor?.email);
   const hasIncomingSettings = incomingSettings && Object.keys(incomingSettings).length > 0;
-  const payload = await promoteSettingsImagesToStorage(
-    hasIncomingSettings ? normalizeEditorSettingsPayload(incomingSettings) : normalizeEditorSettingsPayload(currentSettings),
-  );
+  const mergedSettings = hasIncomingSettings
+    ? mergeEditorSettingsPayload(currentSettings, incomingSettings)
+    : normalizeEditorSettingsPayload(currentSettings);
+  const mutatedSettings = applySettingsMutation(mergedSettings, settingsMutation, actorEmail);
+  const payload = await promoteSettingsImagesToStorage(mutatedSettings);
   const { error } = await supabaseServer
     .from('editor_settings')
     .upsert({
@@ -986,7 +989,7 @@ async function saveSharedEditorSettings(incomingSettings, actor = null) {
       updated_by: actorEmail || '',
     }, { onConflict: 'settings_key' });
   if (error) throw error;
-  await persistSharedCatalogTables(payload, actorEmail).catch((tableError) => {
+  await persistSharedCatalogMutation(payload, settingsMutation, actorEmail).catch((tableError) => {
     console.warn('Configuracoes salvas, mas nao foi possivel espelhar catalogos nas tabelas.', tableError);
   });
   return payload;
@@ -1116,14 +1119,40 @@ function normalizeEditorSettingsPayload(settings = {}) {
 function mergeEditorSettingsPayload(current = {}, incoming = {}) {
   const currentSettings = current || {};
   const incomingSettings = incoming || {};
+  const mergedCatalogItems = mergeCatalogItemsPayload(currentSettings.catalogItems, incomingSettings.catalogItems);
   return {
     ...currentSettings,
     ...incomingSettings,
     logo: incomingSettings.logo || currentSettings.logo || '',
-    catalogItems: mergeCatalogItemsPayload(currentSettings.catalogItems, incomingSettings.catalogItems),
+    catalogItems: mergedCatalogItems,
     observations: [...new Set([...(currentSettings.observations || []), ...(incomingSettings.observations || [])])],
     materialOptions: mergeMaterialOptionsPayload(currentSettings.materialOptions, incomingSettings.materialOptions),
   };
+}
+
+function applySettingsMutation(settings = {}, mutation = null, actorEmail = '') {
+  const payload = normalizeEditorSettingsPayload(settings);
+  if (!mutation?.type) return payload;
+  if (mutation.type === 'catalog-item-upsert' && mutation.item) {
+    payload.catalogItems = upsertCatalogItemPayload(payload.catalogItems, {
+      ...mutation.item,
+      updatedBy: actorEmail || mutation.item.updatedBy || '',
+      updatedAt: new Date().toISOString(),
+    }, [mutation.previousId, mutation.previousCatalogKey]);
+  }
+  if (mutation.type === 'catalog-item-delete') {
+    payload.catalogItems = removeCatalogItemsPayload(payload.catalogItems, [mutation]);
+  }
+  if (mutation.type === 'catalog-items-delete') {
+    payload.catalogItems = removeCatalogItemsPayload(payload.catalogItems, mutation.items || []);
+  }
+  if (mutation.type === 'material-option-upsert' && mutation.group && mutation.value) {
+    payload.materialOptions = upsertMaterialOptionPayload(payload.materialOptions, mutation);
+  }
+  if (mutation.type === 'material-option-delete' && mutation.group && mutation.value) {
+    payload.materialOptions = deleteMaterialOptionPayload(payload.materialOptions, mutation.group, mutation.value);
+  }
+  return payload;
 }
 
 function catalogItemTextureUrlPayload(item = {}) {
@@ -1146,14 +1175,17 @@ function normalizeCatalogItemsPayload(items = []) {
     if (!item || !item.name) return;
     const textureUrl = catalogItemTextureUrlPayload(item);
     const normalizedItem = textureUrl && item.textureUrl !== textureUrl ? { ...item, textureUrl } : { ...item };
+    normalizedItem.catalogKey = stableCatalogKey({
+      category: catalogItemGroup(normalizedItem.type || normalizedItem.category),
+      factory: normalizedItem.manufacturer || normalizedItem.factory || '',
+      line: normalizedItem.line || normalizedItem.line_name || normalizedItem.lineName || '',
+      quality: normalizedItem.quality || normalizedItem.materialType || '',
+      name: normalizedItem.name,
+    });
+    normalizedItem.catalog_key = normalizedItem.catalogKey;
     const key = [
       normalizedItem.id,
-      normalizedItem.type,
-      normalizedItem.manufacturer,
-      normalizedItem.line,
-      normalizedItem.name,
-      normalizedItem.quality,
-      textureUrl || normalizedItem.hex || '',
+      normalizedItem.catalogKey,
     ].filter(Boolean).join('|').toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
@@ -1163,33 +1195,66 @@ function normalizeCatalogItemsPayload(items = []) {
 }
 
 function preferAdminCatalogItems(items = []) {
-  const adminManagedTypes = new Set(items
-    .filter(item => ['manual', 'admin', 'upload'].includes(String(item.source || '').toLowerCase()))
-    .map(item => item.type));
-  if (!adminManagedTypes.size) return items;
-  return items.filter(item => !adminManagedTypes.has(item.type) || String(item.source || '').toLowerCase() !== 'shared');
+  return items;
 }
 
 function mergeCatalogItemsPayload(current = [], incoming = []) {
-  const merged = [];
-  const seen = new Set();
-  [...normalizeCatalogItemsPayload(current), ...normalizeCatalogItemsPayload(incoming)].forEach((item) => {
+  let merged = [];
+  normalizeCatalogItemsPayload(current).forEach((item) => {
     if (!item || !item.name) return;
-    const textureUrl = catalogItemTextureUrlPayload(item);
-    const key = [
-      item.id,
-      item.type,
-      item.manufacturer,
-      item.line,
-      item.name,
-      item.quality,
-      textureUrl || item.hex || '',
-    ].filter(Boolean).join('|').toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    merged.push(item);
+    merged = upsertCatalogItemPayload(merged, item);
+  });
+  normalizeCatalogItemsPayload(incoming).forEach((item) => {
+    if (!item || !item.name) return;
+    merged = upsertCatalogItemPayload(merged, item);
   });
   return merged;
+}
+
+function catalogItemPayloadMatchKeys(item = {}) {
+  if (!item) return [];
+  return [
+    item.id,
+    item.catalogKey,
+    item.catalog_key,
+    stableCatalogKey({
+      category: catalogItemGroup(item.type || item.category),
+      factory: item.manufacturer || item.factory || '',
+      line: item.line || item.line_name || item.lineName || '',
+      quality: item.quality || item.materialType || '',
+      name: item.name || '',
+    }),
+  ].filter(Boolean).map(value => String(value).toLowerCase());
+}
+
+function upsertCatalogItemPayload(items = [], incomingItem, previousKeys = []) {
+  const normalizedItem = normalizeCatalogItemsPayload([incomingItem])[0];
+  if (!normalizedItem) return items || [];
+  const matchKeys = new Set([
+    ...catalogItemPayloadMatchKeys(normalizedItem),
+    ...previousKeys.filter(Boolean).map(value => String(value).toLowerCase()),
+  ]);
+  let replaced = false;
+  const next = (items || []).map((item) => {
+    const keys = catalogItemPayloadMatchKeys(item);
+    if (!replaced && keys.some(key => matchKeys.has(key))) {
+      replaced = true;
+      return normalizedItem;
+    }
+    return item;
+  });
+  if (!replaced) next.push(normalizedItem);
+  return next;
+}
+
+function removeCatalogItemsPayload(items = [], selectors = []) {
+  const removeKeys = new Set((selectors || []).flatMap(selector => [
+    selector?.id,
+    selector?.catalogKey,
+    selector?.catalog_key,
+  ]).filter(Boolean).map(value => String(value).toLowerCase()));
+  if (!removeKeys.size) return items || [];
+  return (items || []).filter(item => !catalogItemPayloadMatchKeys(item).some(key => removeKeys.has(key)));
 }
 
 function normalizeMaterialOptionsPayload(options = {}) {
@@ -1208,6 +1273,21 @@ function mergeMaterialOptionsPayload(current = {}, incoming = {}) {
     group,
     [...new Set([...(current?.[group] || []), ...(incoming?.[group] || [])])],
   ]));
+}
+
+function upsertMaterialOptionPayload(options = {}, mutation = {}) {
+  const next = normalizeMaterialOptionsPayload(options);
+  if (mutation.previousGroup && mutation.previousValue) {
+    next[mutation.previousGroup] = (next[mutation.previousGroup] || []).filter(value => value !== mutation.previousValue);
+  }
+  next[mutation.group] = [...new Set([...(next[mutation.group] || []), mutation.value])];
+  return next;
+}
+
+function deleteMaterialOptionPayload(options = {}, group, value) {
+  const next = normalizeMaterialOptionsPayload(options);
+  next[group] = (next[group] || []).filter(option => option !== value);
+  return next;
 }
 
 async function loadSettingsFromSharedCatalogTables() {
@@ -1293,6 +1373,166 @@ function settingsTypeFromCatalogGroup(groupKey) {
     porta: 'door',
     corredica: 'slide',
   }[groupKey] || '';
+}
+
+async function persistSharedCatalogMutation(settings = {}, mutation = null, actorEmail = '') {
+  if (!mutation?.type) return;
+  if (mutation.type === 'catalog-item-upsert' && mutation.item) {
+    const item = findCatalogItemForMutation(settings.catalogItems || [], mutation.item, [mutation.previousId, mutation.previousCatalogKey]);
+    if (!item) return;
+    await upsertSharedCatalogItem(item, actorEmail);
+    const nextCatalogKey = item.catalogKey || item.catalog_key || catalogMaterialKeyFromItem(item);
+    if (mutation.previousCatalogKey && mutation.previousCatalogKey !== nextCatalogKey) {
+      await softDeleteSharedCatalogItem({ catalogKey: mutation.previousCatalogKey }, actorEmail, 'catalog_item_key_changed');
+    }
+    return;
+  }
+  if (mutation.type === 'catalog-item-delete') {
+    await softDeleteSharedCatalogItem(mutation, actorEmail, 'catalog_item_removed');
+    return;
+  }
+  if (mutation.type === 'catalog-items-delete') {
+    for (const item of mutation.items || []) {
+      await softDeleteSharedCatalogItem(item, actorEmail, 'catalog_item_removed');
+    }
+    return;
+  }
+  if (mutation.type === 'material-option-upsert' && mutation.group && mutation.value) {
+    if (mutation.previousGroup && mutation.previousValue && (mutation.previousGroup !== mutation.group || mutation.previousValue !== mutation.value)) {
+      await softDeleteSharedCatalogOption(mutation.previousGroup, mutation.previousValue, actorEmail, 'catalog_option_changed');
+    }
+    await upsertSharedCatalogOption(mutation.group, mutation.value, settings.catalogItems || [], actorEmail);
+    return;
+  }
+  if (mutation.type === 'material-option-delete' && mutation.group && mutation.value) {
+    await softDeleteSharedCatalogOption(mutation.group, mutation.value, actorEmail, 'catalog_option_removed');
+  }
+}
+
+function findCatalogItemForMutation(items = [], incomingItem = {}, previousKeys = []) {
+  const matchKeys = new Set([
+    ...catalogItemPayloadMatchKeys(incomingItem),
+    ...previousKeys.filter(Boolean).map(value => String(value).toLowerCase()),
+  ]);
+  return (items || []).find(item => catalogItemPayloadMatchKeys(item).some(key => matchKeys.has(key))) || null;
+}
+
+function catalogMaterialKeyFromItem(item = {}) {
+  return stableCatalogKey({
+    category: catalogItemGroup(item.type),
+    factory: item.manufacturer || item.factory || '',
+    line: item.line || item.line_name || '',
+    quality: item.quality || item.materialType || '',
+    name: item.name,
+  });
+}
+
+function catalogMaterialRowFromItem(item, index = 0, actorEmail = '') {
+  const groupKey = catalogItemGroup(item.type);
+  const catalogKey = item.catalogKey || item.catalog_key || catalogMaterialKeyFromItem(item);
+  return {
+    catalog_key: catalogKey,
+    group_key: groupKey,
+    name: item.name,
+    code: item.code || item.id || null,
+    brand: item.brand || item.manufacturer || null,
+    manufacturer: item.manufacturer || null,
+    line_name: item.line || item.line_name || null,
+    quality: item.quality || null,
+    material_type: item.materialType || item.quality || null,
+    category: item.category || groupKey,
+    hex: item.hex || null,
+    texture_url: item.textureUrl || item.imageUrl || null,
+    image_data: null,
+    image_url: String(item.textureUrl || item.imageUrl || '').startsWith('http') || String(item.textureUrl || item.imageUrl || '').startsWith('/')
+      ? (item.textureUrl || item.imageUrl)
+      : null,
+    storage_bucket: item.storageBucket || photoBucket,
+    storage_path: item.storagePath || null,
+    public_url: item.publicUrl || item.imageUrl || item.textureUrl || null,
+    mime_type: item.mimeType || (String(item.textureUrl || '').includes('.webp') ? 'image/webp' : null),
+    width: Number(item.width) || null,
+    height: Number(item.height) || null,
+    sort_order: Number(item.sort_order ?? index) || 0,
+    active: true,
+    deleted_at: null,
+    deleted_by: null,
+    deleted_reason: null,
+    restored_at: new Date().toISOString(),
+    restored_by: actorEmail || primaryAccountEmail,
+    owner_email: primaryAccountEmail,
+    created_by: item.createdBy || actorEmail || primaryAccountEmail,
+    updated_by: actorEmail || primaryAccountEmail,
+    data: { ...item, catalogKey },
+  };
+}
+
+async function upsertSharedCatalogItem(item, actorEmail = '') {
+  if (!item?.name) return;
+  const { error } = await supabaseServer
+    .from('catalog_materials')
+    .upsert([catalogMaterialRowFromItem(item, 0, actorEmail)], { onConflict: 'catalog_key' });
+  if (error) throw error;
+}
+
+async function softDeleteSharedCatalogItem(selector = {}, actorEmail = '', reason = 'catalog_item_removed') {
+  const catalogKey = selector.catalogKey || selector.catalog_key;
+  if (!catalogKey) return;
+  const { error } = await supabaseServer
+    .from('catalog_materials')
+    .update({
+      active: false,
+      deleted_at: new Date().toISOString(),
+      deleted_by: actorEmail || primaryAccountEmail,
+      deleted_reason: reason,
+      updated_by: actorEmail || primaryAccountEmail,
+    })
+    .eq('catalog_key', catalogKey);
+  if (error) throw error;
+}
+
+async function upsertSharedCatalogOption(group, label, catalogItems = [], actorEmail = '') {
+  const image = catalogItems
+    .map(item => {
+      const optionGroup = catalogItemOptionGroup(item.type);
+      const optionLabel = `${item.name}${item.line ? ' Â· ' + item.line : ''}`;
+      return optionGroup === group && optionLabel === label ? (item.textureUrl || item.imageUrl || '') : '';
+    })
+    .find(Boolean) || '';
+  const { error } = await supabaseServer
+    .from('catalog_options')
+    .upsert([{
+      group_key: group,
+      label,
+      sort_order: 0,
+      active: true,
+      deleted_at: null,
+      deleted_by: null,
+      deleted_reason: null,
+      restored_at: new Date().toISOString(),
+      restored_by: actorEmail || primaryAccountEmail,
+      image_data: null,
+      image_url: String(image).startsWith('http') || String(image).startsWith('/') ? image : null,
+      updated_by: actorEmail || primaryAccountEmail,
+      data: image ? { image } : {},
+    }], { onConflict: 'group_key,label' });
+  if (error) throw error;
+}
+
+async function softDeleteSharedCatalogOption(group, label, actorEmail = '', reason = 'catalog_option_removed') {
+  if (!group || !label) return;
+  const { error } = await supabaseServer
+    .from('catalog_options')
+    .update({
+      active: false,
+      deleted_at: new Date().toISOString(),
+      deleted_by: actorEmail || primaryAccountEmail,
+      deleted_reason: reason,
+      updated_by: actorEmail || primaryAccountEmail,
+    })
+    .eq('group_key', group)
+    .eq('label', label);
+  if (error) throw error;
 }
 
 async function persistSharedCatalogTables(settings = {}, actorEmail = '') {

@@ -3856,14 +3856,14 @@
 
       function startPreviewFrameDrag(event) {
         if (!isEditablePreview) return;
-        // Se modo de desenho de setas está ativo, não permitir arrastar frames
-        if (arrowDrawMode && Number(event.currentTarget.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(event.currentTarget.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         if (event.target.closest('.preview-frame-tools, .frame-selection-toolbar, .annotation-edit-row, [data-drag-annotation], [data-resize-frame]')) return;
         const edgeResizeHandle = frameResizeHandleAtPoint(event, event.currentTarget);
         if (edgeResizeHandle) {
           startPreviewFrameResize(event, edgeResizeHandle);
           return;
         }
+        // Se modo de desenho de setas está ativo, não permitir arrastar frames
+        if (arrowDrawMode && Number(event.currentTarget.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(event.currentTarget.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         event.preventDefault();
         const node = event.currentTarget;
         const key = frameKey(node.dataset.environmentIndex, node.dataset.pageIndex, node.dataset.frameIndex);
@@ -3912,7 +3912,6 @@
         if (!isEditablePreview) return;
         const resizeHandle = event.target.closest?.('[data-resize-frame]') || event.currentTarget.closest?.('[data-resize-frame]');
         const node = resizeHandle?.closest('.doc-photo-frame') || event.currentTarget.closest?.('.doc-photo-frame') || event.currentTarget;
-        if (arrowDrawMode && Number(node?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(node?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
@@ -4037,7 +4036,6 @@
         if (!isEditablePreview) return;
         const resizeHandle = event.target.closest?.('[data-resize-detail]') || event.currentTarget.closest?.('[data-resize-detail]');
         const node = resizeHandle?.closest('[data-page-detail-frame]') || event.currentTarget.closest?.('[data-page-detail-frame]');
-        if (arrowDrawMode && Number(node?.dataset.environmentIndex) === arrowDrawMode.environmentIndex && Number(node?.dataset.pageIndex) === arrowDrawMode.pageIndex) return;
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
