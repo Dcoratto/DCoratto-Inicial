@@ -1,3 +1,15 @@
+insert into public.app_users (email, display_name, role, password_hash, active)
+values
+  ('dcorattoinovacao@gmail.com', 'D''Coratto Inovacao', 'owner', extensions.crypt('sob_medida', extensions.gen_salt('bf')), true),
+  ('rafael@dcoratto.com.br', 'Rafael', 'team', extensions.crypt('Dcoratto@Rafael26', extensions.gen_salt('bf')), true),
+  ('isabela@dcoratto.com.br', 'Isabela', 'team', extensions.crypt('Dcoratto@Isabela26', extensions.gen_salt('bf')), true),
+  ('vinicius@dcoratto.com.br', 'Vinicius', 'team', extensions.crypt('Dcoratto@Vinicius26', extensions.gen_salt('bf')), true)
+on conflict (email) do update set
+  display_name = excluded.display_name,
+  role = excluded.role,
+  active = true,
+  updated_at = now();
+
 insert into public.catalog_colors (name, hex, sort_order) values
   ('BEGE DUNAS', '#c8b89a', 10),
   ('CARVALHO JARI', '#a0784a', 20),

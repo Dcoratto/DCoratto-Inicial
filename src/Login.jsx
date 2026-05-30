@@ -31,13 +31,6 @@ export function Login({ onLoginSuccess }) {
     event.preventDefault();
     setIsSubmitting(true);
 
-    const localUser = localLogin(email, password);
-    if (localUser) {
-      onLoginSuccess(localUser);
-      setIsSubmitting(false);
-      return;
-    }
-
     try {
       const response = await fetch('/api/login', {
         method: 'POST',
@@ -49,8 +42,20 @@ export function Login({ onLoginSuccess }) {
         onLoginSuccess(result.user);
         return;
       }
+      if (!response.ok || result?.error) {
+        setIsSubmitting(false);
+        alert(result?.error || 'Credenciais incorretas.');
+        return;
+      }
     } catch (error) {
       console.warn('Login remoto indisponivel, usando validacao local.', error);
+    }
+
+    const localUser = localLogin(email, password);
+    if (localUser) {
+      onLoginSuccess(localUser);
+      setIsSubmitting(false);
+      return;
     }
 
     setIsSubmitting(false);

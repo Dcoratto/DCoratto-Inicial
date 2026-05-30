@@ -242,6 +242,17 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
 .option-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .option-row button{border:1px solid rgba(184,151,106,.36);background:rgba(0,0,0,.2);color:#e7d3b5;padding:6px 10px;border-radius:3px;cursor:pointer;font-size:11px;letter-spacing:.08em;transition:all .2s}
 .option-row button:hover{border-color:var(--gold);color:var(--gold);background:rgba(184,151,106,.08)}
+.employees-card{grid-column:1/-1}
+.employee-form{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr)) auto;gap:12px;align-items:end}
+.employee-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+.employee-list{display:grid;gap:10px;margin-top:16px}
+.employee-row{display:grid;grid-template-columns:minmax(0,1fr) 130px auto;gap:12px;align-items:center;border:1px solid rgba(184,151,106,.22);background:rgba(0,0,0,.2);border-radius:4px;padding:12px}
+.employee-info{display:grid;gap:4px;min-width:0}
+.employee-info strong{font-size:12px;color:var(--cream);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.employee-info span,.employee-role{font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.employee-row-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+.employee-row-actions button{border:1px solid rgba(184,151,106,.36);background:rgba(0,0,0,.2);color:#e7d3b5;padding:7px 10px;border-radius:3px;cursor:pointer;font-size:10px;letter-spacing:.08em;text-transform:uppercase;transition:all .2s}
+.employee-row-actions button:hover{border-color:var(--gold);color:var(--gold);background:rgba(184,151,106,.08)}
 @media (max-width: 860px){
   header{padding:0 16px;gap:10px}
   .hlogo img{height:28px}
@@ -255,7 +266,10 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
   .settings-head h2{font-size:26px}
   .settings-body{grid-template-columns:1fr;padding:16px;gap:14px}
   .catalog-card,.technical-card{grid-column:1}
-  .catalog-form,.option-form,.catalog-filter-bar,.catalog-filter-bar.compact{grid-template-columns:1fr}
+  .catalog-form,.option-form,.employee-form,.catalog-filter-bar,.catalog-filter-bar.compact{grid-template-columns:1fr}
+  .employee-row{grid-template-columns:1fr}
+  .employee-actions,.employee-row-actions{justify-content:stretch}
+  .employee-actions .hbtn,.employee-actions .ghost-btn,.employee-row-actions button{width:100%}
   .settings-actions,.settings-actions.split,.logo-actions{grid-template-columns:1fr;display:grid;justify-content:stretch}
   .settings-actions .hbtn,.settings-actions .danger-btn,.settings-actions .ghost-btn,.option-form .hbtn{width:100%}
   .catalog-list,.option-list{max-height:none}
@@ -444,6 +458,29 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
         <p class="settings-note">Adicione, remova ou edite as opções de Tamponamentos, Portas, Puxadores e Corrediças aqui.</p>
         <div class="option-list" id="materialOptionList"></div>
       </section>
+
+      <section class="settings-card employees-card" id="employeesCard" hidden>
+        <h3>Funcionários</h3>
+        <div class="employee-form">
+          <div class="field-group"><label>Nome</label><input type="text" id="employeeName" placeholder="Ex: Rafael"></div>
+          <div class="field-group"><label>Login / email</label><input type="email" id="employeeEmail" placeholder="nome@dcoratto.com.br"></div>
+          <div class="field-group"><label>Senha</label><input type="password" id="employeePassword" placeholder="Nova senha"></div>
+          <div class="field-group">
+            <label>Acesso</label>
+            <select id="employeeRole">
+              <option value="team">Vendedor / Projetista</option>
+              <option value="admin">Administrador</option>
+              <option value="owner">Proprietário</option>
+            </select>
+          </div>
+          <div class="employee-actions">
+            <button class="ghost-btn" type="button" id="cancelEmployeeEditBtn" onclick="cancelEmployeeEdit()" style="display:none">Cancelar</button>
+            <button class="hbtn" type="button" id="saveEmployeeBtn" onclick="saveEmployee()">Adicionar funcionário</button>
+          </div>
+        </div>
+        <p class="settings-note" id="employeeStatus">Cadastre vendedores e projetistas para acessarem o sistema.</p>
+        <div class="employee-list" id="employeeList"></div>
+      </section>
     </div>
   </div>
 </div>
@@ -525,6 +562,8 @@ let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'd
 let clientHistoryItems = [];
 let projectHistoryItems = [];
 let historyFolder = 'active';
+let employeeItems = [];
+let editingEmployeeEmail = '';
 let currentProjectId = '';
 let projectStatus = 'draft';
 let catalogVisibleItems = null;
@@ -1014,11 +1053,159 @@ function resetLogo() {
 
 function openSettings() {
   applyEditorSettings();
+  updateEmployeeManagerUi();
   document.getElementById('settingsOverlay').classList.add('active');
+  if (canManageEmployees()) loadEmployees();
 }
 
 function closeSettings() {
   document.getElementById('settingsOverlay').classList.remove('active');
+}
+
+function canManageEmployees() {
+  return Boolean(editorActor?.isPrimary || normalizeSearchText(editorActor?.email) === normalizeSearchText(editorActor?.primaryAccountEmail));
+}
+
+function updateEmployeeManagerUi() {
+  const card = document.getElementById('employeesCard');
+  if (!card) return;
+  card.hidden = !canManageEmployees();
+  if (!canManageEmployees()) {
+    employeeItems = [];
+    editingEmployeeEmail = '';
+  }
+}
+
+async function loadEmployees() {
+  if (!canManageEmployees()) return;
+  const status = document.getElementById('employeeStatus');
+  const list = document.getElementById('employeeList');
+  if (status) status.textContent = 'Carregando funcionários...';
+  if (list) list.innerHTML = '';
+  try {
+    const params = new URLSearchParams();
+    if (editorActor?.email) params.set('actor', editorActor.email);
+    const response = await fetch(`/api/app-users?${params.toString()}`, { cache: 'no-store' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result?.error || 'Não foi possível carregar funcionários.');
+    employeeItems = Array.isArray(result.users) ? result.users : [];
+    renderEmployeeList();
+    if (status) status.textContent = 'Cadastre vendedores e projetistas para acessarem o sistema.';
+  } catch (error) {
+    if (status) status.textContent = `Erro ao carregar funcionários: ${error.message}`;
+  }
+}
+
+function renderEmployeeList() {
+  const list = document.getElementById('employeeList');
+  if (!list) return;
+  if (!employeeItems.length) {
+    list.innerHTML = '<div class="history-empty">Nenhum funcionário cadastrado.</div>';
+    return;
+  }
+  list.innerHTML = employeeItems.map(user => `
+    <div class="employee-row">
+      <div class="employee-info">
+        <strong>${escapeHTML(user.name || user.email)}</strong>
+        <span>${escapeHTML(user.email)}</span>
+      </div>
+      <div class="employee-role">${escapeHTML(employeeRoleLabel(user.role))}</div>
+      <div class="employee-row-actions">
+        <button type="button" onclick="startEmployeeEdit('${escapeJS(user.email)}')">Editar</button>
+        ${user.isPrimary ? '' : `<button type="button" onclick="deleteEmployee('${escapeJS(user.email)}')">Excluir</button>`}
+      </div>
+    </div>
+  `).join('');
+}
+
+function employeeRoleLabel(role) {
+  if (role === 'owner') return 'Proprietário';
+  if (role === 'admin') return 'Administrador';
+  return 'Vendedor / Projetista';
+}
+
+function startEmployeeEdit(email) {
+  const user = employeeItems.find(item => item.email === email);
+  if (!user) return;
+  editingEmployeeEmail = user.email;
+  document.getElementById('employeeName').value = user.name || '';
+  document.getElementById('employeeEmail').value = user.email || '';
+  document.getElementById('employeeEmail').disabled = Boolean(user.isPrimary);
+  document.getElementById('employeePassword').value = '';
+  document.getElementById('employeePassword').placeholder = 'Deixe em branco para manter';
+  document.getElementById('employeeRole').value = user.role || 'team';
+  document.getElementById('employeeRole').disabled = Boolean(user.isPrimary);
+  document.getElementById('saveEmployeeBtn').textContent = 'Salvar funcionário';
+  document.getElementById('cancelEmployeeEditBtn').style.display = 'inline-flex';
+}
+
+function cancelEmployeeEdit() {
+  editingEmployeeEmail = '';
+  document.getElementById('employeeName').value = '';
+  document.getElementById('employeeEmail').value = '';
+  document.getElementById('employeeEmail').disabled = false;
+  document.getElementById('employeePassword').value = '';
+  document.getElementById('employeePassword').placeholder = 'Nova senha';
+  document.getElementById('employeeRole').value = 'team';
+  document.getElementById('employeeRole').disabled = false;
+  document.getElementById('saveEmployeeBtn').textContent = 'Adicionar funcionário';
+  document.getElementById('cancelEmployeeEditBtn').style.display = 'none';
+}
+
+async function saveEmployee() {
+  if (!canManageEmployees()) return;
+  const button = document.getElementById('saveEmployeeBtn');
+  const status = document.getElementById('employeeStatus');
+  const payload = {
+    actor: editorActor,
+    originalEmail: editingEmployeeEmail,
+    name: document.getElementById('employeeName').value.trim(),
+    email: document.getElementById('employeeEmail').value.trim(),
+    password: document.getElementById('employeePassword').value,
+    role: document.getElementById('employeeRole').value,
+  };
+  if (!payload.name || !payload.email || (!editingEmployeeEmail && !payload.password)) {
+    if (status) status.textContent = 'Preencha nome, login e senha.';
+    return;
+  }
+  try {
+    if (button) button.disabled = true;
+    const response = await fetch('/api/app-users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result?.error || 'Não foi possível salvar funcionário.');
+    cancelEmployeeEdit();
+    await loadEmployees();
+    if (status) status.textContent = 'Funcionário salvo.';
+  } catch (error) {
+    if (status) status.textContent = String(error?.message || error);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function deleteEmployee(email) {
+  if (!canManageEmployees() || !email) return;
+  const user = employeeItems.find(item => item.email === email);
+  if (user?.isPrimary) return;
+  if (!confirm(`Excluir o acesso de ${user?.name || email}?`)) return;
+  const status = document.getElementById('employeeStatus');
+  try {
+    const params = new URLSearchParams();
+    params.set('actor', editorActor?.email || '');
+    params.set('email', email);
+    const response = await fetch(`/api/app-users?${params.toString()}`, { method: 'DELETE' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result?.error || 'Não foi possível excluir funcionário.');
+    if (editingEmployeeEmail === email) cancelEmployeeEdit();
+    await loadEmployees();
+    if (status) status.textContent = 'Funcionário excluído.';
+  } catch (error) {
+    if (status) status.textContent = String(error?.message || error);
+  }
 }
 
 function openClientHistory() {
@@ -2571,6 +2758,7 @@ window.addEventListener('message', event => {
   if (event.origin !== window.location.origin) return;
   if (event.data?.type === 'dcoratto:session') {
     editorActor = event.data.actor || editorActor;
+    updateEmployeeManagerUi();
     return;
   }
   if (event.data?.type === 'dcoratto:load-project-result') {

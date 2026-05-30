@@ -1,5 +1,15 @@
 create extension if not exists pgcrypto;
 
+create table if not exists public.app_users (
+  email text primary key,
+  display_name text not null default '',
+  role text not null default 'team' check (role in ('owner', 'admin', 'team')),
+  password_hash text not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.document_projects (
   id uuid primary key default gen_random_uuid(),
   title text not null default 'Projeto Inicial',
@@ -332,6 +342,7 @@ create index if not exists catalog_materials_soft_delete_idx on public.catalog_m
 create index if not exists catalog_options_soft_delete_idx on public.catalog_options(active, deleted_at, group_key, updated_at desc);
 create index if not exists catalog_colors_soft_delete_idx on public.catalog_colors(active, deleted_at, updated_at desc);
 create unique index if not exists catalog_materials_catalog_key_uidx on public.catalog_materials(catalog_key) where catalog_key is not null;
+create index if not exists app_users_active_idx on public.app_users(active, email);
 create index if not exists editor_audit_logs_project_idx on public.editor_audit_logs(project_id, created_at desc);
 create index if not exists editor_audit_logs_actor_idx on public.editor_audit_logs(actor_email, created_at desc);
 create index if not exists document_html_versions_shared_idx on public.document_html_versions(shared_with_client, shared_at desc);
@@ -346,6 +357,144 @@ begin
   return new;
 end;
 $$;
+
+drop trigger if exists set_app_users_updated_at on public.app_users;
+create trigger set_app_users_updated_at
+before update on public.app_users
+for each row execute function public.set_updated_at();
+
+create or replace function public.verify_app_login(login_email text, login_password text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  app_user public.app_users%rowtype;
+begin
+  select *
+    into app_user
+    from public.app_users
+    where lower(email) = lower(trim(login_email))
+      and active = true;
+
+  if app_user.email is null or app_user.password_hash <> extensions.crypt(login_password, app_user.password_hash) then
+    return jsonb_build_object('ok', false);
+  end if;
+
+  return jsonb_build_object(
+    'ok', true,
+    'user', jsonb_build_object(
+      'email', app_user.email,
+      'name', app_user.display_name,
+      'role', app_user.role,
+      'primaryAccountEmail', 'dcorattoinovacao@gmail.com',
+      'isPrimary', app_user.email = 'dcorattoinovacao@gmail.com'
+    )
+  );
+end;
+$$;
+
+create or replace function public.upsert_app_user(
+  manager_email text,
+  original_email text,
+  user_email text,
+  user_display_name text,
+  user_role text,
+  user_password text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  manager_user public.app_users%rowtype;
+  existing_user public.app_users%rowtype;
+  manager_login text := lower(trim(coalesce(manager_email, '')));
+  original_login text := lower(trim(coalesce(original_email, '')));
+  next_login text := lower(trim(coalesce(user_email, '')));
+  next_name text := trim(coalesce(user_display_name, ''));
+  next_role text := lower(trim(coalesce(user_role, 'team')));
+  next_password text := coalesce(user_password, '');
+  saved_user public.app_users%rowtype;
+begin
+  select *
+    into manager_user
+    from public.app_users
+    where lower(email) = manager_login
+      and active = true;
+
+  if manager_login <> 'dcorattoinovacao@gmail.com' and coalesce(manager_user.role, '') not in ('owner', 'admin') then
+    raise exception 'forbidden_app_user_management';
+  end if;
+
+  if next_login !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' or next_name = '' then
+    raise exception 'invalid_app_user';
+  end if;
+
+  if next_role not in ('owner', 'admin', 'team') then
+    next_role := 'team';
+  end if;
+
+  if next_login = 'dcorattoinovacao@gmail.com' then
+    next_role := 'owner';
+  end if;
+
+  if original_login = 'dcorattoinovacao@gmail.com' and next_login <> original_login then
+    raise exception 'primary_user_locked';
+  end if;
+
+  if original_login <> '' then
+    select *
+      into existing_user
+      from public.app_users
+      where lower(email) = original_login;
+  else
+    select *
+      into existing_user
+      from public.app_users
+      where lower(email) = next_login;
+  end if;
+
+  if existing_user.email is null then
+    if trim(next_password) = '' then
+      raise exception 'password_required';
+    end if;
+
+    insert into public.app_users (email, display_name, role, password_hash, active)
+    values (next_login, next_name, next_role, extensions.crypt(next_password, extensions.gen_salt('bf')), true)
+    returning * into saved_user;
+  else
+    update public.app_users
+      set email = next_login,
+          display_name = next_name,
+          role = next_role,
+          password_hash = case
+            when trim(next_password) <> '' then extensions.crypt(next_password, extensions.gen_salt('bf'))
+            else password_hash
+          end,
+          active = true,
+          updated_at = now()
+      where email = existing_user.email
+      returning * into saved_user;
+  end if;
+
+  return jsonb_build_object(
+    'user', jsonb_build_object(
+      'email', saved_user.email,
+      'display_name', saved_user.display_name,
+      'role', saved_user.role,
+      'active', saved_user.active,
+      'created_at', saved_user.created_at,
+      'updated_at', saved_user.updated_at
+    )
+  );
+end;
+$$;
+
+grant execute on function public.verify_app_login(text, text) to anon, authenticated, service_role;
+grant execute on function public.upsert_app_user(text, text, text, text, text, text) to service_role;
 
 drop trigger if exists set_document_projects_updated_at on public.document_projects;
 create trigger set_document_projects_updated_at
@@ -609,6 +758,14 @@ on conflict (id) do update set
   public = excluded.public,
   file_size_limit = excluded.file_size_limit,
   allowed_mime_types = excluded.allowed_mime_types;
+
+alter table public.app_users enable row level security;
+
+drop policy if exists "Service role app users" on public.app_users;
+create policy "Service role app users" on public.app_users
+for all
+using (auth.role() = 'service_role')
+with check (auth.role() = 'service_role');
 
 drop policy if exists "Public read dcoratto storage" on storage.objects;
 create policy "Public read dcoratto storage" on storage.objects

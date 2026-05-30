@@ -29,6 +29,7 @@ const localLoginUsers = [
   { email: 'isabela@dcoratto.com.br', password: 'Dcoratto@Isabela26', name: 'Isabela', role: 'team' },
   { email: 'vinicius@dcoratto.com.br', password: 'Dcoratto@Vinicius26', name: 'Vinicius', role: 'team' },
 ];
+const runtimeLoginUsers = localLoginUsers.map(user => ({ ...user }));
 const supabaseServer = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -81,6 +82,21 @@ createServer(async (request, response) => {
 
   if (request.method === 'POST' && url.pathname === '/api/login') {
     await handleLoginRequest(request, response);
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/app-users') {
+    await handleAppUsersGet(url, response);
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/app-users') {
+    await handleAppUsersUpsert(request, response);
+    return;
+  }
+
+  if (request.method === 'DELETE' && url.pathname === '/api/app-users') {
+    await handleAppUsersDelete(url, response);
     return;
   }
 
@@ -187,18 +203,141 @@ async function handleLoginRequest(request, response) {
           sendJson(response, 200, { ok: true, source: 'supabase', user: normalizeAppUser(data.user) });
           return;
         }
+        if (!error) {
+          sendJson(response, 401, { error: 'Credenciais incorretas.' });
+          return;
+        }
       } catch (error) {
         console.warn('Login por Supabase indisponivel; usando fallback local.', error);
       }
     }
 
-    const fallbackUser = localLoginUsers.find((user) => user.email === email && user.password === password);
+    const fallbackUser = runtimeLoginUsers.find((user) => user.email === email && user.password === password && user.active !== false);
     if (!fallbackUser) {
       sendJson(response, 401, { error: 'Credenciais incorretas.' });
       return;
     }
 
     sendJson(response, 200, { ok: true, source: 'local', user: normalizeAppUser(fallbackUser) });
+  } catch (error) {
+    sendJson(response, 500, { error: String(error?.message || error) });
+  }
+}
+
+async function handleAppUsersGet(url, response) {
+  try {
+    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+    if (!canManageAppUsers(actorEmail)) {
+      sendJson(response, 403, { error: 'Apenas a conta principal pode gerenciar funcionarios.' });
+      return;
+    }
+
+    if (!supabaseServer) {
+      sendJson(response, 200, {
+        ok: true,
+        source: 'local',
+        users: runtimeLoginUsers
+          .filter(user => user.active !== false)
+          .map(publicAppUser)
+          .sort(sortAppUsers),
+      });
+      return;
+    }
+
+    const { data, error } = await supabaseServer
+      .from('app_users')
+      .select('email, display_name, role, active, created_at, updated_at')
+      .eq('active', true)
+      .order('display_name', { ascending: true })
+      .order('email', { ascending: true });
+    if (error) throw error;
+
+    sendJson(response, 200, {
+      ok: true,
+      source: 'supabase',
+      users: (data || []).map(publicAppUser).sort(sortAppUsers),
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: String(error?.message || error) });
+  }
+}
+
+async function handleAppUsersUpsert(request, response) {
+  try {
+    const body = await readJsonBody(request);
+    const actorEmail = normalizeEmail(body.actor?.email);
+    if (!canManageAppUsers(actorEmail)) {
+      sendJson(response, 403, { error: 'Apenas a conta principal pode gerenciar funcionarios.' });
+      return;
+    }
+
+    const originalEmail = normalizeEmail(body.originalEmail);
+    const email = normalizeEmail(body.email);
+    const name = String(body.name || '').trim();
+    const role = normalizeAppUserRole(body.role);
+    const password = String(body.password || '');
+    const validationError = validateAppUserInput({ email, name, password, isNew: !originalEmail });
+    if (validationError) {
+      sendJson(response, 400, { error: validationError });
+      return;
+    }
+
+    if (email === primaryAccountEmail && role !== 'owner') {
+      sendJson(response, 400, { error: 'A conta principal deve permanecer como proprietaria.' });
+      return;
+    }
+
+    if (!supabaseServer) {
+      const user = upsertRuntimeLoginUser({ originalEmail, email, name, role, password });
+      sendJson(response, 200, { ok: true, source: 'local', user: publicAppUser(user) });
+      return;
+    }
+
+    const { data, error } = await supabaseServer.rpc('upsert_app_user', {
+      manager_email: actorEmail,
+      original_email: originalEmail || '',
+      user_email: email,
+      user_display_name: name,
+      user_role: role,
+      user_password: password,
+    });
+    if (error) throw error;
+    sendJson(response, 200, { ok: true, source: 'supabase', user: publicAppUser(data?.user || data) });
+  } catch (error) {
+    sendJson(response, 500, { error: normalizeAppUserError(error) });
+  }
+}
+
+async function handleAppUsersDelete(url, response) {
+  try {
+    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+    const email = normalizeEmail(url.searchParams.get('email'));
+    if (!canManageAppUsers(actorEmail)) {
+      sendJson(response, 403, { error: 'Apenas a conta principal pode gerenciar funcionarios.' });
+      return;
+    }
+    if (!email) {
+      sendJson(response, 400, { error: 'Informe o funcionario para excluir.' });
+      return;
+    }
+    if (email === primaryAccountEmail) {
+      sendJson(response, 400, { error: 'A conta principal nao pode ser excluida.' });
+      return;
+    }
+
+    if (!supabaseServer) {
+      const user = runtimeLoginUsers.find(item => item.email === email);
+      if (user) user.active = false;
+      sendJson(response, 200, { ok: true, source: 'local', email });
+      return;
+    }
+
+    const { error } = await supabaseServer
+      .from('app_users')
+      .update({ active: false })
+      .eq('email', email);
+    if (error) throw error;
+    sendJson(response, 200, { ok: true, source: 'supabase', email });
   } catch (error) {
     sendJson(response, 500, { error: String(error?.message || error) });
   }
@@ -2015,9 +2154,71 @@ function normalizeAppUser(user = {}) {
   };
 }
 
+function publicAppUser(user = {}) {
+  const normalized = normalizeAppUser(user);
+  return {
+    email: normalized.email,
+    name: normalized.name,
+    role: normalized.role,
+    active: user.active !== false,
+    isPrimary: normalized.email === primaryAccountEmail,
+    updatedAt: user.updated_at || user.updatedAt || null,
+    createdAt: user.created_at || user.createdAt || null,
+  };
+}
+
+function sortAppUsers(a, b) {
+  if (a.email === primaryAccountEmail) return -1;
+  if (b.email === primaryAccountEmail) return 1;
+  return String(a.name || a.email).localeCompare(String(b.name || b.email), 'pt-BR');
+}
+
+function canManageAppUsers(actorEmail) {
+  return isAdminEmail(actorEmail);
+}
+
+function normalizeAppUserRole(role) {
+  const normalizedRole = String(role || '').trim().toLowerCase();
+  return ['owner', 'admin', 'team'].includes(normalizedRole) ? normalizedRole : 'team';
+}
+
+function validateAppUserInput({ email, name, password, isNew }) {
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return 'Informe um login de email valido.';
+  if (!name) return 'Informe o nome do funcionario.';
+  if (isNew && !password) return 'Informe uma senha para o novo funcionario.';
+  if (password && password.length < 6) return 'A senha deve ter pelo menos 6 caracteres.';
+  return '';
+}
+
+function upsertRuntimeLoginUser({ originalEmail, email, name, role, password }) {
+  const existingIndex = runtimeLoginUsers.findIndex(user => user.email === (originalEmail || email));
+  const existingUser = existingIndex >= 0 ? runtimeLoginUsers[existingIndex] : null;
+  const nextUser = {
+    ...(existingUser || {}),
+    email,
+    name,
+    role: email === primaryAccountEmail ? 'owner' : role,
+    password: password || existingUser?.password || '',
+    active: true,
+  };
+  if (existingIndex >= 0) runtimeLoginUsers.splice(existingIndex, 1, nextUser);
+  else runtimeLoginUsers.push(nextUser);
+  return nextUser;
+}
+
+function normalizeAppUserError(error) {
+  const message = String(error?.message || error || '');
+  if (message.includes('password_required')) return 'Informe uma senha para o novo funcionario.';
+  if (message.includes('primary_user_locked')) return 'A conta principal nao pode ter o login alterado.';
+  if (message.includes('duplicate key')) return 'Ja existe um funcionario com este login.';
+  if (message.includes('invalid_app_user')) return 'Revise nome, login e senha do funcionario.';
+  if (message.includes('forbidden')) return 'Apenas a conta principal pode gerenciar funcionarios.';
+  return message || 'Nao foi possivel salvar o funcionario.';
+}
+
 function designerNameFromEmail(email = '') {
   const normalizedEmail = normalizeEmail(email);
-  const knownUser = localLoginUsers.find(user => user.email === normalizedEmail);
+  const knownUser = runtimeLoginUsers.find(user => user.email === normalizedEmail);
   return knownUser?.name || normalizedEmail || 'Não informado';
 }
 
