@@ -24,7 +24,7 @@ function App() {
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-06-01-shared-catalog-factories-v1";
+  const SYSTEM_VERSION = "2026-06-01-builder-factory-grouped-catalog-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {

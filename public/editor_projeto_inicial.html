@@ -115,15 +115,17 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
 .color-picker-area{margin-top:4px}
 .color-picker-label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#c9ad82;font-weight:500;margin-bottom:8px;display:block}
 .color-swatches{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px}
-.swatch-section{width:100%;display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px}
-.swatch-section-title{width:100%;margin:10px 0 2px;color:var(--gold);font-size:9px;letter-spacing:.18em;text-transform:uppercase}
+.swatch-section{width:100%;display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 12px;padding-top:8px;border-top:1px solid rgba(184,151,106,.16)}
+.swatch-section-title{width:100%;margin:0 0 2px;color:var(--gold);font-size:9px;letter-spacing:.18em;text-transform:uppercase}
 .swatch{width:52px;height:52px;border-radius:4px;cursor:pointer;border:2px solid transparent;transition:all .2s;position:relative;background-size:cover;background-position:center;box-shadow:0 8px 14px rgba(0,0,0,.25)}
 .swatch:hover{transform:scale(1.15)}
 .swatch.selected{border-color:var(--gold);transform:scale(1.15)}
 .swatch-name{font-size:9px;text-align:center;color:#f0dfc7;margin-top:5px;width:72px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400}
 .swatch-line{font-size:8px;text-align:center;color:#d4aa70;margin-top:2px;width:72px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.08em;font-weight:500}
 .swatch-wrap{display:flex;flex-direction:column;align-items:center}
-.handle-picker{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.handle-picker{display:grid;gap:10px;margin-top:8px}
+.handle-section{display:flex;flex-wrap:wrap;gap:8px;padding-top:8px;border-top:1px solid rgba(184,151,106,.14)}
+.handle-section-title{width:100%;color:var(--gold);font-size:8px;letter-spacing:.18em;text-transform:uppercase}
 .handle-card{width:62px;border:1px solid var(--border);background:rgba(0,0,0,.18);border-radius:4px;padding:4px;cursor:pointer;color:var(--muted)}
 .handle-card.selected{border-color:var(--gold);color:var(--gold-l)}
 .handle-card img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:2px;display:block;margin-bottom:4px}
@@ -1905,6 +1907,21 @@ function availableColors() {
   ].sort((a, b) => `${a.manufacturer}-${a.line}-${a.name}`.localeCompare(`${b.manufacturer}-${b.line}-${b.name}`));
 }
 
+function catalogItemFactory(item = {}) {
+  return normalizeFactoryName(item.manufacturer || item.factory || 'SEM FÁBRICA');
+}
+
+function catalogGroupsByFactory(items = []) {
+  const groups = new Map();
+  (items || []).forEach((item) => {
+    const factory = catalogItemFactory(item);
+    if (!groups.has(factory)) groups.set(factory, []);
+    groups.get(factory).push(item);
+  });
+  const orderedFactories = [...new Set([...selectedFactories(), ...groups.keys()])].filter(factory => groups.has(factory));
+  return orderedFactories.map(factory => ({ factory, items: groups.get(factory) || [] }));
+}
+
 function colorKey(color) {
   return `${color.manufacturer || ''}|${color.line || ''}|${color.name}|${color.quality || ''}`;
 }
@@ -2035,19 +2052,25 @@ if (builderDraft?.state) {
 function buildSwatchHTML(ambId, field) {
   const colors = availableColors();
   if (!colors.length) return '<div class="amb-summary">Nenhuma cor cadastrada. Abra Configurações e adicione cores ao catálogo manual.</div>';
-  return colors.map(c => {
-    const key = colorKey(c);
-    const selected = state[ambId]?.cores.some(item => item.key === key || (!item.key && item.name === c.name));
-    return `
-    <div class="swatch-wrap">
-      <div class="swatch ${selected ? 'selected' : ''}" title="${c.manufacturer} · ${c.line} · ${c.displayName || c.name}"
-        style="${c.textureUrl ? `background-image:url('${c.textureUrl}');background-color:${c.hex}` : `background:${c.hex}`}"
-        onclick="toggleColor('${ambId}','${c.name}','${c.hex}',this,'${c.textureUrl || ''}','${c.manufacturer || ''}','${c.line || ''}','${c.quality || ''}')">
-      </div>
-      <div class="swatch-name">${c.name}</div>
-      <div class="swatch-line">${c.line || c.manufacturer || ''}</div>
-    </div>`;
-  }).join('');
+  return catalogGroupsByFactory(colors).map(({ factory, items }) => `
+    <div class="swatch-section">
+      <div class="swatch-section-title">${escapeHTML(factory)}</div>
+      ${items.map(c => {
+        const key = colorKey(c);
+        const selected = state[ambId]?.cores.some(item => item.key === key || (!item.key && item.name === c.name));
+        const lineLabel = c.line && normalizeFactoryName(c.line) !== catalogItemFactory(c) ? c.line : '';
+        return `
+          <div class="swatch-wrap">
+            <div class="swatch ${selected ? 'selected' : ''}" title="${escapeAttribute([factory, lineLabel, c.displayName || c.name].filter(Boolean).join(' · '))}"
+              style="${c.textureUrl ? `background-image:url('${escapeAttribute(c.textureUrl)}');background-color:${escapeAttribute(c.hex)}` : `background:${escapeAttribute(c.hex)}`}"
+              onclick="toggleColor('${escapeJS(ambId)}','${escapeJS(c.name)}','${escapeJS(c.hex)}',this,'${escapeJS(c.textureUrl || '')}','${escapeJS(c.manufacturer || '')}','${escapeJS(c.line || '')}','${escapeJS(c.quality || '')}')">
+            </div>
+            <div class="swatch-name">${escapeHTML(c.name)}</div>
+            <div class="swatch-line">${escapeHTML(lineLabel)}</div>
+          </div>`;
+      }).join('')}
+    </div>
+  `).join('');
 }
 
 function buildCheckboxHTML(ambId, field) {
@@ -2080,17 +2103,22 @@ function buildMaterialImagePickerHTML(ambId, field, type) {
   if (!items.length) return '';
   return `
     <div class="handle-picker">
-      ${items.map(item => {
-        const value = catalogOptionValue(item);
-        const selected = state[ambId][field].includes(value);
-        return `
-          <button class="handle-card ${selected ? 'selected' : ''}" type="button" onclick="toggleMaterialImageOption('${escapeJS(ambId)}','${escapeJS(field)}','${escapeJS(value)}')">
-            <img src="${escapeAttribute(item.textureUrl)}" alt="${escapeAttribute(item.name)}">
-            <span>${escapeHTML(item.name)}</span>
-            <span>${escapeHTML(item.line)}</span>
-          </button>
-        `;
-      }).join('')}
+      ${catalogGroupsByFactory(items).map(({ factory, items: factoryItems }) => `
+        <div class="handle-section">
+          <div class="handle-section-title">${escapeHTML(factory)}</div>
+          ${factoryItems.map(item => {
+            const value = catalogOptionValue(item);
+            const selected = state[ambId][field].includes(value);
+            return `
+              <button class="handle-card ${selected ? 'selected' : ''}" type="button" onclick="toggleMaterialImageOption('${escapeJS(ambId)}','${escapeJS(field)}','${escapeJS(value)}')">
+                <img src="${escapeAttribute(item.textureUrl)}" alt="${escapeAttribute(item.name)}">
+                <span>${escapeHTML(item.name)}</span>
+                <span>${escapeHTML(item.line)}</span>
+              </button>
+            `;
+          }).join('')}
+        </div>
+      `).join('')}
     </div>
   `;
 }
@@ -2513,6 +2541,15 @@ function normalizedEnvironmentPages(amb) {
   })).filter(page => page.hasData);
 }
 
+function clientVisibleColor(color = {}) {
+  return {
+    name: color.displayName || color.name || '',
+    hex: color.hex || '',
+    textureUrl: color.textureUrl || '',
+    quality: color.quality || '',
+  };
+}
+
 function buildPreviewDocumentData() {
   const clientName = document.getElementById('clientName').value || 'CLIENTE MODELO';
   const endereco = document.getElementById('endereco').value || '';
@@ -2537,7 +2574,7 @@ function buildPreviewDocumentData() {
           puxadores: s.puxador.join(', '),
           corredicas: s.corredica.join(', '),
         },
-        colors: s.cores,
+        colors: s.cores.map(clientVisibleColor),
         notes: [...s.obs, s.obsExtra || ''].filter(Boolean),
         layout,
         photos: coverPhotos,
@@ -2558,7 +2595,7 @@ function buildPreviewDocumentData() {
       name: clientName,
       address: endereco,
       contractNumber: contractNum,
-      manufacturers: selectedFactories(),
+      manufacturers: [],
     },
     environments: environments.length ? environments : [],
   };

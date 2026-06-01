@@ -366,7 +366,7 @@ async function handleClientLinkRequest(request, response) {
       draft: body.draft || null,
       preview: body.preview || {},
     });
-    const preview = promotedDocument.preview || {};
+    const preview = sanitizeClientPreview(promotedDocument.preview || {});
     if (!Array.isArray(preview.environments) || !preview.environments.length) {
       sendJson(response, 400, { error: 'Adicione ao menos um ambiente antes de gerar o link do cliente.' });
       return;
@@ -2060,6 +2060,9 @@ function isDeletedForUser(project, actorEmail) {
 async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt }) {
   const client = preview.client || {};
   const actorEmail = normalizeEmail(actor?.email);
+  const projectFactories = Array.isArray(client.manufacturers) && client.manufacturers.length
+    ? client.manufacturers
+    : (Array.isArray(draft?.fields?.factories) ? draft.fields.factories : []);
   const existingProject = await loadProjectForWrite(projectId);
   if (existingProject?.status === 'sold') {
     throw new Error('Projeto vendido esta bloqueado para alteracoes.');
@@ -2097,7 +2100,7 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
       title: preview.projectType || 'Projeto Inicial',
       client_name: client.name || draft?.fields?.clientName || '',
       contract_number: client.contractNumber || draft?.fields?.contractNum || '',
-      factory: Array.isArray(client.manufacturers) ? client.manufacturers.join(' + ') : '',
+      factory: projectFactories.join(' + '),
       address: client.address || draft?.fields?.endereco || '',
       document_type: 'projeto_inicial',
       status: existingProject?.status || 'active',
@@ -2191,7 +2194,7 @@ async function buildStandaloneHtml(preview) {
   const publicTemplate = join(publicRoot, 'portfolio_document.html');
   const templatePath = existsSync(distTemplate) ? distTemplate : publicTemplate;
   const template = await readFile(templatePath, 'utf8');
-  const serialized = JSON.stringify(preview)
+  const serialized = JSON.stringify(sanitizeClientPreview(preview))
     .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
@@ -2211,6 +2214,36 @@ async function buildStandaloneHtml(preview) {
       }, true);
     </script>`;
   return template.replace('</head>', `${hardening}</head>`);
+}
+
+function sanitizeClientPreview(preview = {}) {
+  const {
+    manufacturer,
+    manufacturers,
+    factory,
+    factories,
+    ...client
+  } = preview.client || {};
+  return {
+    ...preview,
+    client: {
+      ...client,
+      manufacturers: [],
+    },
+    environments: (Array.isArray(preview.environments) ? preview.environments : []).map((environment) => ({
+      ...environment,
+      colors: (Array.isArray(environment.colors) ? environment.colors : []).map(clientVisibleColorPayload),
+    })),
+  };
+}
+
+function clientVisibleColorPayload(color = {}) {
+  return {
+    name: color.displayName || color.name || '',
+    hex: color.hex || '',
+    textureUrl: color.textureUrl || color.imageUrl || '',
+    quality: color.quality || '',
+  };
 }
 
 function sendJson(response, status, payload) {
