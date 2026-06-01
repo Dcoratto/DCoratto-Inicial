@@ -616,7 +616,7 @@ function normalizeFactories(factories = [], catalogItems = []) {
   const normalized = values
     .map(factory => normalizeFactoryName(typeof factory === 'string' ? factory : factory?.name))
     .filter(Boolean);
-  const existingManufacturers = Array.isArray(factories) ? [] : (Array.isArray(catalogItems) ? catalogItems : [])
+  const existingManufacturers = (Array.isArray(catalogItems) ? catalogItems : [])
     .map(item => normalizeFactoryName(item.manufacturer || item.factory))
     .filter(Boolean);
   return [...new Set([...DEFAULT_FACTORIES, ...normalized, ...existingManufacturers])];

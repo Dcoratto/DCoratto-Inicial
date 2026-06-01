@@ -1,7 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Login, PRIMARY_ACCOUNT_EMAIL } from './Login'
-import { createNewActiveProjectId, getActiveProjectId, persistEditorEvent, flushOfflineQueue, loadLatestEditorState } from './auditPersistence'
+import {
+  createNewActiveProjectId,
+  getActiveProjectId,
+  persistEditorEvent,
+  flushOfflineQueue,
+  loadLatestEditorState,
+  loadRemoteEditorSettings,
+  saveRemoteEditorSettings,
+} from './auditPersistence'
 import { loadLocalProjectSnapshot, saveLocalProjectSnapshot, savePendingAsset } from './offlinePersistence'
 import { optimizeImageToWebp } from './imageOptimizer'
 import './styles.css'
@@ -24,7 +32,7 @@ function App() {
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-06-01-builder-factory-grouped-catalog-v1";
+  const SYSTEM_VERSION = "2026-06-01-remote-shared-catalog-sync-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
@@ -35,9 +43,27 @@ function App() {
     flushOfflineQueue().catch((error) => console.warn('Falha ao limpar fila offline:', error));
 
     async function bootstrapRemoteState() {
+      const cachedSettings = readLocalEditorSettings();
       try {
         const remote = await loadLatestEditorState(actor);
         if (cancelled) return;
+        if (!remote?.settings) {
+          remote.settings = await loadRemoteEditorSettings().catch((settingsError) => {
+            console.warn('Nao foi possivel carregar configuracoes compartilhadas diretamente.', settingsError);
+            return null;
+          });
+        }
+        if (shouldSyncLocalSettings(cachedSettings, remote?.settings || {})) {
+          const syncedSettings = await saveRemoteEditorSettings(
+            mergeSettingsForSharedSync(cachedSettings, remote?.settings || {}),
+            actor,
+            { type: 'settings-sync', createdAt: new Date().toISOString() },
+          ).catch((syncError) => {
+            console.warn('Nao foi possivel sincronizar catalogo local com o servidor.', syncError);
+            return null;
+          });
+          if (syncedSettings) remote.settings = syncedSettings;
+        }
         const hydrated = hydrateBrowserStorage(remote);
         if (!hydrated?.projectId) {
           hydrated.projectId = createNewActiveProjectId(actor);
@@ -48,10 +74,41 @@ function App() {
       } catch (error) {
         console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
         const local = await loadLocalProjectSnapshot(getActiveProjectId(actor)).catch(() => null);
+        const settings = await loadRemoteEditorSettings().catch((settingsError) => {
+          console.warn('Nao foi possivel carregar configuracoes compartilhadas pelo endpoint direto.', settingsError);
+          return null;
+        });
         if (!cancelled && local) {
+          let nextSettings = settings;
+          if (shouldSyncLocalSettings(cachedSettings, nextSettings || {})) {
+            nextSettings = await saveRemoteEditorSettings(
+              mergeSettingsForSharedSync(cachedSettings, nextSettings || {}),
+              actor,
+              { type: 'settings-sync', createdAt: new Date().toISOString() },
+            ).catch((syncError) => {
+              console.warn('Nao foi possivel sincronizar catalogo local apos fallback.', syncError);
+              return nextSettings;
+            });
+          }
+          if (nextSettings) local.settings = nextSettings;
           const hydrated = hydrateBrowserStorage(local);
           setRemoteDocument(hydrated);
           if (hydrated?.settings) setRemoteSettings(hydrated.settings);
+        } else if (!cancelled && settings) {
+          let nextSettings = settings;
+          if (shouldSyncLocalSettings(cachedSettings, nextSettings || {})) {
+            nextSettings = await saveRemoteEditorSettings(
+              mergeSettingsForSharedSync(cachedSettings, nextSettings || {}),
+              actor,
+              { type: 'settings-sync', createdAt: new Date().toISOString() },
+            ).catch((syncError) => {
+              console.warn('Nao foi possivel sincronizar catalogo local sem rascunho local.', syncError);
+              return nextSettings;
+            });
+          }
+          const hydrated = hydrateBrowserStorage({ settings: nextSettings, projectId: createNewActiveProjectId(actor), status: 'draft' });
+          setRemoteDocument(hydrated);
+          setRemoteSettings(hydrated.settings);
         }
       }
     }
@@ -323,6 +380,10 @@ function hydrateBrowserStorage(remote) {
   return hydrated;
 }
 
+function readLocalEditorSettings() {
+  return parseStoredJson(localStorage.getItem('dcoratto.editor.settings.v1')) || {};
+}
+
 function parseStoredJson(value) {
   try {
     return JSON.parse(value || 'null');
@@ -331,11 +392,97 @@ function parseStoredJson(value) {
   }
 }
 
-function mergeSettingsPreservingCatalogImages(localSettings = {}, remoteSettings = {}) {
+function shouldSyncLocalSettings(localSettings = {}, remoteSettings = {}) {
+  if (!localSettings || !Object.keys(localSettings).length) return false;
+  return hasCatalogItemsMissingRemotely(localSettings, remoteSettings)
+    || hasFactoriesMissingRemotely(localSettings, remoteSettings)
+    || hasMaterialOptionsMissingRemotely(localSettings, remoteSettings)
+    || hasObservationsMissingRemotely(localSettings, remoteSettings);
+}
+
+function hasCatalogItemsMissingRemotely(localSettings = {}, remoteSettings = {}) {
+  const remoteKeys = new Set((remoteSettings.catalogItems || []).flatMap(catalogItemMatchKeys));
+  return (localSettings.catalogItems || []).some(item => item?.name && !catalogItemMatchKeys(item).some(key => remoteKeys.has(key)));
+}
+
+function hasFactoriesMissingRemotely(localSettings = {}, remoteSettings = {}) {
+  const remoteFactories = new Set(normalizeFactoryList(remoteSettings.factories, remoteSettings.catalogItems));
+  return normalizeFactoryList(localSettings.factories, localSettings.catalogItems).some(factory => !remoteFactories.has(factory));
+}
+
+function hasMaterialOptionsMissingRemotely(localSettings = {}, remoteSettings = {}) {
+  const groups = new Set([
+    ...Object.keys(localSettings.materialOptions || {}),
+    ...Object.keys(remoteSettings.materialOptions || {}),
+  ]);
+  return [...groups].some((group) => {
+    const remoteValues = new Set(remoteSettings.materialOptions?.[group] || []);
+    return (localSettings.materialOptions?.[group] || []).some(value => value && !remoteValues.has(value));
+  });
+}
+
+function hasObservationsMissingRemotely(localSettings = {}, remoteSettings = {}) {
+  const remoteValues = new Set(remoteSettings.observations || []);
+  return (localSettings.observations || []).some(value => value && !remoteValues.has(value));
+}
+
+function mergeSettingsForSharedSync(localSettings = {}, remoteSettings = {}) {
+  const catalogItems = mergeCatalogItemsForSync(remoteSettings.catalogItems, localSettings.catalogItems);
   return {
     ...localSettings,
     ...remoteSettings,
-    catalogItems: mergeCatalogItemsPreservingImages(localSettings.catalogItems, remoteSettings.catalogItems),
+    logo: remoteSettings.logo || localSettings.logo || '',
+    catalogItems,
+    factories: normalizeFactoryList([
+      ...(remoteSettings.factories || []),
+      ...(localSettings.factories || []),
+    ], catalogItems),
+    materialOptions: mergeMaterialOptions(localSettings.materialOptions, remoteSettings.materialOptions),
+    observations: [...new Set([...(remoteSettings.observations || []), ...(localSettings.observations || [])].filter(Boolean))],
+  };
+}
+
+function mergeMaterialOptions(localOptions = {}, remoteOptions = {}) {
+  const groups = new Set([...Object.keys(localOptions || {}), ...Object.keys(remoteOptions || {})]);
+  return Object.fromEntries([...groups].map(group => [
+    group,
+    [...new Set([...(remoteOptions?.[group] || []), ...(localOptions?.[group] || [])].filter(Boolean))],
+  ]));
+}
+
+function mergeCatalogItemsForSync(remoteItems = [], localItems = []) {
+  let merged = [];
+  (Array.isArray(remoteItems) ? remoteItems : []).forEach((item) => {
+    if (!item?.name) return;
+    merged = upsertCatalogItemPreservingImage(merged, item);
+  });
+  (Array.isArray(localItems) ? localItems : []).forEach((item) => {
+    if (!item?.name) return;
+    merged = upsertCatalogItemPreservingImage(merged, item);
+  });
+  return merged;
+}
+
+function normalizeFactoryList(factories = [], catalogItems = []) {
+  const explicitFactories = (Array.isArray(factories) ? factories : [])
+    .map(factory => String(typeof factory === 'string' ? factory : factory?.name || '').trim().replace(/\s+/g, ' ').toUpperCase())
+    .filter(Boolean);
+  const catalogFactories = (Array.isArray(catalogItems) ? catalogItems : [])
+    .map(item => String(item?.manufacturer || item?.factory || '').trim().replace(/\s+/g, ' ').toUpperCase())
+    .filter(Boolean);
+  return [...new Set([...explicitFactories, ...catalogFactories])];
+}
+
+function mergeSettingsPreservingCatalogImages(localSettings = {}, remoteSettings = {}) {
+  const catalogItems = mergeCatalogItemsPreservingImages(localSettings.catalogItems, remoteSettings.catalogItems);
+  return {
+    ...localSettings,
+    ...remoteSettings,
+    catalogItems,
+    factories: normalizeFactoryList([
+      ...(remoteSettings.factories || []),
+      ...(localSettings.factories || []),
+    ], catalogItems),
   };
 }
 

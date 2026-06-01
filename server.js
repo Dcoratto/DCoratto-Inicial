@@ -1159,9 +1159,11 @@ async function loadSharedEditorSettings() {
   const tableSettings = await loadSettingsFromSharedCatalogTables();
   const storedPayload = data?.payload || {};
   const payload = normalizeEditorSettingsPayload(storedPayload);
+  const catalogItems = mergeCatalogItemsPayload(tableSettings.catalogItems, payload.catalogItems, { preferIncoming: false });
   return {
     ...payload,
-    catalogItems: mergeCatalogItemsPayload(tableSettings.catalogItems, payload.catalogItems, { preferIncoming: false }),
+    catalogItems,
+    factories: normalizeFactoriesPayload(payload.factories, catalogItems),
     materialOptions: mergeMaterialOptionsPayload(tableSettings.materialOptions, payload.materialOptions),
   };
 }
@@ -1170,8 +1172,9 @@ async function saveSharedEditorSettings(incomingSettings, actor = null, settings
   const currentSettings = await loadSharedEditorSettings();
   const actorEmail = normalizeEmail(actor?.email);
   const hasIncomingSettings = incomingSettings && Object.keys(incomingSettings).length > 0;
+  const protectCatalogCollections = settingsMutation?.type !== 'settings-sync';
   const mergedSettings = hasIncomingSettings
-    ? mergeEditorSettingsPayload(currentSettings, incomingSettings, { protectCatalogCollections: true })
+    ? mergeEditorSettingsPayload(currentSettings, incomingSettings, { protectCatalogCollections })
     : normalizeEditorSettingsPayload(currentSettings);
   const mutatedSettings = applySettingsMutation(mergedSettings, settingsMutation, actorEmail);
   const payload = await promoteSettingsImagesToStorage(mutatedSettings);
@@ -1322,7 +1325,7 @@ function normalizeFactoriesPayload(factories = [], catalogItems = []) {
   const normalized = values
     .map(factory => normalizeFactoryName(typeof factory === 'string' ? factory : factory?.name))
     .filter(Boolean);
-  const manufacturers = Array.isArray(factories) ? [] : (Array.isArray(catalogItems) ? catalogItems : [])
+  const manufacturers = (Array.isArray(catalogItems) ? catalogItems : [])
     .map(item => normalizeFactoryName(item.manufacturer || item.factory))
     .filter(Boolean);
   return [...new Set([...defaultFactories, ...normalized, ...manufacturers])];
@@ -1725,6 +1728,10 @@ function settingsTypeFromCatalogGroup(groupKey) {
 
 async function persistSharedCatalogMutation(settings = {}, mutation = null, actorEmail = '') {
   if (!mutation?.type) return;
+  if (mutation.type === 'settings-sync') {
+    await persistSharedCatalogTables(settings, actorEmail);
+    return;
+  }
   if (mutation.type === 'catalog-item-upsert' && mutation.item) {
     if (isStaleCatalogMutation(settings.catalogItems || [], mutation, [mutation.previousId, mutation.previousCatalogKey])) return;
     const item = findCatalogItemForMutation(settings.catalogItems || [], mutation.item, [mutation.previousId, mutation.previousCatalogKey]);

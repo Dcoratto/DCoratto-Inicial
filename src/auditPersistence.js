@@ -119,6 +119,28 @@ export async function loadLatestEditorState(actor, projectId = '') {
   return result;
 }
 
+export async function loadRemoteEditorSettings() {
+  const response = await fetch('/api/editor-settings', { cache: 'no-store' });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result?.error || 'Nao foi possivel carregar configuracoes compartilhadas.');
+  }
+  return result.settings || null;
+}
+
+export async function saveRemoteEditorSettings(settings, actor, settingsMutation = null) {
+  const response = await fetch('/api/editor-settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings, actor, settingsMutation }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result?.error || 'Nao foi possivel salvar configuracoes compartilhadas.');
+  }
+  return result.settings || settings || null;
+}
+
 async function persistEditorEventWithServer(event) {
   const response = await fetch('/api/editor-events', {
     method: 'POST',
