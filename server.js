@@ -2,7 +2,7 @@ import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import sharp from 'sharp';
 
@@ -133,6 +133,11 @@ createServer(async (request, response) => {
 
   if (request.method === 'POST' && url.pathname === '/api/project-status') {
     await handleProjectStatusRequest(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/project-restore') {
+    await handleProjectRestoreRequest(request, response);
     return;
   }
 
@@ -366,7 +371,15 @@ async function handleClientLinkRequest(request, response) {
       draft: body.draft || null,
       preview: body.preview || {},
     });
-    const preview = sanitizeClientPreview(promotedDocument.preview || {});
+    let preview = sanitizeClientPreview(promotedDocument.preview || {});
+    const protectedDocument = protectAgainstImplicitContentLoss({
+      existingProject,
+      action: 'generate_project_initial',
+      draft: promotedDocument.draft,
+      preview,
+    });
+    promotedDocument.draft = protectedDocument.draft;
+    preview = protectedDocument.preview || preview;
     if (!Array.isArray(preview.environments) || !preview.environments.length) {
       sendJson(response, 400, { error: 'Adicione ao menos um ambiente antes de gerar o link do cliente.' });
       return;
@@ -573,6 +586,40 @@ async function handleProjectStatusRequest(request, response) {
       .eq('id', projectId);
     if (error) throw error;
     sendJson(response, 200, { ok: true, projectId, status });
+  } catch (error) {
+    sendJson(response, 500, { error: String(error?.message || error) });
+  }
+}
+
+async function handleProjectRestoreRequest(request, response) {
+  try {
+    if (!supabaseServer) {
+      sendJson(response, 503, {
+        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para restaurar projetos.',
+      });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    const projectId = safeId(body.projectId);
+    const actorEmail = normalizeEmail(body.actor?.email);
+    if (!projectId) {
+      sendJson(response, 400, { error: 'Projeto invalido para restauracao.' });
+      return;
+    }
+    if (!(await canRestoreProjects(actorEmail))) {
+      sendJson(response, 403, { error: 'Apenas a conta admin pode restaurar projetos.' });
+      return;
+    }
+
+    const restored = await restoreBestProjectSnapshot({ projectId, actor: body.actor || null });
+    sendJson(response, 200, {
+      ok: true,
+      source: restored.source,
+      projectId,
+      environments: restored.environments,
+      restoredAt: restored.restoredAt,
+    });
   } catch (error) {
     sendJson(response, 500, { error: String(error?.message || error) });
   }
@@ -1055,6 +1102,18 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
     return;
   }
 
+  const protectedDocument = protectAgainstImplicitContentLoss({
+    existingProject,
+    action,
+    draft,
+    preview,
+  });
+  draft = protectedDocument.draft;
+  preview = protectedDocument.preview;
+  const persistenceAction = protectedDocument.protected
+    ? `${action || 'editor_sync'}_content_preserved`
+    : action;
+
   const client = preview?.client || {};
   const actorEmail = normalizeEmail(actor?.email);
   const isDraftSave = action === 'save_as_draft';
@@ -1088,9 +1147,10 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
       assignedToEmail,
       lastEditorEmail: actorEmail,
       lastEditorName: String(actor?.name || ''),
-      lastAction: action || 'autosave',
+      lastAction: persistenceAction || 'autosave',
       lastEventId: eventId || null,
       lastEventAt: createdAt || nowIso,
+      contentPreservedFromImplicitLoss: Boolean(protectedDocument.protected),
     },
   };
 
@@ -1098,7 +1158,7 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
     .from('document_projects')
     .upsert(projectPayload, { onConflict: 'id' });
   if (error) throw error;
-  await persistAuditLog({ projectId, actor, action, draft, preview, settings, eventId, createdAt });
+  await persistAuditLog({ projectId, actor, action: persistenceAction, draft, preview, settings, eventId, createdAt });
 }
 
 function isStaleProjectEvent(existingProject, createdAt) {
@@ -1143,10 +1203,334 @@ async function persistAuditLog({ projectId, actor, action, draft, preview, setti
         draft: draft ? { updatedAt: draft.updatedAt || null } : null,
         preview: preview ? { environments: Array.isArray(preview.environments) ? preview.environments.length : 0 } : null,
         settingsChanged: Boolean(settings),
+        snapshot: {
+          draft: draft || null,
+          preview: preview || null,
+          settings: settings || null,
+        },
       },
       created_at: createdAt || new Date().toISOString(),
     });
   if (error && error.code !== '23505') throw error;
+}
+
+function protectAgainstImplicitContentLoss({ existingProject, action, draft, preview }) {
+  if (!existingProject?.data || isExplicitDeletionAction(action)) {
+    return { draft, preview, protected: false };
+  }
+  const previousDraft = existingProject.data?.draft || null;
+  if (!projectDraftStructureWasReduced(previousDraft, draft)) {
+    return { draft, preview, protected: false };
+  }
+  return {
+    draft: previousDraft || draft || null,
+    preview: existingProject.data?.preview || preview || null,
+    protected: true,
+  };
+}
+
+function isExplicitDeletionAction(action = '') {
+  const normalized = String(action || '').toLowerCase();
+  return normalized.includes('delete')
+    || normalized.includes('deleted')
+    || normalized.includes('removed')
+    || normalized === 'portfolio_history_restore';
+}
+
+function projectDraftStructureWasReduced(previousDraft, incomingDraft) {
+  if (!previousDraft || !incomingDraft) return false;
+  const previousEnvironments = Array.isArray(previousDraft.ambientes) ? previousDraft.ambientes : [];
+  const incomingEnvironments = Array.isArray(incomingDraft.ambientes) ? incomingDraft.ambientes : [];
+  if (!previousEnvironments.length) return false;
+  if (incomingEnvironments.length < previousEnvironments.length) return true;
+
+  const incomingById = mapById(incomingEnvironments);
+  return previousEnvironments.some((previousEnvironment) => {
+    const incomingEnvironment = incomingById.get(String(previousEnvironment?.id || ''));
+    if (previousEnvironment?.id && !incomingEnvironment) return true;
+    if (!incomingEnvironment) return false;
+    if (collectionWasReduced(previousEnvironment.photos, incomingEnvironment.photos)) return true;
+    return nestedPagesWereReduced(previousEnvironment.pages, incomingEnvironment.pages);
+  });
+}
+
+function nestedPagesWereReduced(previousPages = [], incomingPages = []) {
+  if (collectionWasReduced(previousPages, incomingPages)) return true;
+  const incomingById = mapById(incomingPages);
+  return (Array.isArray(previousPages) ? previousPages : []).some((previousPage) => {
+    const incomingPage = incomingById.get(String(previousPage?.id || ''));
+    if (previousPage?.id && !incomingPage) return true;
+    if (!incomingPage) return false;
+    if (collectionWasReduced(previousPage.frames, incomingPage.frames)) return true;
+    if (collectionWasReduced(previousPage.annotations, incomingPage.annotations)) return true;
+    const incomingFramesById = mapById(incomingPage.frames);
+    return (Array.isArray(previousPage.frames) ? previousPage.frames : []).some((previousFrame) => {
+      const incomingFrame = incomingFramesById.get(String(previousFrame?.id || ''));
+      if (previousFrame?.id && !incomingFrame) return true;
+      if (!incomingFrame) return false;
+      return collectionWasReduced(previousFrame.annotations, incomingFrame.annotations);
+    });
+  });
+}
+
+function collectionWasReduced(previous = [], incoming = []) {
+  const previousList = Array.isArray(previous) ? previous : [];
+  const incomingList = Array.isArray(incoming) ? incoming : [];
+  if (!previousList.length) return false;
+  if (incomingList.length < previousList.length) return true;
+  const previousIds = previousList.map(item => String(item?.id || '')).filter(Boolean);
+  if (!previousIds.length) return false;
+  const incomingIds = new Set(incomingList.map(item => String(item?.id || '')).filter(Boolean));
+  return previousIds.some(id => !incomingIds.has(id));
+}
+
+function mapById(items = []) {
+  return new Map((Array.isArray(items) ? items : [])
+    .filter(item => item?.id)
+    .map(item => [String(item.id), item]));
+}
+
+async function restoreBestProjectSnapshot({ projectId, actor }) {
+  const current = await loadProjectForWrite(projectId);
+  if (!current) throw new Error('Projeto nao encontrado para restauracao.');
+  const actorEmail = normalizeEmail(actor?.email);
+  const candidate = await findBestRestoreCandidate(projectId, current);
+  if (!candidate) throw new Error('Nenhum snapshot restauravel foi encontrado para este projeto.');
+
+  const currentData = current.data && typeof current.data === 'object' ? current.data : {};
+  const preview = candidate.snapshot.preview || currentData.preview || null;
+  const draft = candidate.snapshot.draft || draftFromPreview(preview, currentData.draft || null);
+  if (!hasPersistableContent(draft, preview)) {
+    throw new Error('O snapshot encontrado nao possui ambientes para restaurar.');
+  }
+
+  const client = preview?.client || {};
+  const restoredAt = new Date().toISOString();
+  const status = current.status === 'sold' ? 'sold' : (current.is_draft ? 'draft' : 'active');
+  const isDraft = status === 'sold' ? false : Boolean(current.is_draft || status === 'draft');
+  const { error } = await supabaseServer
+    .from('document_projects')
+    .update({
+      title: preview?.projectType || currentData.preview?.projectType || 'Projeto Inicial',
+      client_name: client.name || draft?.fields?.clientName || '',
+      contract_number: client.contractNumber || draft?.fields?.contractNum || '',
+      address: client.address || draft?.fields?.endereco || '',
+      status,
+      is_draft: isDraft,
+      deleted_at: null,
+      deleted_by: null,
+      deleted_reason: null,
+      deleted_for_users: [],
+      restored_at: restoredAt,
+      restored_by: actorEmail || primaryAccountEmail,
+      updated_by: actorEmail || primaryAccountEmail,
+      last_editor_email: actorEmail || primaryAccountEmail,
+      last_editor_name: String(actor?.name || 'Admin'),
+      data: {
+        ...currentData,
+        draft,
+        preview,
+        restoredFrom: candidate.source,
+        restoredSourceId: candidate.id || '',
+        restoredAt,
+        restoredBy: actorEmail || primaryAccountEmail,
+      },
+    })
+    .eq('id', projectId);
+  if (error) throw error;
+
+  await persistAuditLog({
+    projectId,
+    actor,
+    action: 'project_restored',
+    draft,
+    preview,
+    settings: null,
+    eventId: randomUUID(),
+    createdAt: restoredAt,
+  });
+
+  return {
+    source: candidate.source,
+    environments: Array.isArray(draft?.ambientes) ? draft.ambientes.length : (preview?.environments || []).length,
+    restoredAt,
+  };
+}
+
+async function findBestRestoreCandidate(projectId, currentProject) {
+  const candidates = [];
+  const currentSnapshot = {
+    draft: currentProject?.data?.draft || null,
+    preview: currentProject?.data?.preview || null,
+  };
+  addRestoreCandidate(candidates, {
+    source: 'current_project',
+    id: projectId,
+    createdAt: currentProject?.data?.lastEventAt || '',
+    snapshot: currentSnapshot,
+  });
+
+  const { data: logs, error: logsError } = await supabaseServer
+    .from('editor_audit_logs')
+    .select('id, event_id, action, payload, created_at')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (logsError) throw logsError;
+  (logs || []).forEach((log) => {
+    const snapshot = restoreSnapshotFromAuditPayload(log.payload);
+    addRestoreCandidate(candidates, {
+      source: `audit:${log.action || 'editor'}`,
+      id: log.id || log.event_id || '',
+      createdAt: log.created_at || '',
+      snapshot,
+    });
+  });
+
+  const { data: versions, error: versionsError } = await supabaseServer
+    .from('document_html_versions')
+    .select('id, html_content, created_at')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (versionsError) throw versionsError;
+  (versions || []).forEach((version) => {
+    const preview = extractPreviewFromHtmlContent(version.html_content || '');
+    if (!preview) return;
+    addRestoreCandidate(candidates, {
+      source: 'html_version',
+      id: version.id || '',
+      createdAt: version.created_at || '',
+      snapshot: {
+        draft: draftFromPreview(preview, currentProject?.data?.draft || null),
+        preview,
+      },
+    });
+  });
+
+  return candidates
+    .filter(candidate => candidate.score > 0)
+    .sort((a, b) => b.score - a.score || dateScore(b.createdAt) - dateScore(a.createdAt))[0] || null;
+}
+
+function addRestoreCandidate(candidates, candidate) {
+  const snapshot = candidate?.snapshot || {};
+  const score = scoreProjectSnapshot(snapshot);
+  if (!score) return;
+  candidates.push({ ...candidate, score });
+}
+
+function dateScore(value) {
+  const time = Date.parse(value || '');
+  return Number.isFinite(time) ? time : 0;
+}
+
+function restoreSnapshotFromAuditPayload(payload = {}) {
+  const snapshot = payload?.snapshot || {};
+  return {
+    draft: snapshot.draft || null,
+    preview: snapshot.preview || null,
+  };
+}
+
+function extractPreviewFromHtmlContent(html = '') {
+  const match = String(html || '').match(/window\.__DCORATTO_PORTFOLIO_DOCUMENT__\s*=\s*([\s\S]*?);\s*window\.__DCORATTO_CLIENT_VIEW__/);
+  if (!match?.[1]) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function draftFromPreview(preview, previousDraft = null) {
+  if (!Array.isArray(preview?.environments) || !preview.environments.length) return previousDraft || null;
+  const ambientes = preview.environments.map((environment, index) => {
+    const id = slugify(`${environment.title || 'ambiente'}-${index + 1}`) || `ambiente-${index + 1}`;
+    const photos = Array.isArray(environment.photos) && environment.photos.length
+      ? environment.photos.map(photo => ({ label: photo.label || photo.title || '', src: photo.src || '' })).filter(photo => photo.src)
+      : [];
+    return {
+      id,
+      name: environment.title || `Ambiente ${index + 1}`,
+      img: photos[0]?.src || '',
+      photos,
+      layout: environment.layout || 'balanced',
+      pages: Array.isArray(environment.pages) ? environment.pages : [],
+    };
+  });
+  const state = {};
+  ambientes.forEach((amb, index) => {
+    const environment = preview.environments[index] || {};
+    state[amb.id] = {
+      tampon: splitSpecValue(environment.specs?.tamponamentos),
+      porta: splitSpecValue(environment.specs?.portas),
+      puxador: splitSpecValue(environment.specs?.puxadores),
+      corredica: splitSpecValue(environment.specs?.corredicas),
+      cores: Array.isArray(environment.colors) ? environment.colors : [],
+      obs: Array.isArray(environment.notes) ? environment.notes : [],
+      obsExtra: '',
+    };
+  });
+  return {
+    fields: {
+      clientName: preview.client?.name || '',
+      contractNum: preview.client?.contractNumber || '',
+      endereco: preview.client?.address || '',
+      factories: Array.isArray(previousDraft?.fields?.factories) ? previousDraft.fields.factories : [],
+    },
+    ambientes,
+    state,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function splitSpecValue(value = '') {
+  return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+}
+
+function scoreProjectSnapshot(snapshot = {}) {
+  return scoreDraft(snapshot.draft) + scorePreview(snapshot.preview);
+}
+
+function scoreDraft(draft = {}) {
+  const environments = Array.isArray(draft?.ambientes) ? draft.ambientes : [];
+  const stateValues = Object.values(draft?.state || {});
+  return environments.reduce((total, environment) => {
+    const pages = Array.isArray(environment.pages) ? environment.pages : [];
+    const photos = Array.isArray(environment.photos) ? environment.photos : [];
+    return total + 10 + photos.length + pages.reduce((pageTotal, page) => {
+      const frames = Array.isArray(page.frames) ? page.frames : [];
+      const annotations = Array.isArray(page.annotations) ? page.annotations : [];
+      const freeElements = Array.isArray(page.freeElements) ? page.freeElements : [];
+      return pageTotal + 5 + frames.length * 3 + annotations.length + freeElements.length;
+    }, 0);
+  }, 0) + stateValues.reduce((total, item) => {
+    return total
+      + (Array.isArray(item?.cores) ? item.cores.length : 0)
+      + (Array.isArray(item?.tampon) ? item.tampon.length : 0)
+      + (Array.isArray(item?.porta) ? item.porta.length : 0)
+      + (Array.isArray(item?.puxador) ? item.puxador.length : 0)
+      + (Array.isArray(item?.corredica) ? item.corredica.length : 0)
+      + (Array.isArray(item?.obs) ? item.obs.length : 0)
+      + (item?.obsExtra ? 1 : 0);
+  }, 0);
+}
+
+function scorePreview(preview = {}) {
+  const environments = Array.isArray(preview?.environments) ? preview.environments : [];
+  return environments.reduce((total, environment) => {
+    const pages = Array.isArray(environment.pages) ? environment.pages : [];
+    const photos = Array.isArray(environment.photos) ? environment.photos : [];
+    const colors = Array.isArray(environment.colors) ? environment.colors : [];
+    const notes = Array.isArray(environment.notes) ? environment.notes : [];
+    return total + 10 + photos.length + colors.length + notes.length + pages.reduce((pageTotal, page) => {
+      const frames = Array.isArray(page.frames) ? page.frames : [];
+      const annotations = Array.isArray(page.annotations) ? page.annotations : [];
+      const freeElements = Array.isArray(page.freeElements) ? page.freeElements : [];
+      return pageTotal + 5 + frames.length * 3 + annotations.length + freeElements.length;
+    }, 0);
+  }, 0);
 }
 
 async function loadSharedEditorSettings() {
@@ -2065,9 +2449,9 @@ function isDeletedForUser(project, actorEmail) {
 }
 
 async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt }) {
-  const client = preview.client || {};
+  let client = preview.client || {};
   const actorEmail = normalizeEmail(actor?.email);
-  const projectFactories = Array.isArray(client.manufacturers) && client.manufacturers.length
+  let projectFactories = Array.isArray(client.manufacturers) && client.manufacturers.length
     ? client.manufacturers
     : (Array.isArray(draft?.fields?.factories) ? draft.fields.factories : []);
   const existingProject = await loadProjectForWrite(projectId);
@@ -2077,6 +2461,18 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
   if (existingProject && !canAccessPrivateProject(existingProject, actorEmail)) {
     throw new Error('forbidden_project_access');
   }
+  const protectedDocument = protectAgainstImplicitContentLoss({
+    existingProject,
+    action: 'generate_project_initial',
+    draft,
+    preview,
+  });
+  draft = protectedDocument.draft;
+  preview = protectedDocument.preview;
+  client = preview?.client || client || {};
+  projectFactories = Array.isArray(client.manufacturers) && client.manufacturers.length
+    ? client.manufacturers
+    : (Array.isArray(draft?.fields?.factories) ? draft.fields.factories : projectFactories);
   const createdBy = normalizeEmail(existingProject?.created_by) || actorEmail;
   const assignedToEmail = normalizeEmail(existingProject?.assigned_to_email) || actorEmail;
 
@@ -2297,6 +2693,19 @@ function sortAppUsers(a, b) {
 
 function canManageAppUsers(actorEmail) {
   return isAdminEmail(actorEmail);
+}
+
+async function canRestoreProjects(actorEmail) {
+  const email = normalizeEmail(actorEmail);
+  if (isAdminEmail(email)) return true;
+  if (!email || !supabaseServer) return false;
+  const { data, error } = await supabaseServer
+    .from('app_users')
+    .select('role, active')
+    .eq('email', email)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.active !== false && ['owner', 'admin'].includes(String(data?.role || '').toLowerCase());
 }
 
 function normalizeAppUserRole(role) {

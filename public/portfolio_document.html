@@ -2067,11 +2067,11 @@
         updateHistoryControls();
       }
 
-      function postPortfolioSync() {
+      function postPortfolioSync(action = 'portfolio_sync') {
         if (window.parent === window) return;
         window.parent.postMessage({
           type: 'dcoratto:editor-state',
-          action: 'portfolio_sync',
+          action,
           preview: documentData,
           sentAt: new Date().toISOString(),
         }, window.location.origin);
@@ -2087,7 +2087,7 @@
           arrowDrawMode = null;
           lastHistorySnapshot = serializeDocumentData();
           safePersistDocument();
-          postPortfolioSync();
+          postPortfolioSync('portfolio_history_restore');
           renderDocument();
         } catch (error) {
           console.warn('Nao foi possivel restaurar o historico do documento.', error);
@@ -2294,8 +2294,9 @@
             event.stopPropagation();
             const frame = pageFrame(Number(button.dataset.environmentIndex), Number(button.dataset.pageIndex), Number(button.dataset.frameIndex));
             if (!frame) return;
+            if (!confirm('Excluir esta moldura?')) return;
             selectSingleFrame(frameKey(button.dataset.environmentIndex, button.dataset.pageIndex, button.dataset.frameIndex));
-            deleteSelectedFrames();
+            deleteSelectedFrames('portfolio_delete');
           });
         });
 
@@ -3001,7 +3002,7 @@
         });
       }
 
-      function deleteSelectedFrames() {
+      function deleteSelectedFrames(action = 'portfolio_delete') {
         const grouped = new Map();
         selectedFrameKeys.forEach((key) => {
           const [environmentIndex, pageIndex, frameIndex] = key.split(':').map(Number);
@@ -3016,7 +3017,7 @@
           indexes.sort((a, b) => b - a).forEach((index) => page.frames.splice(index, 1));
         });
         selectedFrameKeys.clear();
-        persistAndRender();
+        persistAndRender(action);
       }
 
       function deleteSelectedPageAnnotations() {
@@ -3054,14 +3055,15 @@
       }
 
       function deleteSelectedElements() {
-        if (selectedFrameKeys.size) deleteSelectedFrames();
+        if (!confirm('Excluir o(s) elemento(s) selecionado(s)?')) return;
+        if (selectedFrameKeys.size) deleteSelectedFrames('portfolio_delete');
         else if (selectedFreeElementKeys.size) {
           deleteSelectedFreeElements();
-          persistAndRender();
+          persistAndRender('portfolio_delete');
         }
         else {
           deleteSelectedPageAnnotations();
-          persistAndRender();
+          persistAndRender('portfolio_delete');
         }
       }
 
@@ -5140,17 +5142,17 @@
           || (title.includes('imagem do ambiente') && src.startsWith('data:image/svg+xml'));
       }
 
-      function persistAndRender() {
+      function persistAndRender(action = 'portfolio_sync') {
         safePersistDocument();
         rememberDocumentHistory();
-        postPortfolioSync();
+        postPortfolioSync(action);
         renderDocument();
       }
 
-      function persistWithoutRender() {
+      function persistWithoutRender(action = 'portfolio_sync') {
         safePersistDocument();
         rememberDocumentHistory();
-        postPortfolioSync();
+        postPortfolioSync(action);
       }
 
       function safePersistDocument() {

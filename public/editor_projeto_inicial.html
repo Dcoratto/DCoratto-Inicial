@@ -1465,6 +1465,7 @@ async function loadProjectHistory(folder = 'active') {
     const params = new URLSearchParams();
     if (editorActor?.email) params.set('actor', editorActor.email);
     params.set('folder', folder);
+    if (canAdminRestoreProjects()) params.set('includeDeleted', 'true');
     const response = await fetch(`/api/projects?${params.toString()}`, { cache: 'no-store' });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result?.error || 'Não foi possível carregar projetos');
@@ -1533,6 +1534,7 @@ function renderProjectHistory() {
       item.designerName,
       item.designerEmail,
       item.status,
+      item.deletedAt ? 'excluido' : '',
     ].some(value => normalizeSearchText(value).includes(query));
   });
 
@@ -1554,6 +1556,9 @@ function renderProjectHistory() {
   historyList.innerHTML = projects.map(item => {
     const locked = item.status === 'sold';
     const dateValue = item.draftSavedAt || item.updatedAt;
+    const restoreButton = canAdminRestoreProjects()
+      ? `<button class="history-action" type="button" onclick="restoreProjectFromHistory('${escapeJS(item.id)}')">Restaurar</button>`
+      : '';
     return `
       <div class="history-item">
         <div class="history-info">
@@ -1561,15 +1566,21 @@ function renderProjectHistory() {
           <p>Contrato: ${escapeHTML(item.contractNumber || 'Sem número')}</p>
           <p>Endereço: ${escapeHTML(item.address || 'Sem endereço')}</p>
           <p>Projetista: ${escapeHTML(item.designerName || 'Não informado')}</p>
-          <p>Status: ${locked ? 'Vendido' : item.isDraft ? 'Rascunho' : 'Ativo'}</p>
+          <p>Status: ${item.deletedAt ? 'Excluído' : locked ? 'Vendido' : item.isDraft ? 'Rascunho' : 'Ativo'}</p>
           <div class="history-date">${dateValue ? `${new Date(dateValue).toLocaleDateString('pt-BR')} às ${new Date(dateValue).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}` : 'Sem data'}</div>
         </div>
         <div class="history-actions">
           <button class="history-action" type="button" onclick="editProjectFromHistory('${escapeJS(item.id)}')">${locked ? 'Visualizar' : 'Editar Projeto'}</button>
+          ${restoreButton}
         </div>
       </div>
     `;
   }).join('');
+}
+
+function canAdminRestoreProjects() {
+  const role = String(editorActor?.role || '').toLowerCase();
+  return Boolean(editorActor?.isPrimary || role === 'owner' || role === 'admin');
 }
 
 function normalizeSearchText(value) {
@@ -1583,6 +1594,26 @@ function editProjectFromHistory(projectId) {
   if (!projectId) return;
   window.parent?.postMessage({ type: 'dcoratto:load-project', projectId }, window.location.origin);
   closeClientHistory();
+}
+
+async function restoreProjectFromHistory(projectId) {
+  if (!projectId || !canAdminRestoreProjects()) return;
+  if (!confirm('Restaurar a melhor versão salva deste projeto?')) return;
+  const historyList = document.getElementById('historyList');
+  try {
+    const response = await fetch('/api/project-restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, actor: editorActor }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result?.error || 'Não foi possível restaurar o projeto.');
+    alert(`Projeto restaurado com ${result.environments || 0} ambiente(s).`);
+    window.parent?.postMessage({ type: 'dcoratto:load-project', projectId }, window.location.origin);
+    closeClientHistory();
+  } catch (error) {
+    if (historyList) historyList.innerHTML = `<div class="history-empty">Erro ao restaurar projeto: ${escapeHTML(String(error?.message || error))}</div>`;
+  }
 }
 
 function copyLinkToClipboard(url) {
@@ -2182,11 +2213,11 @@ function addEnvironment() {
 
 function removeEnvironment(ambId) {
   const amb = AMBIENTES.find(item => item.id === ambId);
-  if (!amb || !confirm(`Remover o ambiente "${amb.name}" deste projeto?`)) return;
+  if (!amb || !confirm(`Excluir o ambiente "${amb.name}" deste projeto? Esta ação remove o ambiente e seus elementos.`)) return;
   AMBIENTES = AMBIENTES.filter(item => item.id !== ambId);
   delete state[ambId];
   renderAmbientes();
-  syncPreviewDocument();
+  syncPreviewDocument('environment_deleted');
 }
 
 function renameEnvironment(ambId, value) {
@@ -2210,7 +2241,7 @@ function renderCard(amb) {
         <div class="amb-summary" id="summary-${amb.id}">Clique para configurar</div>
       </div>
       <div class="amb-actions">
-        <button class="amb-remove" type="button" onclick="event.stopPropagation();removeEnvironment('${escapeJS(amb.id)}')">Remover</button>
+        <button class="amb-remove" type="button" onclick="event.stopPropagation();removeEnvironment('${escapeJS(amb.id)}')">Excluir</button>
         <span class="amb-toggle">▾</span>
       </div>
     </div>
@@ -2264,7 +2295,7 @@ function renderCard(amb) {
           ${coverPhotos.map((photo, photoIndex) => `
             <div class="cover-photo-card">
               <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.label || amb.name)}">
-              ${coverPhotos.length > 1 ? `<button type="button" onclick="removeCoverPhoto('${escapeJS(amb.id)}',${photoIndex})">Remover</button>` : ''}
+              ${coverPhotos.length > 1 ? `<button type="button" onclick="removeCoverPhoto('${escapeJS(amb.id)}',${photoIndex})">Excluir</button>` : ''}
               <input type="text" value="${escapeAttribute(photo.label || '')}" placeholder="Rótulo opcional" oninput="updateCoverPhotoLabel('${escapeJS(amb.id)}',${photoIndex},this.value)">
             </div>
           `).join('')}
@@ -2317,12 +2348,13 @@ async function handleCoverPhotosUpload(ambId, input) {
 function removeCoverPhoto(ambId, photoIndex) {
   const amb = AMBIENTES.find(item => item.id === ambId);
   if (!amb) return;
+  if (!confirm('Excluir esta foto da capa do ambiente?')) return;
   const photos = environmentCoverPhotos(amb).filter((_, index) => index !== photoIndex);
   amb.photos = photos.length ? photos : [{ label: '', src: DEFAULT_AMBIENTE_IMG }];
   amb.img = amb.photos[0]?.src || DEFAULT_AMBIENTE_IMG;
   amb.layout = coverLayoutForCount(amb.photos.length);
   renderAmbientes();
-  syncPreviewDocument('environment_cover_photo_removed');
+  syncPreviewDocument('environment_cover_photo_deleted');
 }
 
 function updateCoverPhotoLabel(ambId, photoIndex, value) {
@@ -2512,17 +2544,19 @@ function addObservation(ambId) {
   const text = prompt('Nova observação do projeto:');
   const value = (text || '').trim();
   if (!value) return;
-  if (!editorSettings.observations.includes(value)) {
+  const shouldSaveSettings = !editorSettings.observations.includes(value);
+  if (shouldSaveSettings) {
     editorSettings.observations.push(value);
-    saveEditorSettings();
   }
   const applyAll = confirm('Aplicar esta observação em todos os ambientes? OK = todos, Cancelar = apenas este ambiente.');
   const targetIds = applyAll ? AMBIENTES.map(a => a.id) : [ambId];
   targetIds.forEach(id => {
-    if (!state[id].obs.includes(value)) state[id].obs.push(value);
+    const envState = ensureEnvironmentState(id);
+    if (!envState.obs.includes(value)) envState.obs.push(value);
   });
   rerenderObservations();
-  syncPreviewDocument();
+  syncPreviewDocument('observation_added');
+  if (shouldSaveSettings) saveEditorSettings();
 }
 
 function editObservation(ambId, idx) {
@@ -2532,14 +2566,15 @@ function editObservation(ambId, idx) {
   if (!newValue || newValue === oldValue) return;
   const applyAll = confirm('Aplicar esta edição nos ambientes que usam esta observação? OK = todos, Cancelar = apenas este ambiente.');
   editorSettings.observations[idx] = newValue;
-  saveEditorSettings();
   const targetIds = applyAll ? AMBIENTES.map(a => a.id) : [ambId];
   targetIds.forEach(id => {
-    const position = state[id].obs.indexOf(oldValue);
-    if (position > -1) state[id].obs[position] = newValue;
+    const envState = ensureEnvironmentState(id);
+    const position = envState.obs.indexOf(oldValue);
+    if (position > -1) envState.obs[position] = newValue;
   });
   rerenderObservations();
-  syncPreviewDocument();
+  syncPreviewDocument('observation_edited');
+  saveEditorSettings();
 }
 
 function updateSummary(ambId) {
@@ -2575,11 +2610,12 @@ function normalizedEnvironmentPages(amb) {
     description: page.description || '',
     annotations: Array.isArray(page.annotations) ? page.annotations : [],
     frames: normalizedPageFrames(page),
+    freeElements: Array.isArray(page.freeElements) ? page.freeElements : [],
     photos: normalizedPageFrames(page).filter(frame => frame.photo).map((frame, frameIndex) => ({
       title: frame.title || `${page.title || `Página ${index + 1}`} - Moldura ${frameIndex + 1}`,
       src: frame.photo,
     })),
-    hasData: Boolean(page.title || page.description || (page.annotations || []).length || normalizedPageFrames(page).some(frame => frame.photo)),
+    hasData: Boolean(page.title || page.description || (page.annotations || []).length || (page.freeElements || []).length || normalizedPageFrames(page).some(frame => frame.photo)),
   })).filter(page => page.hasData);
 }
 
@@ -2780,10 +2816,10 @@ function addPageFrame(ambId, pageId) {
 
 function removePageFrame(ambId, pageId, frameId) {
   const page = environmentPages(ambId).find(item => item.id === pageId);
-  if (!page || !confirm('Remover esta moldura da página?')) return;
+  if (!page || !confirm('Excluir esta moldura da página?')) return;
   page.frames = ensurePageFrames(page).filter(frame => frame.id !== frameId);
   renderAmbientes();
-  syncPreviewDocument('environment_page_frame_removed');
+  syncPreviewDocument('environment_page_frame_deleted');
 }
 
 function updatePageFrame(ambId, pageId, frameId, field, value) {
@@ -2830,9 +2866,10 @@ function removeFrameAnnotation(ambId, pageId, frameId, annotationId) {
   const page = environmentPages(ambId).find(item => item.id === pageId);
   const frame = ensurePageFrames(page).find(item => item.id === frameId);
   if (!frame) return;
+  if (!confirm('Excluir esta seta da moldura?')) return;
   frame.annotations = frame.annotations.filter(annotation => annotation.id !== annotationId);
   renderAmbientes();
-  syncPreviewDocument('environment_page_annotation_removed');
+  syncPreviewDocument('environment_page_annotation_deleted');
 }
 
 function updateFrameAnnotation(ambId, pageId, frameId, annotationId, field, value) {
@@ -2907,7 +2944,7 @@ function renderPageFrames(ambId, page) {
           <div class="frame-head">
             <span class="frame-title">Moldura ${String(frameIndex + 1).padStart(2, '0')}</span>
             <div class="amb-actions">
-              <button class="amb-remove" type="button" onclick="removePageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}')">Remover moldura</button>
+              <button class="amb-remove" type="button" onclick="removePageFrame('${escapeJS(ambId)}','${escapeJS(page.id)}','${escapeJS(frame.id)}')">Excluir moldura</button>
             </div>
           </div>
           <div class="page-fields">
@@ -2945,10 +2982,10 @@ function renderPageFrames(ambId, page) {
 
 function removeEnvironmentPage(ambId, pageId) {
   const amb = AMBIENTES.find(item => item.id === ambId);
-  if (!amb || !confirm('Remover esta página do ambiente?')) return;
+  if (!amb || !confirm('Excluir esta página do ambiente?')) return;
   amb.pages = environmentPages(ambId).filter(page => page.id !== pageId);
   renderAmbientes();
-  syncPreviewDocument('environment_page_removed');
+  syncPreviewDocument('environment_page_deleted');
 }
 
 function updateEnvironmentPage(ambId, pageId, field, value) {
@@ -2982,7 +3019,7 @@ function renderEnvironmentPages(amb) {
           <div class="page-card">
             <div class="page-card-head">
               <span class="page-card-title">Página ${String(index + 1).padStart(2, '0')}</span>
-              <button class="amb-remove" type="button" onclick="removeEnvironmentPage('${escapeJS(amb.id)}','${escapeJS(page.id)}')">Remover página</button>
+              <button class="amb-remove" type="button" onclick="removeEnvironmentPage('${escapeJS(amb.id)}','${escapeJS(page.id)}')">Excluir página</button>
             </div>
             <div class="page-fields">
               <div class="field-group">
@@ -3013,10 +3050,10 @@ window.addEventListener('message', event => {
     if (!event.data.ok) alert(`Não foi possível carregar o projeto: ${event.data.error || 'erro desconhecido'}`);
     return;
   }
-  if (event.data?.type === 'dcoratto:editor-state' && event.data?.action === 'portfolio_sync') {
+  if (event.data?.type === 'dcoratto:editor-state' && String(event.data?.action || '').startsWith('portfolio_')) {
     mergePreviewDocument(event.data.preview);
     const draft = saveBuilderDraft();
-    postEditorEvent('portfolio_sync', { draft, preview: event.data.preview });
+    postEditorEvent(event.data.action || 'portfolio_sync', { draft, preview: event.data.preview });
     return;
   }
   if (event.data?.type === 'dcoratto:client-link') {
@@ -3199,6 +3236,7 @@ function mergePreviewDocument(preview) {
         title: page.title || '',
         description: page.description || '',
         annotations: Array.isArray(page.annotations) ? page.annotations : [],
+        freeElements: Array.isArray(page.freeElements) ? page.freeElements : [],
         frames: Array.isArray(page.frames) ? page.frames.map(frame => ({
           id: frame.id || `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
           title: frame.title || 'Moldura',

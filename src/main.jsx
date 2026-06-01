@@ -32,7 +32,7 @@ function App() {
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-06-01-empty-filter-defaults-v1";
+  const SYSTEM_VERSION = "2026-06-01-observation-restore-guard-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
@@ -202,6 +202,17 @@ function App() {
 
       const { action, draft, preview, settings, settingsMutation } = event.data;
       if (settings) setRemoteSettings(settings);
+      if (draft || preview) {
+        setRemoteDocument((previous) => ({
+          ...(previous || {}),
+          projectId: previous?.projectId || getActiveProjectId(actor),
+          status: previous?.status || 'draft',
+          draft: draft || previous?.draft || null,
+          preview: preview || previous?.preview || null,
+          settings: settings || previous?.settings || remoteSettings || null,
+          updatedAt: event.data.sentAt || new Date().toISOString(),
+        }));
+      }
 
       const payload = {
         action,
@@ -300,7 +311,7 @@ function App() {
     };
   }, [isLogged, actor, remoteSettings]);
 
-  function sendStateToEditor() {
+  function sendSessionAndSettingsToEditor() {
     iframeRef.current?.contentWindow?.postMessage({
       type: 'dcoratto:session',
       actor,
@@ -311,6 +322,10 @@ function App() {
         settings: remoteSettings,
       }, window.location.origin);
     }
+  }
+
+  function sendStateToEditor() {
+    sendSessionAndSettingsToEditor();
     iframeRef.current?.contentWindow?.postMessage({
       type: 'dcoratto:hydrate-document',
       draft: remoteDocument?.draft || null,
@@ -323,7 +338,11 @@ function App() {
 
   useEffect(() => {
     if (isLogged && !isBootstrapping) sendStateToEditor();
-  }, [isLogged, isBootstrapping, remoteSettings, remoteDocument]);
+  }, [isLogged, isBootstrapping, remoteDocument?.projectId, remoteDocument?.status]);
+
+  useEffect(() => {
+    if (isLogged && !isBootstrapping) sendSessionAndSettingsToEditor();
+  }, [isLogged, isBootstrapping, remoteSettings]);
 
   if (!isLogged) {
     return <Login onLoginSuccess={(user) => {
