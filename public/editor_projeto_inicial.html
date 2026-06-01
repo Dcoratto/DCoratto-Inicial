@@ -352,7 +352,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
     <div><label>Fábrica</label><select data-catalog-filter="factory"></select></div>
     <div><label>Linha</label><select data-catalog-filter="line"></select></div>
     <div><label>Qualidade</label><select data-catalog-filter="quality"></select></div>
-    <div><label>Busca</label><input type="search" data-catalog-filter="search" placeholder="Nome ou código"></div>
+    <div><label>Busca</label><input type="search" name="dcoratto_builder_catalog_filter_search" data-catalog-filter="search" placeholder="Nome ou código" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other"></div>
     <button class="ghost-btn" type="button" onclick="clearCatalogFilters()">Limpar</button>
   </div>
   <div class="amb-grid" id="ambGrid"></div>
@@ -449,7 +449,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
           <div><label>Fábrica</label><select data-catalog-filter="factory"></select></div>
           <div><label>Linha</label><select data-catalog-filter="line"></select></div>
           <div><label>Qualidade</label><select data-catalog-filter="quality"></select></div>
-          <div><label>Busca</label><input type="search" data-catalog-filter="search" placeholder="Nome ou código"></div>
+          <div><label>Busca</label><input type="search" name="dcoratto_settings_catalog_filter_search" data-catalog-filter="search" placeholder="Nome ou código" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other"></div>
           <button class="ghost-btn" type="button" onclick="clearCatalogFilters()">Limpar</button>
         </div>
         <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>
@@ -520,7 +520,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
         <button class="history-tab" type="button" data-history-folder="links" onclick="setHistoryFolder('links')">Links</button>
       </div>
       <div class="history-filter">
-        <input type="search" id="historySearch" placeholder="Buscar por cliente, contrato ou projetista" oninput="renderClientHistory()">
+        <input type="search" id="historySearch" name="dcoratto_history_filter_search" placeholder="Buscar por cliente, contrato ou projetista" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" oninput="renderClientHistory()">
       </div>
       <div class="history-list" id="historyList">
         <div class="history-empty">Carregando...</div>
@@ -876,6 +876,42 @@ function renderCatalogFilters() {
     } else {
       control.value = catalogFilters[field] || '';
     }
+  });
+}
+
+function resetFilterDefaults() {
+  catalogFilters = { category: '', factory: '', line: '', quality: '', search: '' };
+  catalogVisibleItems = null;
+  document.querySelectorAll('[data-catalog-filter]').forEach(control => {
+    control.value = '';
+  });
+  const historySearch = document.getElementById('historySearch');
+  if (historySearch) historySearch.value = '';
+}
+
+function lockFilterAutocompleteDefaults() {
+  const targets = document.querySelectorAll('[data-catalog-filter], #historySearch');
+  targets.forEach((control, index) => {
+    control.setAttribute('autocomplete', 'off');
+    control.setAttribute('autocapitalize', 'none');
+    control.setAttribute('autocorrect', 'off');
+    control.setAttribute('spellcheck', 'false');
+    control.setAttribute('data-lpignore', 'true');
+    control.setAttribute('data-1p-ignore', 'true');
+    control.setAttribute('data-form-type', 'other');
+    if (!control.name) control.name = `dcoratto_filter_${index}`;
+  });
+}
+
+function initializeEmptyFilters() {
+  lockFilterAutocompleteDefaults();
+  resetFilterDefaults();
+  renderCatalogFilters();
+  [80, 400, 1000].forEach(delay => {
+    window.setTimeout(() => {
+      resetFilterDefaults();
+      renderCatalogFilters();
+    }, delay);
   });
 }
 
@@ -1379,8 +1415,13 @@ async function deleteEmployee(email) {
 
 function openClientHistory() {
   document.getElementById('historyOverlay').classList.add('active');
+  lockFilterAutocompleteDefaults();
   const search = document.getElementById('historySearch');
   if (search) search.value = '';
+  window.setTimeout(() => {
+    const historySearch = document.getElementById('historySearch');
+    if (historySearch) historySearch.value = '';
+  }, 80);
   loadHistoryPanel();
 }
 
@@ -2297,6 +2338,7 @@ applyEditorSettings();
 pruneUnavailableColors();
 if (!builderDraft) saveBuilderDraft();
 renderAmbientes();
+initializeEmptyFilters();
 
 function handleFactoryChange() {
   const factories = selectedFactories();

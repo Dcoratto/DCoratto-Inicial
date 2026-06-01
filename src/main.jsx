@@ -32,7 +32,7 @@ function App() {
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-06-01-remote-shared-catalog-sync-v1";
+  const SYSTEM_VERSION = "2026-06-01-empty-filter-defaults-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
