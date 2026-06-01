@@ -4954,7 +4954,6 @@
             <div class="frame-clip">
               ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" draggable="false" data-photo-src="${escapeAttribute(frame.photo)}" data-editable-frame-image style="${imageStyle}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
               ${isEditablePreview ? '<span class="drop-hint">Solte a foto aqui</span>' : ''}
-              <span class="doc-frame-title">${String(frameIndex + 1).padStart(2, '0')} · ${escapeHTML(frame.title || 'Moldura')}</span>
             </div>
             ${isEditablePreview ? `
               <span class="frame-selection-toolbar">
