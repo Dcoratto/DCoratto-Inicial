@@ -242,6 +242,14 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
 .option-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .option-row button{border:1px solid rgba(184,151,106,.36);background:rgba(0,0,0,.2);color:#e7d3b5;padding:6px 10px;border-radius:3px;cursor:pointer;font-size:11px;letter-spacing:.08em;transition:all .2s}
 .option-row button:hover{border-color:var(--gold);color:var(--gold);background:rgba(184,151,106,.08)}
+.factory-card{grid-column:1/-1}
+.factory-form{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:12px;align-items:end}
+.factory-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+.factory-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.factory-row{display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(184,151,106,.28);background:rgba(0,0,0,.2);border-radius:3px;padding:8px}
+.factory-row strong{color:var(--cream);font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase}
+.factory-row button{border:1px solid rgba(184,151,106,.36);background:rgba(0,0,0,.18);color:#e7d3b5;padding:6px 9px;border-radius:3px;cursor:pointer;font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+.factory-row button:hover{border-color:var(--gold);color:var(--gold)}
 .employees-card{grid-column:1/-1}
 .employee-form{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr)) auto;gap:12px;align-items:end}
 .employee-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end}
@@ -266,7 +274,9 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
   .settings-head h2{font-size:26px}
   .settings-body{grid-template-columns:1fr;padding:16px;gap:14px}
   .catalog-card,.technical-card{grid-column:1}
-  .catalog-form,.option-form,.employee-form,.catalog-filter-bar,.catalog-filter-bar.compact{grid-template-columns:1fr}
+  .catalog-form,.option-form,.factory-form,.employee-form,.catalog-filter-bar,.catalog-filter-bar.compact{grid-template-columns:1fr}
+  .factory-actions{justify-content:stretch}
+  .factory-actions .hbtn,.factory-actions .ghost-btn{width:100%}
   .employee-row{grid-template-columns:1fr}
   .employee-actions,.employee-row-actions{justify-content:stretch}
   .employee-actions .hbtn,.employee-actions .ghost-btn,.employee-row-actions button{width:100%}
@@ -323,10 +333,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
     </div>
     <div class="field-group">
       <label>Fabricante / Promob</label>
-      <div class="factory-checks" id="fabricante">
-        <label class="factory-check"><input type="checkbox" value="VITTA" checked onchange="handleFactoryChange()"> Vitta</label>
-        <label class="factory-check"><input type="checkbox" value="BOA VISTA" checked onchange="handleFactoryChange()"> Boa Vista</label>
-      </div>
+      <div class="factory-checks" id="fabricante"></div>
     </div>
     <div class="field-group" style="grid-column:1/-1">
       <label>Endereço da Obra</label>
@@ -395,6 +402,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
             <label>Tipo</label>
             <select id="catalogType">
               <option value="color">Cor / Material</option>
+              <option value="tampon">Tamponamento</option>
               <option value="handle">Puxador</option>
               <option value="door">Porta</option>
               <option value="slide">Corrediça</option>
@@ -402,10 +410,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
           </div>
           <div class="field-group">
             <label>Fabricante</label>
-            <select id="catalogManufacturer">
-              <option value="BOA VISTA">Boa Vista</option>
-              <option value="VITTA">Vitta</option>
-            </select>
+            <select id="catalogManufacturer"></select>
           </div>
           <div class="field-group">
             <label>Linha</label>
@@ -446,6 +451,19 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
           <button class="ghost-btn" type="button" onclick="clearCatalogFilters()">Limpar</button>
         </div>
         <div class="catalog-list" id="manualCatalogList" style="margin-top:18px"></div>
+      </section>
+
+      <section class="settings-card factory-card">
+        <h3>Fábricas</h3>
+        <div class="factory-form">
+          <div class="field-group"><label>Nome da fábrica</label><input type="text" id="factoryName" placeholder="Ex: Nova Fábrica"></div>
+          <div class="factory-actions">
+            <button class="ghost-btn" type="button" id="cancelFactoryEditBtn" onclick="cancelFactoryEdit()" style="display:none">Cancelar</button>
+            <button class="hbtn" type="button" id="saveFactoryBtn" onclick="saveFactory()">Adicionar fábrica</button>
+          </div>
+        </div>
+        <p class="settings-note">As fábricas cadastradas aparecem para todos os colaboradores no projeto e nos catálogos.</p>
+        <div class="factory-list" id="factoryList"></div>
       </section>
 
       <section class="settings-card technical-card">
@@ -547,6 +565,7 @@ const DEFAULT_MATERIAL_OPTIONS = {
   puxador: ["CAVA 45°","GARD 256mm","PASSANTE","LISA PASSANTE","LISA PASSANTE COM FRISO","EMBUTIDO","PUXADOR J","PUXADOR L"],
   corredica: ["Telescópica","Invisível","Slow Motion","Toque","Push Open"],
 };
+const DEFAULT_FACTORIES = ['VITTA', 'BOA VISTA'];
 const DEFAULT_OBS_OPTIONS = [
   "Apenas Marcenaria considerado no Projeto",
   "Apenas Marcenaria e Metalons considerados no Projeto",
@@ -557,6 +576,7 @@ const DEFAULT_OBS_OPTIONS = [
 let editorSettings = loadEditorSettings();
 let builderDraft = loadBuilderDraft();
 let editingCatalogItemId = null;
+let editingFactoryName = '';
 let editingMaterialOption = null;
 let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
 let clientHistoryItems = [];
@@ -585,10 +605,26 @@ function normalizeMaterialOptions(options = {}, useDefaults = true) {
   }));
 }
 
+function normalizeFactoryName(value = '') {
+  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+function normalizeFactories(factories = [], catalogItems = []) {
+  const values = Array.isArray(factories) ? factories : [];
+  const normalized = values
+    .map(factory => normalizeFactoryName(typeof factory === 'string' ? factory : factory?.name))
+    .filter(Boolean);
+  const existingManufacturers = Array.isArray(factories) ? [] : (Array.isArray(catalogItems) ? catalogItems : [])
+    .map(item => normalizeFactoryName(item.manufacturer || item.factory))
+    .filter(Boolean);
+  return [...new Set([...DEFAULT_FACTORIES, ...normalized, ...existingManufacturers])];
+}
+
 function normalizeEditorSettings(settings = {}) {
   return {
     logo: settings.logo || DEFAULT_LOGO,
     catalogItems: preferAdminCatalogItems((settings.catalogItems || []).map(normalizeCatalogItem).filter(item => item?.name)),
+    factories: normalizeFactories(settings.factories, settings.catalogItems),
     materialOptions: normalizeMaterialOptions(settings.materialOptions),
     observations: Array.isArray(settings.observations) ? [...new Set(settings.observations)] : [...DEFAULT_OBS_OPTIONS],
   };
@@ -725,12 +761,16 @@ function mergeEditorSettings(current = {}, incoming = {}) {
     group,
     [...new Set([...(currentOptions[group] || []), ...(incomingOptions[group] || [])])],
   ]));
+  const catalogItems = mergeCatalogItems(current.catalogItems, incoming.catalogItems);
 
   return {
     ...current,
     ...incoming,
     logo: incoming.logo || current.logo || DEFAULT_LOGO,
-    catalogItems: mergeCatalogItems(current.catalogItems, incoming.catalogItems),
+    catalogItems,
+    factories: Array.isArray(incoming.factories)
+      ? normalizeFactories(incoming.factories, catalogItems)
+      : normalizeFactories(current.factories, catalogItems),
     observations: [...new Set([...(current.observations || []), ...(incoming.observations || [])])],
     materialOptions,
   };
@@ -894,12 +934,139 @@ async function loadFilteredCatalogFromServer() {
   catalogVisibleItems = Array.isArray(result.items) ? result.items.map(normalizeCatalogItem) : [];
 }
 
+function factoryOptionsForProject() {
+  const draftFactories = Array.isArray(builderDraft?.fields?.factories) ? builderDraft.fields.factories : [];
+  const checkedFactories = Array.from(document.querySelectorAll('#fabricante input[type="checkbox"]:checked')).map(input => input.value);
+  return normalizeFactories([
+    ...(editorSettings.factories || []),
+    ...draftFactories,
+    ...checkedFactories,
+  ], editorSettings.catalogItems || []);
+}
+
+function renderFactoryChecks(selectedValues = null) {
+  const container = document.getElementById('fabricante');
+  if (!container) return;
+  const previousSelected = selectedValues || Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
+  const selected = new Set(previousSelected.length ? previousSelected.map(normalizeFactoryName) : factoryOptionsForProject());
+  const factories = factoryOptionsForProject();
+  container.innerHTML = factories.map(factory => `
+    <label class="factory-check"><input type="checkbox" value="${escapeAttribute(factory)}" ${selected.has(factory) ? 'checked' : ''} onchange="handleFactoryChange()"> ${escapeHTML(factory)}</label>
+  `).join('');
+}
+
+function renderCatalogManufacturerOptions() {
+  const select = document.getElementById('catalogManufacturer');
+  if (!select) return;
+  const current = select.value || (editorSettings.factories || [])[0] || 'BOA VISTA';
+  const factories = normalizeFactories(editorSettings.factories || [], []);
+  select.innerHTML = factories.map(factory => `<option value="${escapeAttribute(factory)}">${escapeHTML(factory)}</option>`).join('');
+  setSelectValue(select, factories.includes(current) ? current : factories[0] || 'BOA VISTA');
+}
+
+function renderFactoryManager() {
+  renderCatalogManufacturerOptions();
+  renderFactoryChecks();
+  const list = document.getElementById('factoryList');
+  if (!list) return;
+  const factories = normalizeFactories(editorSettings.factories || [], []);
+  list.innerHTML = factories.map(factory => {
+    const isDefault = DEFAULT_FACTORIES.includes(factory);
+    return `
+      <div class="factory-row">
+        <strong>${escapeHTML(factory)}</strong>
+        ${isDefault ? '' : `<button type="button" onclick="startFactoryEdit('${escapeJS(factory)}')">Editar</button>`}
+        ${isDefault ? '' : `<button type="button" onclick="removeFactory('${escapeJS(factory)}')">Remover</button>`}
+      </div>
+    `;
+  }).join('');
+}
+
+function saveFactory() {
+  const input = document.getElementById('factoryName');
+  const value = normalizeFactoryName(input?.value || '');
+  if (!value) return;
+  const factories = normalizeFactories(editorSettings.factories || [], []);
+  let nextFactories = factories;
+  let mutation = { type: 'factory-upsert', name: value };
+  if (editingFactoryName) {
+    nextFactories = factories.map(factory => factory === editingFactoryName ? value : factory);
+    mutation = { type: 'factory-upsert', name: value, previousName: editingFactoryName };
+    const updatedAt = new Date().toISOString();
+    editorSettings.catalogItems = (editorSettings.catalogItems || []).map((item) => {
+      if (normalizeFactoryName(item.manufacturer || item.factory) !== editingFactoryName) return item;
+      const catalogKey = stableCatalogKey({
+        category: item.type || item.category,
+        factory: value,
+        line: item.line || item.lineName || item.line_name,
+        quality: item.quality || item.materialType,
+        name: item.name,
+      });
+      return {
+        ...item,
+        manufacturer: value,
+        factory: value,
+        catalogKey,
+        catalog_key: catalogKey,
+        updatedAt,
+      };
+    });
+    AMBIENTES.forEach(amb => {
+      const envState = ensureEnvironmentState(amb.id);
+      envState.cores = (envState.cores || []).map(color => color.manufacturer === editingFactoryName ? { ...color, manufacturer: value } : color);
+    });
+  } else {
+    nextFactories = [...factories, value];
+  }
+  editorSettings.factories = normalizeFactories(nextFactories, []);
+  cancelFactoryEdit();
+  saveEditorSettings(mutation);
+  applyEditorSettings();
+  pruneUnavailableColors();
+  renderAmbientes();
+  syncPreviewDocument();
+}
+
+function startFactoryEdit(factory) {
+  const normalized = normalizeFactoryName(factory);
+  if (!normalized || DEFAULT_FACTORIES.includes(normalized)) return;
+  editingFactoryName = normalized;
+  document.getElementById('factoryName').value = editingFactoryName;
+  document.getElementById('saveFactoryBtn').textContent = 'Salvar fábrica';
+  document.getElementById('cancelFactoryEditBtn').style.display = 'inline-flex';
+  document.getElementById('factoryName')?.focus();
+}
+
+function cancelFactoryEdit() {
+  editingFactoryName = '';
+  const input = document.getElementById('factoryName');
+  if (input) input.value = '';
+  const saveButton = document.getElementById('saveFactoryBtn');
+  if (saveButton) saveButton.textContent = 'Adicionar fábrica';
+  const cancelButton = document.getElementById('cancelFactoryEditBtn');
+  if (cancelButton) cancelButton.style.display = 'none';
+}
+
+function removeFactory(factory) {
+  const normalized = normalizeFactoryName(factory);
+  if (!normalized || DEFAULT_FACTORIES.includes(normalized)) return;
+  if (!confirm(`Remover a fábrica "${normalized}" da lista compartilhada? Projetos e itens existentes não serão apagados.`)) return;
+  if (editingFactoryName === normalized) cancelFactoryEdit();
+  editorSettings.factories = normalizeFactories(editorSettings.factories || [], []).filter(item => item !== normalized);
+  saveEditorSettings({ type: 'factory-delete', name: normalized });
+  applyEditorSettings();
+  pruneUnavailableColors();
+  renderAmbientes();
+  syncPreviewDocument();
+}
+
 function applyEditorSettings() {
   const logo = editorSettings.logo || DEFAULT_LOGO;
   document.getElementById('companyLogo').src = logo;
   document.getElementById('footerLogo').src = logo;
   const logoPreview = document.getElementById('settingsLogoPreview');
   if (logoPreview) logoPreview.src = logo;
+  renderFactoryManager();
   renderManualCatalogList();
   renderMaterialOptionList();
   renderCatalogFilters();
@@ -1616,6 +1783,7 @@ function renderManualCatalogList() {
 function catalogTypeLabel(type) {
   return {
     color: 'Cor',
+    tampon: 'Tamponamento',
     handle: 'Puxador',
     door: 'Porta',
     slide: 'Corrediça',
@@ -1624,6 +1792,7 @@ function catalogTypeLabel(type) {
 
 function materialOptions(group) {
   editorSettings.materialOptions = normalizeMaterialOptions(editorSettings.materialOptions);
+  if (group === 'tampon') return allMaterialOptionsWithCatalog('tampon', 'tampon');
   if (group === 'puxador') return allMaterialOptionsWithCatalog('puxador', 'handle');
   if (group === 'porta') return allMaterialOptionsWithCatalog('porta', 'door');
   if (group === 'corredica') return allMaterialOptionsWithCatalog('corredica', 'slide');
@@ -1698,7 +1867,7 @@ function renderMaterialOptionList() {
 
 function selectedFactories() {
   const selected = Array.from(document.querySelectorAll('#fabricante input[type="checkbox"]:checked')).map(o => o.value);
-  return selected.length ? selected : ['VITTA', 'BOA VISTA'];
+  return selected.length ? selected.map(normalizeFactoryName) : factoryOptionsForProject();
 }
 
 function bindMaterialOptionEvents() {
@@ -1984,7 +2153,8 @@ function renderCard(amb) {
         </div>
         <div class="field-group">
           <label>Tamponamentos</label>
-          <div class="check-grid">${buildCheckboxHTML(amb.id,'tampon')}</div>
+          <div class="check-grid" data-field="tampon">${buildCheckboxHTML(amb.id,'tampon')}</div>
+          ${buildMaterialImagePickerHTML(amb.id, 'tampon', 'tampon')}
         </div>
         <div class="field-group">
           <label>Portas</label>
@@ -2125,6 +2295,7 @@ function rerenderAllSwatches() {
 function refreshPuxadorSelects() {
   AMBIENTES.forEach(amb => {
     [
+      ['tampon', 'tampon'],
       ['porta', 'door'],
       ['puxador', 'handle'],
       ['corredica', 'slide'],
@@ -2144,10 +2315,8 @@ function hydrateBuilderControls() {
     document.getElementById('clientName').value = builderDraft.fields.clientName || '';
     document.getElementById('contractNum').value = builderDraft.fields.contractNum || '';
     document.getElementById('endereco').value = builderDraft.fields.endereco || '';
-    const factories = builderDraft.fields.factories?.length ? builderDraft.fields.factories : ['VITTA', 'BOA VISTA'];
-    document.querySelectorAll('#fabricante input[type="checkbox"]').forEach(input => {
-      input.checked = factories.includes(input.value);
-    });
+    const factories = builderDraft.fields.factories?.length ? builderDraft.fields.factories : factoryOptionsForProject();
+    renderFactoryChecks(factories);
   }
 
   AMBIENTES.forEach(amb => {

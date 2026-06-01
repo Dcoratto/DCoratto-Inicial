@@ -23,6 +23,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY
   || '';
 const primaryAccountEmail = 'dcorattoinovacao@gmail.com';
+const defaultFactories = ['VITTA', 'BOA VISTA'];
 const localLoginUsers = [
   { email: primaryAccountEmail, password: 'sob_medida', name: "D'Coratto Inovacao", role: 'owner' },
   { email: 'rafael@dcoratto.com.br', password: 'Dcoratto@Rafael26', name: 'Rafael', role: 'team' },
@@ -1312,12 +1313,29 @@ function extensionFromMime(mimeType = '') {
   }[mimeType] || 'bin';
 }
 
+function normalizeFactoryName(value = '') {
+  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+function normalizeFactoriesPayload(factories = [], catalogItems = []) {
+  const values = Array.isArray(factories) ? factories : [];
+  const normalized = values
+    .map(factory => normalizeFactoryName(typeof factory === 'string' ? factory : factory?.name))
+    .filter(Boolean);
+  const manufacturers = Array.isArray(factories) ? [] : (Array.isArray(catalogItems) ? catalogItems : [])
+    .map(item => normalizeFactoryName(item.manufacturer || item.factory))
+    .filter(Boolean);
+  return [...new Set([...defaultFactories, ...normalized, ...manufacturers])];
+}
+
 function normalizeEditorSettingsPayload(settings = {}) {
   const incomingSettings = settings || {};
+  const catalogItems = normalizeCatalogItemsPayload(incomingSettings.catalogItems);
   return {
     ...incomingSettings,
     logo: incomingSettings.logo || '',
-    catalogItems: normalizeCatalogItemsPayload(incomingSettings.catalogItems),
+    catalogItems,
+    factories: normalizeFactoriesPayload(incomingSettings.factories, catalogItems),
     observations: Array.isArray(incomingSettings.observations)
       ? [...new Set(incomingSettings.observations.filter(value => String(value || '').trim()))]
       : [],
@@ -1342,6 +1360,9 @@ function mergeEditorSettingsPayload(current = {}, incoming = {}, options = {}) {
     ...incomingSettings,
     logo: incomingSettings.logo || currentSettings.logo || '',
     catalogItems,
+    factories: Array.isArray(incomingSettings.factories)
+      ? normalizeFactoriesPayload(incomingSettings.factories, catalogItems)
+      : normalizeFactoriesPayload(currentSettings.factories, catalogItems),
     observations: [...new Set([...(currentSettings.observations || []), ...(incomingSettings.observations || [])])],
     materialOptions,
   };
@@ -1378,6 +1399,40 @@ function applySettingsMutation(settings = {}, mutation = null, actorEmail = '') 
   }
   if (mutation.type === 'material-option-delete' && mutation.group && mutation.value) {
     payload.materialOptions = deleteMaterialOptionPayload(payload.materialOptions, mutation.group, mutation.value);
+  }
+  if (mutation.type === 'factory-upsert' && mutation.name) {
+    const nextName = normalizeFactoryName(mutation.name);
+    const previousName = normalizeFactoryName(mutation.previousName);
+    const factories = normalizeFactoriesPayload(payload.factories, payload.catalogItems);
+    payload.factories = [...new Set(factories.map(factory => factory === previousName ? nextName : factory).concat(nextName))];
+    if (previousName && nextName && previousName !== nextName) {
+      const updatedAt = mutation.createdAt || new Date().toISOString();
+      payload.catalogItems = normalizeCatalogItemsPayload(payload.catalogItems.map((item) => {
+        if (normalizeFactoryName(item.manufacturer || item.factory) !== previousName) return item;
+        const catalogKey = stableCatalogKey({
+          category: catalogItemGroup(item.type || item.category),
+          factory: nextName,
+          line: item.line || item.lineName || item.line_name || '',
+          quality: item.quality || item.materialType || '',
+          name: item.name,
+        });
+        return {
+          ...item,
+          factory: nextName,
+          manufacturer: nextName,
+          catalogKey,
+          catalog_key: catalogKey,
+          updatedAt,
+          updated_at: updatedAt,
+          updatedBy: actorEmail || item.updatedBy || item.updated_by || '',
+          updated_by: actorEmail || item.updated_by || item.updatedBy || '',
+        };
+      }));
+    }
+  }
+  if (mutation.type === 'factory-delete' && mutation.name) {
+    const name = normalizeFactoryName(mutation.name);
+    payload.factories = normalizeFactoriesPayload(payload.factories, []).filter(factory => factory !== name || defaultFactories.includes(factory));
   }
   return payload;
 }
@@ -1660,6 +1715,8 @@ function settingsTypeFromCatalogGroup(groupKey) {
     boa_vista_cores: 'color',
     madeira: 'color',
     laca: 'color',
+    tamponamento: 'tampon',
+    tampon: 'tampon',
     puxador: 'handle',
     porta: 'door',
     corredica: 'slide',
@@ -1700,6 +1757,14 @@ async function persistSharedCatalogMutation(settings = {}, mutation = null, acto
   }
   if (mutation.type === 'material-option-delete' && mutation.group && mutation.value) {
     await softDeleteSharedCatalogOption(mutation.group, mutation.value, actorEmail, 'catalog_option_removed');
+    return;
+  }
+  if (mutation.type === 'factory-upsert' && mutation.previousName && mutation.name) {
+    const previousName = normalizeFactoryName(mutation.previousName);
+    const nextName = normalizeFactoryName(mutation.name);
+    if (!previousName || !nextName || previousName === nextName) return;
+    await persistSharedCatalogTables(settings, actorEmail);
+    await softDeleteSharedCatalogItemsByManufacturer(previousName, actorEmail, 'factory_renamed');
   }
 }
 
@@ -1801,6 +1866,21 @@ async function softDeleteSharedCatalogItem(selector = {}, actorEmail = '', reaso
   if (error) throw error;
 }
 
+async function softDeleteSharedCatalogItemsByManufacturer(manufacturer, actorEmail = '', reason = 'factory_renamed') {
+  if (!manufacturer) return;
+  const { error } = await supabaseServer
+    .from('catalog_materials')
+    .update({
+      active: false,
+      deleted_at: new Date().toISOString(),
+      deleted_by: actorEmail || primaryAccountEmail,
+      deleted_reason: reason,
+      updated_by: actorEmail || primaryAccountEmail,
+    })
+    .eq('manufacturer', manufacturer);
+  if (error) throw error;
+}
+
 async function upsertSharedCatalogOption(group, label, catalogItems = [], actorEmail = '') {
   const image = catalogItems
     .map(item => {
@@ -1848,7 +1928,7 @@ async function softDeleteSharedCatalogOption(group, label, actorEmail = '', reas
 async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
   const catalogItems = Array.isArray(settings.catalogItems) ? settings.catalogItems : [];
   const materialOptions = settings.materialOptions || {};
-  const catalogGroups = [...new Set(['color', 'puxador', 'porta', 'corredica', ...catalogItems.map(item => catalogItemGroup(item.type)).filter(Boolean)])];
+  const catalogGroups = [...new Set(['color', 'tamponamento', 'puxador', 'porta', 'corredica', ...catalogItems.map(item => catalogItemGroup(item.type)).filter(Boolean)])];
   const optionGroups = [...new Set(['tampon', 'porta', 'puxador', 'corredica', ...Object.keys(materialOptions || {})])];
 
   const materialRows = catalogItems
@@ -1903,6 +1983,7 @@ async function persistSharedCatalogTables(settings = {}, actorEmail = '') {
 function catalogItemGroup(type) {
   return {
     color: 'color',
+    tampon: 'tamponamento',
     handle: 'puxador',
     door: 'porta',
     slide: 'corredica',
@@ -1928,6 +2009,7 @@ function escapePostgrestLike(value) {
 
 function catalogItemOptionGroup(type) {
   return {
+    tampon: 'tampon',
     handle: 'puxador',
     door: 'porta',
     slide: 'corredica',
