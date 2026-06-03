@@ -990,6 +990,11 @@
         text-shadow: 0 1px 0 rgba(255,255,255,.75);
       }
 
+      .doc-annotation-text.is-selected {
+        outline: 1px solid rgba(124,70,255,.7);
+        outline-offset: 3px;
+      }
+
       .environment-page .doc-annotation-text[data-drag-annotation] {
         cursor: move;
       }
@@ -1021,6 +1026,127 @@
       }
 
       .page-arrow-point.is-selected { display: block; }
+
+      .mobile-frame-flow {
+        display: none;
+      }
+
+      .mobile-frame-card {
+        min-width: 0;
+      }
+
+      .mobile-frame-media {
+        position: relative;
+        display: block;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        border: 1px solid rgba(184, 151, 106, .24);
+        background: #15120f;
+        color: inherit;
+        overflow: hidden;
+        box-shadow: 0 18px 44px rgba(0,0,0,.28);
+        cursor: pointer;
+      }
+
+      .mobile-frame-media img {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        object-fit: cover;
+        display: block;
+      }
+
+      .mobile-frame-arrows {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+
+      .mobile-frame-marker {
+        position: absolute;
+        z-index: 3;
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        border: 1px solid var(--callout-color, #d7c2a7);
+        border-radius: 50%;
+        background: rgba(8,8,7,.82);
+        color: #fff8ec;
+        font-family: 'Montserrat', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 8px 18px rgba(0,0,0,.32);
+        pointer-events: none;
+      }
+
+      .mobile-frame-title {
+        margin: 10px 0 0;
+        color: rgba(215,194,167,.78);
+        font-size: 9px;
+        letter-spacing: .16em;
+        line-height: 1.45;
+        text-transform: uppercase;
+        overflow-wrap: anywhere;
+      }
+
+      .mobile-frame-callouts {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .mobile-callout {
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        color: #f5eddf;
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: 15px;
+        line-height: 1.28;
+        overflow-wrap: anywhere;
+      }
+
+      .mobile-callout-number {
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        border: 1px solid var(--callout-color, #d7c2a7);
+        border-radius: 50%;
+        color: #f7f2ea;
+        font-family: 'Montserrat', sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1;
+      }
+
+      .mobile-callout-content {
+        min-width: 0;
+      }
+
+      .mobile-callout-image {
+        width: min(100%, 150px);
+        margin-top: 6px;
+        border: 1px solid rgba(184,151,106,.2);
+        display: block;
+      }
+
+      .mobile-free-text {
+        color: #f5eddf;
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: 17px;
+        line-height: 1.35;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
 
       .preview-frame-tools {
         position: absolute;
@@ -2004,6 +2130,50 @@
         body.client-view .page-frames {
           width: min(100%, 430px);
           min-height: clamp(430px, 118vw, 620px);
+        }
+
+        body.client-view .environment-page.has-mobile-flow .page-frames {
+          display: none;
+        }
+
+        body.client-view .environment-page.has-mobile-flow .mobile-frame-flow {
+          display: grid;
+          width: min(100%, 430px);
+          margin: 18px auto 0;
+          gap: 18px;
+        }
+
+        body.client-view .mobile-frame-card {
+          border-top: 1px solid rgba(184,151,106,.18);
+          padding-top: 16px;
+        }
+
+        body.client-view .mobile-frame-card:first-child {
+          border-top: 0;
+          padding-top: 0;
+        }
+
+        body.client-view .mobile-frame-media {
+          min-height: 0;
+          aspect-ratio: 4 / 5;
+          border-radius: 0;
+        }
+
+        body.client-view .mobile-frame-card.shape-circle .mobile-frame-media {
+          aspect-ratio: 1 / 1;
+          border-radius: 50%;
+        }
+
+        body.client-view .mobile-frame-card.shape-square .mobile-frame-media {
+          aspect-ratio: 1 / 1;
+        }
+
+        body.client-view .mobile-frame-callouts {
+          padding: 0 2px;
+        }
+
+        body.client-view .mobile-callout {
+          font-size: clamp(14px, 4.1vw, 17px);
         }
 
         body.client-view .page-detail-frame {
@@ -3066,6 +3236,12 @@
         return !color || color === '#111' || color === '#111111' || color === 'black'
           ? '#f7f2ea'
           : annotation.textColor;
+      }
+
+      function clampPercent(value, fallback = 0, min = 0, max = 100) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return fallback;
+        return Math.max(min, Math.min(max, number));
       }
 
       function isDetailAnnotation(annotation) {
@@ -5075,8 +5251,9 @@
       function renderEnvironmentPage(environment, page, environmentIndex, pageIndex) {
         const pageNumber = page.number || `${String(environmentIndex + 1).padStart(2, '0')}.${String(pageIndex + 1).padStart(2, '0')}`;
         const frames = normalizeFrames(page);
+        const mobileFlow = isClientView ? renderMobileFrameFlow(page, frames, environmentIndex, pageIndex) : '';
         return `
-          <section class="environment-page ${isEditablePreview ? 'editable' : ''}" id="${slug(environment.title)}-${slug(page.title || `pagina-${pageIndex + 1}`)}">
+          <section class="environment-page ${isEditablePreview ? 'editable' : ''} ${mobileFlow ? 'has-mobile-flow' : ''}" id="${slug(environment.title)}-${slug(page.title || `pagina-${pageIndex + 1}`)}">
             <div class="page-fixed-title">
               <strong>${escapeHTML(documentData.projectType || 'Projeto Inicial')}</strong>
               <span>${escapeHTML(environment.title)}</span>
@@ -5097,8 +5274,241 @@
               ${renderPageAnnotations(page, environmentIndex, pageIndex)}
               ${renderFreeElements(page, environmentIndex, pageIndex)}
             </div>
+            ${mobileFlow}
           </section>
         `;
+      }
+
+      function renderMobileFrameFlow(page, frames, environmentIndex, pageIndex) {
+        if (!frames.length) return '';
+        const frameEntries = frames.map((frame, frameIndex) => ({
+          frame,
+          frameIndex,
+          order: frameIndex,
+          callouts: normalizeFrameAnnotations(frame).map((annotation, annotationIndex) =>
+            mobileCalloutFromFrameAnnotation(annotation, annotationIndex)
+          ).filter(Boolean),
+        }));
+
+        const extraCallouts = [];
+        (Array.isArray(page.annotations) ? page.annotations : []).forEach((annotation, annotationIndex) => {
+          const assigned = nearestMobileFrame(annotation, frameEntries);
+          const callout = mobileCalloutFromPageAnnotation(annotation, assigned?.frame, annotationIndex);
+          if (!callout) return;
+          if (assigned?.entry) assigned.entry.callouts.push(callout);
+          else extraCallouts.push(callout);
+        });
+
+        const ordered = frameEntries
+          .slice()
+          .sort((a, b) => (Number(a.frame.y || 0) - Number(b.frame.y || 0)) || (Number(a.frame.x || 0) - Number(b.frame.x || 0)) || (a.order - b.order));
+
+        const frameCards = ordered.map((entry, orderIndex) =>
+          renderMobileFrameCard(entry, orderIndex, environmentIndex, pageIndex)
+        ).join('');
+        const freeElementCards = renderMobileFreeElementCards(page.freeElements);
+        const extras = extraCallouts.length ? `
+          <div class="mobile-frame-card">
+            <div class="mobile-frame-callouts">
+              ${extraCallouts.map((callout, index) => renderMobileCallout(callout, index)).join('')}
+            </div>
+          </div>
+        ` : '';
+
+        return `<div class="mobile-frame-flow">${frameCards}${extras}${freeElementCards}</div>`;
+      }
+
+      function renderMobileFrameCard(entry, orderIndex, environmentIndex, pageIndex) {
+        const frame = entry.frame;
+        const shape = supportedFrameShapes().includes(frame.shape) ? frame.shape : 'square';
+        const hasPhoto = Boolean(frame.photo);
+        const callouts = entry.callouts.map((callout, index) => ({
+          ...callout,
+          marker: index + 1,
+        }));
+        return `
+          <div class="mobile-frame-card shape-${escapeAttribute(shape)}">
+            <button
+              class="mobile-frame-media"
+              type="button"
+              ${hasPhoto ? `data-lightbox-src="${escapeAttribute(frame.photo)}" data-lightbox-title="${escapeAttribute(frame.title || `Moldura ${orderIndex + 1}`)}"` : ''}
+            >
+              ${hasPhoto
+                ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || `Moldura ${orderIndex + 1}`)}" loading="lazy">`
+                : '<span class="doc-frame-empty">Moldura sem foto</span>'}
+              ${renderMobileFrameArrows(callouts, environmentIndex, pageIndex, entry.frameIndex)}
+              ${callouts.map((callout) => `
+                <span
+                  class="mobile-frame-marker"
+                  style="left:${callout.start.x}%;top:${callout.start.y}%;--callout-color:${escapeAttribute(callout.color)}"
+                >${callout.marker}</span>
+              `).join('')}
+            </button>
+            ${frame.title ? `<div class="mobile-frame-title">${escapeHTML(frame.title)}</div>` : ''}
+            ${callouts.length ? `<div class="mobile-frame-callouts">${callouts.map(renderMobileCallout).join('')}</div>` : ''}
+          </div>
+        `;
+      }
+
+      function renderMobileFrameArrows(callouts, environmentIndex, pageIndex, frameIndex) {
+        if (!callouts.length) return '';
+        const markerDefs = callouts.map((callout, index) => {
+          const markerId = mobileArrowMarkerId(environmentIndex, pageIndex, frameIndex, index);
+          return `<marker id="${markerId}" viewBox="0 0 8 8" markerWidth="7" markerHeight="7" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="${escapeAttribute(callout.color)}"></path></marker>`;
+        }).join('');
+        const lines = callouts.map((callout, index) => {
+          const markerId = mobileArrowMarkerId(environmentIndex, pageIndex, frameIndex, index);
+          return `<line x1="${callout.start.x}" y1="${callout.start.y}" x2="${callout.target.x}" y2="${callout.target.y}" stroke="${escapeAttribute(callout.color)}" stroke-width="${callout.arrowWidth}" stroke-linecap="round" vector-effect="non-scaling-stroke" marker-end="url(#${markerId})"></line>`;
+        }).join('');
+        return `<svg class="mobile-frame-arrows" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs>${markerDefs}</defs>${lines}</svg>`;
+      }
+
+      function renderMobileCallout(callout, index) {
+        const marker = callout.marker || index + 1;
+        return `
+          <div class="mobile-callout" style="--callout-color:${escapeAttribute(callout.color)}">
+            <span class="mobile-callout-number">${marker}</span>
+            <span class="mobile-callout-content">
+              ${escapeHTML(callout.text || `Detalhe ${marker}`)}
+              ${callout.image ? `<img class="mobile-callout-image" src="${escapeAttribute(callout.image)}" alt="${escapeAttribute(callout.text || `Detalhe ${marker}`)}" loading="lazy">` : ''}
+            </span>
+          </div>
+        `;
+      }
+
+      function renderMobileFreeElementCards(elements) {
+        if (!Array.isArray(elements) || !elements.length) return '';
+        return elements.map((element, index) => {
+          if (element?.type === 'image' && element.src) {
+            return `
+              <div class="mobile-frame-card">
+                <button class="mobile-frame-media" type="button" data-lightbox-src="${escapeAttribute(element.src)}" data-lightbox-title="Imagem ${index + 1}">
+                  <img src="${escapeAttribute(element.src)}" alt="Imagem ${index + 1}" loading="lazy">
+                </button>
+              </div>
+            `;
+          }
+          const text = String(element?.text || '').trim();
+          if (!text) return '';
+          return `
+            <div class="mobile-frame-card">
+              <div class="mobile-free-text">${escapeHTML(text)}</div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      function mobileCalloutFromFrameAnnotation(annotation, annotationIndex) {
+        const target = {
+          x: clampPercent(annotation.toX, 58),
+          y: clampPercent(annotation.toY, 46),
+        };
+        let start = {
+          x: clampPercent(annotation.fromX, 18),
+          y: clampPercent(annotation.fromY, 18 + Math.min(annotationIndex * 10, 48)),
+        };
+        if (mobilePointDistance(start, target) < 8) start = mobileFallbackStart(target, annotationIndex);
+        return {
+          text: annotation.text || '',
+          image: '',
+          color: annotation.arrowColor || '#d7c2a7',
+          arrowWidth: Math.max(.7, Math.min(2.4, Number(annotation.arrowWidth || 1.2))),
+          start,
+          target,
+        };
+      }
+
+      function mobileCalloutFromPageAnnotation(annotation, frame, annotationIndex) {
+        const targetPoint = {
+          x: Number(annotation.toX ?? annotation.fromX ?? 50),
+          y: Number(annotation.toY ?? annotation.fromY ?? 50),
+        };
+        const sourcePoint = {
+          x: Number(annotation.fromX ?? annotation.toX ?? 50),
+          y: Number(annotation.fromY ?? annotation.toY ?? 50),
+        };
+        const target = frame ? mobilePointInFrame(targetPoint, frame) : {
+          x: clampPercent(targetPoint.x, 50),
+          y: clampPercent(targetPoint.y, 50),
+        };
+        let start = frame ? mobileSourcePointInFrame(sourcePoint, frame, target, annotationIndex) : mobileFallbackStart(target, annotationIndex);
+        if (mobilePointDistance(start, target) < 8) start = mobileFallbackStart(target, annotationIndex);
+        return {
+          text: annotation.text || '',
+          image: isDetailAnnotation(annotation) ? annotation.image || '' : '',
+          color: pageAnnotationArrowColor(annotation),
+          arrowWidth: Math.max(.7, Math.min(2.4, Number(annotation.arrowWidth || 1.1))),
+          start,
+          target,
+        };
+      }
+
+      function nearestMobileFrame(annotation, entries) {
+        if (!entries.length) return null;
+        const point = {
+          x: Number(annotation.toX ?? annotation.fromX ?? 50),
+          y: Number(annotation.toY ?? annotation.fromY ?? 50),
+        };
+        let best = null;
+        entries.forEach((entry) => {
+          const frame = entry.frame;
+          const contains = point.x >= Number(frame.x || 0) - 1
+            && point.x <= Number(frame.x || 0) + Number(frame.width || 1) + 1
+            && point.y >= Number(frame.y || 0) - 1
+            && point.y <= Number(frame.y || 0) + Number(frame.height || 1) + 1;
+          const center = {
+            x: Number(frame.x || 0) + Number(frame.width || 1) / 2,
+            y: Number(frame.y || 0) + Number(frame.height || 1) / 2,
+          };
+          const distance = Math.hypot(point.x - center.x, point.y - center.y);
+          const score = distance + (contains ? -1000 : 0);
+          if (!best || score < best.score) best = { entry, frame, score };
+        });
+        return best;
+      }
+
+      function mobilePointInFrame(point, frame) {
+        const width = Math.max(1, Number(frame.width || 1));
+        const height = Math.max(1, Number(frame.height || 1));
+        return {
+          x: clampPercent(((Number(point.x || 0) - Number(frame.x || 0)) / width) * 100, 50, 4, 96),
+          y: clampPercent(((Number(point.y || 0) - Number(frame.y || 0)) / height) * 100, 50, 4, 96),
+        };
+      }
+
+      function mobileSourcePointInFrame(point, frame, target, index) {
+        const x = Number(point.x || 0);
+        const y = Number(point.y || 0);
+        const left = Number(frame.x || 0);
+        const top = Number(frame.y || 0);
+        const right = left + Number(frame.width || 1);
+        const bottom = top + Number(frame.height || 1);
+        if (x >= left && x <= right && y >= top && y <= bottom) {
+          return mobilePointInFrame(point, frame);
+        }
+        const relativeY = clampPercent(((y - top) / Math.max(1, Number(frame.height || 1))) * 100, target.y, 8, 92);
+        const relativeX = clampPercent(((x - left) / Math.max(1, Number(frame.width || 1))) * 100, target.x, 8, 92);
+        if (x < left) return { x: 7, y: relativeY };
+        if (x > right) return { x: 93, y: relativeY };
+        if (y < top) return { x: relativeX, y: 7 };
+        if (y > bottom) return { x: relativeX, y: 93 };
+        return mobileFallbackStart(target, index);
+      }
+
+      function mobileFallbackStart(target, index) {
+        const side = index % 4;
+        if (side === 0) return { x: target.x < 50 ? 92 : 8, y: clampPercent(target.y - 12, 50, 8, 92) };
+        if (side === 1) return { x: target.x < 50 ? 92 : 8, y: clampPercent(target.y + 12, 50, 8, 92) };
+        if (side === 2) return { x: clampPercent(target.x - 12, 50, 8, 92), y: target.y < 50 ? 92 : 8 };
+        return { x: clampPercent(target.x + 12, 50, 8, 92), y: target.y < 50 ? 92 : 8 };
+      }
+
+      function mobilePointDistance(a, b) {
+        return Math.hypot(Number(a.x || 0) - Number(b.x || 0), Number(a.y || 0) - Number(b.y || 0));
+      }
+
+      function mobileArrowMarkerId(environmentIndex, pageIndex, frameIndex, annotationIndex) {
+        return `mobileArrow-${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}`;
       }
 
       function renderFreeElements(page, environmentIndex, pageIndex) {
@@ -5258,7 +5668,7 @@
               ? (frame.shape || frame.frameType)
               : 'square';
             frame.frameType = frame.shape;
-            frame.annotations = [];
+            normalizeFrameAnnotations(frame);
             applyFrameLayout(frame, index);
           });
           return page.frames;
@@ -5266,8 +5676,26 @@
         return [];
       }
 
+      function normalizeFrameAnnotations(frame) {
+        frame.annotations = Array.isArray(frame?.annotations) ? frame.annotations : [];
+        frame.annotations = frame.annotations.filter(annotation => annotation && typeof annotation === 'object');
+        frame.annotations.forEach((annotation, index) => {
+          annotation.text ||= '';
+          annotation.fromX = clampPercent(annotation.fromX, 18, 0, 100);
+          annotation.fromY = clampPercent(annotation.fromY, 18 + Math.min(index * 10, 48), 0, 100);
+          annotation.toX = clampPercent(annotation.toX, 58, 0, 100);
+          annotation.toY = clampPercent(annotation.toY, 46, 0, 100);
+          annotation.arrowColor ||= '#d7c2a7';
+          annotation.textColor ||= '#f7f2ea';
+          annotation.fontSize = clampPercent(annotation.fontSize, 17, 8, 42);
+          annotation.arrowWidth = clampPercent(annotation.arrowWidth, 1.2, .4, 8);
+        });
+        return frame.annotations;
+      }
+
       function renderDocumentFrame(frame, page, frameIndex, environmentIndex, pageIndex) {
         applyFrameLayout(frame, frameIndex);
+        const annotations = normalizeFrameAnnotations(frame);
         const hasPhoto = Boolean(frame.photo);
         const shape = supportedFrameShapes().includes(frame.shape) ? frame.shape : 'square';
         const frameStyle = `left:${Number(frame.x)}%;top:${Number(frame.y)}%;width:${Number(frame.width)}%;height:${Number(frame.height)}%`;
@@ -5283,6 +5711,7 @@
               ${hasPhoto ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || page.title)}" draggable="false" data-photo-src="${escapeAttribute(frame.photo)}" data-editable-frame-image style="${imageStyle}" />` : '<span class="doc-frame-empty">Moldura sem foto</span>'}
               ${isEditablePreview ? '<span class="drop-hint">Solte a foto aqui</span>' : ''}
             </div>
+            ${renderFrameAnnotations(annotations, environmentIndex, pageIndex, frameIndex)}
             ${isEditablePreview ? `
               <span class="frame-selection-toolbar">
                 <button type="button" data-copy-frame data-environment-index="${environmentIndex}" data-page-index="${pageIndex}" data-frame-index="${frameIndex}">Copiar</button>
@@ -5298,6 +5727,60 @@
           </div>
         `;
       }
+
+      function renderFrameAnnotations(annotations, environmentIndex, pageIndex, frameIndex) {
+        if (!annotations.length) return '';
+        const defs = annotations.map((annotation, annotationIndex) => {
+          const markerId = frameArrowMarkerId(environmentIndex, pageIndex, frameIndex, annotationIndex);
+          const color = annotation.arrowColor || '#d7c2a7';
+          return `<marker id="${markerId}" viewBox="0 0 8 8" markerWidth="7" markerHeight="7" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="${escapeAttribute(color)}"></path></marker>`;
+        }).join('');
+        const lines = annotations.map((annotation, annotationIndex) => {
+          const id = `${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}`;
+          const markerId = frameArrowMarkerId(environmentIndex, pageIndex, frameIndex, annotationIndex);
+          return `<line
+            data-annotation-line="${id}"
+            class="doc-annotation-line"
+            x1="${Number(annotation.fromX)}%"
+            y1="${Number(annotation.fromY)}%"
+            x2="${Number(annotation.toX)}%"
+            y2="${Number(annotation.toY)}%"
+            style="--arrow-color:${escapeAttribute(annotation.arrowColor || '#d7c2a7')};--arrow-width-px:${Number(annotation.arrowWidth || 1.2)}px"
+            marker-end="url(#${markerId})"
+          ></line>`;
+        }).join('');
+        const labels = annotations.map((annotation, annotationIndex) => {
+          const id = `${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}`;
+          return `
+            <span
+              data-annotation-label="${id}"
+              data-drag-annotation="label"
+              data-environment-index="${environmentIndex}"
+              data-page-index="${pageIndex}"
+              data-frame-index="${frameIndex}"
+              data-annotation-index="${annotationIndex}"
+              class="doc-annotation-text ${selectedFrameKeys.has(frameKey(environmentIndex, pageIndex, frameIndex)) ? 'is-selected' : ''}"
+              style="left:${Number(annotation.fromX)}%;top:${Number(annotation.fromY)}%;--text-color:${escapeAttribute(annotation.textColor || '#f7f2ea')};--text-size:${Number(annotation.fontSize || 17)}px;transform:translate(-50%,-50%)"
+            >${escapeHTML(annotation.text || 'Texto da seta')}</span>
+            ${isEditablePreview ? `<span
+              data-annotation-target="${id}"
+              data-drag-annotation="target"
+              data-environment-index="${environmentIndex}"
+              data-page-index="${pageIndex}"
+              data-frame-index="${frameIndex}"
+              data-annotation-index="${annotationIndex}"
+              class="frame-arrow-target"
+              style="left:${Number(annotation.toX)}%;top:${Number(annotation.toY)}%"
+            ></span>` : ''}
+          `;
+        }).join('');
+        return `<svg class="doc-annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs>${defs}</defs>${lines}</svg>${labels}`;
+      }
+
+      function frameArrowMarkerId(environmentIndex, pageIndex, frameIndex, annotationIndex) {
+        return `frameArrow-${environmentIndex}-${pageIndex}-${frameIndex}-${annotationIndex}`;
+      }
+
       function renderFramePreviewTools(frame, environmentIndex, pageIndex, frameIndex) {
         return `
           <div class="preview-frame-tools">

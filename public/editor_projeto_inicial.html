@@ -150,8 +150,9 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
 .preview-overlay.active{display:flex}
 .preview-box{background:var(--dark2);border:1px solid var(--border);border-radius:4px;width:94vw;height:92vh;overflow:hidden;position:relative;display:flex;flex-direction:column;box-shadow:0 30px 90px rgba(0,0,0,.55)}
 .preview-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;border-bottom:1px solid var(--border);background:rgba(7,6,5,.96)}
+.preview-topbar>div:first-child{min-width:0}
 .preview-title{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold-l);font-weight:500}
-.preview-actions{display:flex;align-items:center;gap:10px}
+.preview-actions{display:flex;align-items:center;gap:10px;flex:0 0 auto}
 .preview-frame{width:100%;flex:1;border:0;background:#080706}
 .preview-status{font-size:10px;color:#c7b596;letter-spacing:.08em;margin-right:auto}
 .preview-client-link{margin-top:7px;font-size:11px;letter-spacing:.04em;color:#e7d3b5;max-width:min(62vw,780px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -285,6 +286,13 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
   .settings-actions,.settings-actions.split,.logo-actions{grid-template-columns:1fr;display:grid;justify-content:stretch}
   .settings-actions .hbtn,.settings-actions .danger-btn,.settings-actions .ghost-btn,.option-form .hbtn{width:100%}
   .catalog-list,.option-list{max-height:none}
+  .preview-box{width:100vw;height:100dvh;border-radius:0;border-left:0;border-right:0}
+  .preview-topbar{align-items:flex-start;flex-wrap:wrap;gap:10px;padding:12px 14px}
+  .preview-topbar>div:first-child{width:100%;padding-right:34px}
+  .preview-actions{width:100%;overflow-x:auto;justify-content:flex-start;padding-bottom:2px}
+  .preview-client-link{max-width:100%;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.45;word-break:break-word;overflow-wrap:anywhere}
+  .preview-client-link button{display:inline-flex;margin:8px 0 0}
+  .preview-close{top:9px;right:12px}
 }
 
 @media (max-width: 520px){
