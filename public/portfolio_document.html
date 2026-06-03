@@ -1709,6 +1709,332 @@
           grid-column: auto;
           grid-row: auto;
         }
+
+        /* dcoratto-client-mobile-v1 */
+        body.client-view {
+          overflow-x: hidden;
+        }
+
+        body.client-view .client-intro {
+          min-height: 100svh;
+          padding: 26px 16px;
+          box-sizing: border-box;
+        }
+
+        body.client-view .client-intro::before,
+        body.client-view .client-intro::after {
+          width: calc(100vw - 56px);
+        }
+
+        body.client-view .client-intro::before {
+          top: 18svh;
+        }
+
+        body.client-view .client-intro::after {
+          bottom: 13svh;
+        }
+
+        body.client-view .client-intro-card {
+          width: 100%;
+          max-width: 350px;
+          gap: 18px;
+          padding: 0 6px;
+          box-sizing: border-box;
+          transform: none;
+        }
+
+        body.client-view .client-intro-text {
+          max-width: 100%;
+          font-size: clamp(25px, 7.3vw, 34px);
+          line-height: 1.13;
+          letter-spacing: 0;
+          text-wrap: balance;
+        }
+
+        body.client-view .client-intro-text span {
+          max-width: 31ch;
+          margin: 14px auto 0;
+          font-size: 10px;
+          line-height: 1.55;
+          letter-spacing: .04em;
+        }
+
+        body.client-view .client-intro-text .word-forma {
+          display: block;
+          width: max-content;
+          max-width: 100%;
+          margin: 8px auto 0;
+          font-size: 1.95em;
+          line-height: .86;
+          white-space: normal;
+        }
+
+        body.client-view .client-intro-text .word-forma::after {
+          display: none;
+        }
+
+        body.client-view .client-intro-logo {
+          min-height: 46px;
+        }
+
+        body.client-view .client-intro-logo img {
+          max-width: 132px;
+          max-height: 46px;
+        }
+
+        body.client-view .client-intro-logo div {
+          font-size: 27px;
+        }
+
+        body.client-view .client-intro-logo small {
+          margin-left: 54px;
+          font-size: 8px;
+        }
+
+        body.client-view .client-intro-gesture {
+          max-width: 32ch;
+          gap: 8px;
+          margin-top: 2px;
+          font-size: 9px;
+          line-height: 1.55;
+          letter-spacing: .14em;
+        }
+
+        body.client-view .client-intro-gesture-icon {
+          width: 30px;
+          height: 48px;
+        }
+
+        body.client-view .cover {
+          min-height: calc(100svh - 68px);
+          padding: 42px 18px 46px;
+          overflow: hidden;
+        }
+
+        body.client-view .cover::before {
+          height: 54px;
+          margin-bottom: 28px;
+        }
+
+        body.client-view .cover-kicker {
+          margin-bottom: 26px;
+          font-size: 10px;
+          line-height: 1.5;
+          letter-spacing: .22em;
+        }
+
+        body.client-view .cover h1 {
+          max-width: 100%;
+          font-size: clamp(38px, 12.8vw, 58px);
+          line-height: 1;
+          text-wrap: balance;
+        }
+
+        body.client-view .cover-address,
+        body.client-view .cover-brand {
+          max-width: 32ch;
+          margin-left: auto;
+          margin-right: auto;
+          line-height: 1.55;
+          overflow-wrap: anywhere;
+        }
+
+        body.client-view .cover-address {
+          margin-top: 22px;
+          font-size: 10px;
+          letter-spacing: .14em;
+        }
+
+        body.client-view .cover-brand {
+          font-size: 10px;
+          letter-spacing: .12em;
+        }
+
+        body.client-view .cover-stats {
+          width: min(100%, 318px);
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          margin-top: 38px;
+        }
+
+        body.client-view .cover-stat {
+          padding: 10px 12px;
+        }
+
+        body.client-view .cover-stat strong {
+          font-size: 34px;
+        }
+
+        body.client-view .cover-stat span {
+          font-size: 9px;
+          line-height: 1.35;
+          letter-spacing: .18em;
+        }
+
+        body.client-view .environment {
+          min-height: auto;
+          padding: 26px 14px 44px;
+        }
+
+        body.client-view .section-heading {
+          grid-template-columns: 1fr;
+          gap: 8px;
+          margin-bottom: 20px;
+        }
+
+        body.client-view .section-number {
+          font-size: 12px;
+        }
+
+        body.client-view .section-heading h2 {
+          font-size: clamp(36px, 12vw, 48px);
+          overflow-wrap: anywhere;
+        }
+
+        body.client-view .section-line {
+          grid-column: auto;
+          width: 100%;
+          margin-top: 4px;
+        }
+
+        body.client-view .portfolio-layout {
+          gap: 10px;
+        }
+
+        body.client-view .photo-mural {
+          gap: 8px;
+          min-height: 0;
+        }
+
+        body.client-view .photo-card {
+          min-height: 0;
+          aspect-ratio: 4 / 5;
+        }
+
+        body.client-view .photo-card img {
+          min-height: 0;
+        }
+
+        body.client-view .photo-index {
+          top: 13px;
+          left: 14px;
+        }
+
+        body.client-view .photo-label {
+          left: 14px;
+          right: 14px;
+          bottom: 13px;
+          font-size: 9px;
+          line-height: 1.35;
+          letter-spacing: .16em;
+        }
+
+        body.client-view .info-panel {
+          min-height: auto;
+          padding: 24px 18px;
+        }
+
+        body.client-view .spec-group + .spec-group {
+          margin-top: 16px;
+        }
+
+        body.client-view .spec-title {
+          margin-bottom: 6px;
+          letter-spacing: .2em;
+        }
+
+        body.client-view .spec-value {
+          font-size: 14px;
+          line-height: 1.45;
+        }
+
+        body.client-view .colors {
+          gap: 12px;
+        }
+
+        body.client-view .color-item {
+          width: 54px;
+        }
+
+        body.client-view .color-dot {
+          width: 46px;
+          height: 46px;
+        }
+
+        body.client-view .color-name {
+          font-size: 9px;
+          letter-spacing: .08em;
+        }
+
+        body.client-view .notes {
+          margin-top: 22px;
+          padding-top: 14px;
+        }
+
+        body.client-view .notes p {
+          font-size: 11px;
+          line-height: 1.45;
+        }
+
+        body.client-view .client-footer {
+          font-size: 8px;
+          line-height: 1.5;
+          letter-spacing: .12em;
+          overflow-wrap: anywhere;
+        }
+
+        body.client-view .environment-page {
+          padding: 26px 10px 42px;
+        }
+
+        body.client-view .page-fixed-title strong {
+          font-size: clamp(27px, 8vw, 38px);
+        }
+
+        body.client-view .page-fixed-title span {
+          font-size: clamp(24px, 7.4vw, 34px);
+          line-height: 1.05;
+          overflow-wrap: anywhere;
+        }
+
+        body.client-view .page-description {
+          max-width: 34ch;
+          font-size: 14px;
+        }
+
+        body.client-view .page-frames {
+          width: min(100%, 430px);
+          min-height: clamp(430px, 118vw, 620px);
+        }
+
+        body.client-view .page-detail-frame {
+          min-width: 28px;
+          min-height: 28px;
+        }
+
+        body.client-view .page-free-element {
+          min-width: 42px;
+          min-height: 30px;
+        }
+
+        body.client-view .page-annotation-text {
+          min-width: 74px;
+          max-width: 142px;
+        }
+
+        body.client-view .lightbox {
+          padding: 14px;
+        }
+
+        body.client-view .lightbox img {
+          max-width: 96vw;
+          max-height: 84svh;
+        }
+
+        body.client-view .lightbox button {
+          top: 12px;
+          right: 12px;
+        }
+        /* /dcoratto-client-mobile-v1 */
       }
     </style>
   </head>

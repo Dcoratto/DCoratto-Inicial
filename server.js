@@ -898,11 +898,37 @@ async function handleClientHtmlRequest(url, response) {
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'X-Content-Type-Options': 'nosniff',
     });
-    response.end(html);
+    response.end(optimizeClientHtmlForMobile(html));
   } catch (error) {
     response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
     response.end(`Nao foi possivel abrir o HTML do cliente: ${String(error?.message || error)}`);
   }
+}
+
+let cachedClientMobileCss = '';
+
+function optimizeClientHtmlForMobile(html = '') {
+  if (!html || html.includes('dcoratto-client-mobile-v1') || html.includes('data-dcoratto-mobile-client-optimized')) {
+    return html;
+  }
+  const css = clientMobileCssPatch();
+  if (!css) return html;
+  const style = `<style data-dcoratto-mobile-client-optimized="2026-06-03">\n${css}\n</style>`;
+  return html.includes('</head>')
+    ? html.replace('</head>', `${style}</head>`)
+    : `${style}${html}`;
+}
+
+function clientMobileCssPatch() {
+  if (cachedClientMobileCss) return cachedClientMobileCss;
+  const distTemplate = join(root, 'portfolio_document.html');
+  const publicTemplate = join(publicRoot, 'portfolio_document.html');
+  const templatePath = existsSync(distTemplate) ? distTemplate : publicTemplate;
+  if (!existsSync(templatePath)) return '';
+  const template = readFileSync(templatePath, 'utf8');
+  const match = template.match(/\/\* dcoratto-client-mobile-v1 \*\/([\s\S]*?)\/\* \/dcoratto-client-mobile-v1 \*\//);
+  cachedClientMobileCss = match?.[1]?.trim() || '';
+  return cachedClientMobileCss;
 }
 
 function parseClientLink(pathname) {
