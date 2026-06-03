@@ -16,6 +16,7 @@ const publicRoot = resolve('public');
 const indexFile = join(root, 'index.html');
 const htmlBucket = process.env.SUPABASE_HTML_BUCKET || process.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
 const photoBucket = process.env.SUPABASE_PHOTOS_BUCKET || process.env.VITE_SUPABASE_PHOTOS_BUCKET || 'dcoratto-photos';
+const clientMobileFirstVersion = '2026-06-03-mobile-first-v2';
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   || process.env.SUPABASE_SERVICE_KEY
@@ -419,6 +420,8 @@ async function handleClientLinkRequest(request, response) {
       storagePublicUrl: storageResult.publicUrl || '',
       storagePath: finalStoragePath,
       shareSlug: dbResult.shareSlug || shareSlug,
+      mobileFirst: true,
+      mobileLayoutVersion: clientMobileFirstVersion,
       storageWarning: storageResult.warning || '',
     });
   } catch (error) {
@@ -921,14 +924,42 @@ function optimizeClientHtmlForMobile(html = '') {
 
 function clientMobileCssPatch() {
   if (cachedClientMobileCss) return cachedClientMobileCss;
-  const distTemplate = join(root, 'portfolio_document.html');
-  const publicTemplate = join(publicRoot, 'portfolio_document.html');
-  const templatePath = existsSync(distTemplate) ? distTemplate : publicTemplate;
-  if (!existsSync(templatePath)) return '';
-  const template = readFileSync(templatePath, 'utf8');
+  const template = readPortfolioTemplateSync();
   const match = template.match(/\/\* dcoratto-client-mobile-v1 \*\/([\s\S]*?)\/\* \/dcoratto-client-mobile-v1 \*\//);
   cachedClientMobileCss = match?.[1]?.trim() || '';
   return cachedClientMobileCss;
+}
+
+function portfolioTemplateCandidates() {
+  return [join(root, 'portfolio_document.html'), join(publicRoot, 'portfolio_document.html')];
+}
+
+function isMobileFirstPortfolioTemplate(template = '') {
+  return template.includes('renderMobileFrameFlow')
+    && template.includes('mobile-frame-flow')
+    && template.includes('has-mobile-flow');
+}
+
+function choosePortfolioTemplate(candidates = []) {
+  return candidates.find(candidate => isMobileFirstPortfolioTemplate(candidate.content))
+    || candidates[0]
+    || { content: '', path: '' };
+}
+
+function readPortfolioTemplateSync() {
+  const candidates = portfolioTemplateCandidates()
+    .filter(path => existsSync(path))
+    .map(path => ({ path, content: readFileSync(path, 'utf8') }));
+  return choosePortfolioTemplate(candidates).content;
+}
+
+async function readPortfolioTemplate() {
+  const candidates = [];
+  for (const path of portfolioTemplateCandidates()) {
+    if (!existsSync(path)) continue;
+    candidates.push({ path, content: await readFile(path, 'utf8') });
+  }
+  return choosePortfolioTemplate(candidates).content;
 }
 
 function parseClientLink(pathname) {
@@ -2565,6 +2596,8 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
       shareSlug,
       eventId: eventId || null,
       sharedWithClient: true,
+      mobileFirst: true,
+      mobileLayoutVersion: clientMobileFirstVersion,
       sharedAt: new Date().toISOString(),
       createdBy: actorEmail,
       assignedToEmail,
@@ -2619,10 +2652,8 @@ async function nextHtmlVersionNumber(projectId) {
 }
 
 async function buildStandaloneHtml(preview) {
-  const distTemplate = join(root, 'portfolio_document.html');
-  const publicTemplate = join(publicRoot, 'portfolio_document.html');
-  const templatePath = existsSync(distTemplate) ? distTemplate : publicTemplate;
-  const template = await readFile(templatePath, 'utf8');
+  const template = await readPortfolioTemplate();
+  if (!template) throw new Error('Template portfolio_document.html nao encontrado para gerar o link do cliente.');
   const serialized = JSON.stringify(sanitizeClientPreview(preview))
     .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')
@@ -2630,7 +2661,9 @@ async function buildStandaloneHtml(preview) {
   const hardening = `
     <meta name="robots" content="noindex,nofollow,noarchive">
     <meta name="referrer" content="no-referrer">
+    <meta name="dcoratto-client-layout" content="mobile-first">
     <script>
+      window.__DCORATTO_CLIENT_MOBILE_FIRST__ = ${JSON.stringify(clientMobileFirstVersion)};
       window.__DCORATTO_PORTFOLIO_DOCUMENT__ = ${serialized};
       window.__DCORATTO_CLIENT_VIEW__ = true;
       document.addEventListener('contextmenu', function(event) { event.preventDefault(); });
@@ -2642,7 +2675,8 @@ async function buildStandaloneHtml(preview) {
         }
       }, true);
     </script>`;
-  return template.replace('</head>', `${hardening}</head>`);
+  const html = template.replace('</head>', `${hardening}</head>`);
+  return html.replace('<body>', `<body data-dcoratto-mobile-first="${clientMobileFirstVersion}">`);
 }
 
 function sanitizeClientPreview(preview = {}) {
