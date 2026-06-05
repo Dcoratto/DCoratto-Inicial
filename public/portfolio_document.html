@@ -1103,7 +1103,7 @@
 
       .mobile-frame-callouts {
         display: grid;
-        gap: 8px;
+        gap: 0;
         margin-top: 10px;
       }
 
@@ -1117,6 +1117,13 @@
         font-size: 15px;
         line-height: 1.28;
         overflow-wrap: anywhere;
+        padding: 9px 0;
+        border-top: 1px solid rgba(184,151,106,.16);
+      }
+
+      .mobile-callout:first-child {
+        border-top: 0;
+        padding-top: 0;
       }
 
       .mobile-callout-number {
@@ -1134,6 +1141,22 @@
       }
 
       .mobile-callout-content {
+        display: grid;
+        gap: 5px;
+        min-width: 0;
+      }
+
+      .mobile-callout-kind {
+        color: rgba(215,194,167,.64);
+        font-family: 'Montserrat', sans-serif;
+        font-size: 8px;
+        font-weight: 500;
+        letter-spacing: .18em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .mobile-callout-text {
         min-width: 0;
       }
 
@@ -5345,7 +5368,7 @@
         const extraCallouts = [];
         (Array.isArray(page.annotations) ? page.annotations : []).forEach((annotation, annotationIndex) => {
           const assigned = nearestMobileFrame(annotation, frameEntries);
-          const callout = mobileCalloutFromPageAnnotation(annotation, assigned?.frame, annotationIndex);
+          const callout = mobileCalloutFromPageAnnotation(annotation, assigned, annotationIndex);
           if (!callout) return;
           if (assigned?.entry) assigned.entry.callouts.push(callout);
           else extraCallouts.push(callout);
@@ -5363,7 +5386,7 @@
           <div class="mobile-frame-card is-note-card">
             <div class="mobile-feed-counter">Observacoes</div>
             <div class="mobile-frame-callouts">
-              ${extraCallouts.map((callout, index) => renderMobileCallout(callout, index)).join('')}
+              ${extraCallouts.slice().sort(mobileCalloutSort).map((callout, index) => renderMobileCallout(callout, index)).join('')}
             </div>
           </div>
         ` : '';
@@ -5375,7 +5398,7 @@
         const frame = entry.frame;
         const shape = supportedFrameShapes().includes(frame.shape) ? frame.shape : 'square';
         const hasPhoto = Boolean(frame.photo);
-        const callouts = entry.callouts.map((callout, index) => ({
+        const callouts = entry.callouts.slice().sort(mobileCalloutSort).map((callout, index) => ({
           ...callout,
           marker: index + 1,
         }));
@@ -5420,14 +5443,21 @@
       function renderMobileCallout(callout, index) {
         const marker = callout.marker || index + 1;
         return `
-          <div class="mobile-callout" style="--callout-color:${escapeAttribute(callout.color)}">
+          <div class="mobile-callout ${callout.image ? 'has-image' : ''}" style="--callout-color:${escapeAttribute(callout.color)}">
             <span class="mobile-callout-number">${marker}</span>
             <span class="mobile-callout-content">
-              ${escapeHTML(callout.text || `Detalhe ${marker}`)}
+              <span class="mobile-callout-kind">${escapeHTML(callout.kind || (callout.image ? 'Seta com imagem' : 'Seta com texto'))}</span>
+              <span class="mobile-callout-text">${escapeHTML(callout.text || `Detalhe ${marker}`)}</span>
               ${callout.image ? `<img class="mobile-callout-image" src="${escapeAttribute(callout.image)}" alt="${escapeAttribute(callout.text || `Detalhe ${marker}`)}" loading="lazy">` : ''}
             </span>
           </div>
         `;
+      }
+
+      function mobileCalloutSort(a, b) {
+        return (Number(a.sortY ?? 0) - Number(b.sortY ?? 0))
+          || (Number(a.sortX ?? 0) - Number(b.sortX ?? 0))
+          || (Number(a.sourceIndex ?? 0) - Number(b.sourceIndex ?? 0));
       }
 
       function renderMobileFreeElementCards(elements) {
@@ -5467,14 +5497,19 @@
         return {
           text: annotation.text || '',
           image: '',
+          kind: 'Seta com texto',
           color: annotation.arrowColor || '#d7c2a7',
           arrowWidth: Math.max(.7, Math.min(2.4, Number(annotation.arrowWidth || 1.2))),
           start,
           target,
+          sortX: target.x,
+          sortY: target.y,
+          sourceIndex: annotationIndex,
         };
       }
 
-      function mobileCalloutFromPageAnnotation(annotation, frame, annotationIndex) {
+      function mobileCalloutFromPageAnnotation(annotation, assignment, annotationIndex) {
+        const frame = assignment?.frame || null;
         const targetPoint = {
           x: Number(annotation.toX ?? annotation.fromX ?? 50),
           y: Number(annotation.toY ?? annotation.fromY ?? 50),
@@ -5483,44 +5518,135 @@
           x: Number(annotation.fromX ?? annotation.toX ?? 50),
           y: Number(annotation.fromY ?? annotation.toY ?? 50),
         };
-        const target = frame ? mobilePointInFrame(targetPoint, frame) : {
-          x: clampPercent(targetPoint.x, 50),
-          y: clampPercent(targetPoint.y, 50),
-        };
-        let start = frame ? mobileSourcePointInFrame(sourcePoint, frame, target, annotationIndex) : mobileFallbackStart(target, annotationIndex);
+        const anchorPoint = assignment?.anchorPoint || targetPoint;
+        const labelPoint = assignment?.labelPoint || sourcePoint;
+        const target = frame
+          ? mobilePointInFrame(anchorPoint, frame)
+          : { x: clampPercent(anchorPoint.x, 50), y: clampPercent(anchorPoint.y, 50) };
+        let start = frame
+          ? mobileSourcePointInFrame(labelPoint, frame, target, annotationIndex)
+          : mobileFallbackStart(target, annotationIndex);
         if (mobilePointDistance(start, target) < 8) start = mobileFallbackStart(target, annotationIndex);
         return {
           text: annotation.text || '',
           image: isDetailAnnotation(annotation) ? annotation.image || '' : '',
+          kind: isDetailAnnotation(annotation) ? 'Seta com imagem' : 'Seta com texto',
           color: pageAnnotationArrowColor(annotation),
           arrowWidth: Math.max(.7, Math.min(2.4, Number(annotation.arrowWidth || 1.1))),
           start,
           target,
+          sortX: anchorPoint.x,
+          sortY: anchorPoint.y,
+          sourceIndex: annotationIndex,
         };
       }
 
       function nearestMobileFrame(annotation, entries) {
         if (!entries.length) return null;
-        const point = {
-          x: Number(annotation.toX ?? annotation.fromX ?? 50),
-          y: Number(annotation.toY ?? annotation.fromY ?? 50),
-        };
+        const targetPoint = mobileAnnotationPoint(annotation, 'toX', 'toY');
+        const sourcePoint = mobileAnnotationPoint(annotation, 'fromX', 'fromY');
         let best = null;
         entries.forEach((entry) => {
           const frame = entry.frame;
-          const contains = point.x >= Number(frame.x || 0) - 1
-            && point.x <= Number(frame.x || 0) + Number(frame.width || 1) + 1
-            && point.y >= Number(frame.y || 0) - 1
-            && point.y <= Number(frame.y || 0) + Number(frame.height || 1) + 1;
-          const center = {
-            x: Number(frame.x || 0) + Number(frame.width || 1) / 2,
-            y: Number(frame.y || 0) + Number(frame.height || 1) / 2,
-          };
-          const distance = Math.hypot(point.x - center.x, point.y - center.y);
-          const score = distance + (contains ? -1000 : 0);
-          if (!best || score < best.score) best = { entry, frame, score };
+          const relation = mobileFrameAnnotationRelation(frame, sourcePoint, targetPoint);
+          if (!best || relation.score < best.score) {
+            best = { entry, frame, ...relation };
+          }
         });
         return best;
+      }
+
+      function mobileAnnotationPoint(annotation, xKey, yKey) {
+        return {
+          x: Number(annotation?.[xKey] ?? annotation?.fromX ?? annotation?.toX ?? 50),
+          y: Number(annotation?.[yKey] ?? annotation?.fromY ?? annotation?.toY ?? 50),
+        };
+      }
+
+      function mobileFrameAnnotationRelation(frame, sourcePoint, targetPoint) {
+        const targetInside = mobilePointInsideFrame(targetPoint, frame, 1);
+        const sourceInside = mobilePointInsideFrame(sourcePoint, frame, 1);
+        const targetDistance = mobileDistanceToFrame(targetPoint, frame);
+        const sourceDistance = mobileDistanceToFrame(sourcePoint, frame);
+        const intersects = mobileSegmentIntersectsFrame(sourcePoint, targetPoint, frame);
+        const center = mobileFrameCenter(frame);
+        const centerDistance = Math.min(
+          Math.hypot(targetPoint.x - center.x, targetPoint.y - center.y),
+          Math.hypot(sourcePoint.x - center.x, sourcePoint.y - center.y),
+        );
+
+        if (targetInside) {
+          return {
+            score: -3000 + centerDistance,
+            anchorPoint: targetPoint,
+            labelPoint: sourcePoint,
+          };
+        }
+        if (sourceInside) {
+          return {
+            score: -2200 + centerDistance,
+            anchorPoint: sourcePoint,
+            labelPoint: targetPoint,
+          };
+        }
+        const useTarget = targetDistance <= sourceDistance;
+        return {
+          score: (intersects ? -900 : 0) + Math.min(targetDistance, sourceDistance) * 8 + centerDistance,
+          anchorPoint: useTarget ? targetPoint : sourcePoint,
+          labelPoint: useTarget ? sourcePoint : targetPoint,
+        };
+      }
+
+      function mobileFrameCenter(frame) {
+        return {
+          x: Number(frame.x || 0) + Number(frame.width || 1) / 2,
+          y: Number(frame.y || 0) + Number(frame.height || 1) / 2,
+        };
+      }
+
+      function mobilePointInsideFrame(point, frame, padding = 0) {
+        const left = Number(frame.x || 0) - padding;
+        const top = Number(frame.y || 0) - padding;
+        const right = Number(frame.x || 0) + Number(frame.width || 1) + padding;
+        const bottom = Number(frame.y || 0) + Number(frame.height || 1) + padding;
+        return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+      }
+
+      function mobileDistanceToFrame(point, frame) {
+        const left = Number(frame.x || 0);
+        const top = Number(frame.y || 0);
+        const right = left + Number(frame.width || 1);
+        const bottom = top + Number(frame.height || 1);
+        const dx = Math.max(left - point.x, 0, point.x - right);
+        const dy = Math.max(top - point.y, 0, point.y - bottom);
+        return Math.hypot(dx, dy);
+      }
+
+      function mobileSegmentIntersectsFrame(a, b, frame) {
+        if (mobilePointInsideFrame(a, frame) || mobilePointInsideFrame(b, frame)) return true;
+        const left = Number(frame.x || 0);
+        const top = Number(frame.y || 0);
+        const right = left + Number(frame.width || 1);
+        const bottom = top + Number(frame.height || 1);
+        return mobileSegmentsIntersect(a, b, { x: left, y: top }, { x: right, y: top })
+          || mobileSegmentsIntersect(a, b, { x: right, y: top }, { x: right, y: bottom })
+          || mobileSegmentsIntersect(a, b, { x: right, y: bottom }, { x: left, y: bottom })
+          || mobileSegmentsIntersect(a, b, { x: left, y: bottom }, { x: left, y: top });
+      }
+
+      function mobileSegmentsIntersect(a, b, c, d) {
+        const direction = (p, q, r) => ((r.x - p.x) * (q.y - p.y)) - ((q.x - p.x) * (r.y - p.y));
+        const onSegment = (p, q, r) => Math.min(p.x, r.x) <= q.x && q.x <= Math.max(p.x, r.x)
+          && Math.min(p.y, r.y) <= q.y && q.y <= Math.max(p.y, r.y);
+        const d1 = direction(c, d, a);
+        const d2 = direction(c, d, b);
+        const d3 = direction(a, b, c);
+        const d4 = direction(a, b, d);
+        if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+        return (d1 === 0 && onSegment(c, a, d))
+          || (d2 === 0 && onSegment(c, b, d))
+          || (d3 === 0 && onSegment(a, c, b))
+          || (d4 === 0 && onSegment(a, d, b));
       }
 
       function mobilePointInFrame(point, frame) {
