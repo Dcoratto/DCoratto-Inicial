@@ -68,6 +68,52 @@
         font-weight: 300;
       }
 
+      html.pdf-export-root {
+        min-width: 1440px;
+        overflow: visible;
+        scroll-behavior: auto;
+      }
+
+      body.pdf-export {
+        width: 1440px;
+        min-width: 1440px;
+        overflow: visible;
+        background: var(--bg);
+        user-select: auto;
+      }
+
+      body.pdf-export .topbar {
+        position: static;
+      }
+
+      body.pdf-export .client-intro,
+      body.pdf-export .lightbox {
+        display: none !important;
+      }
+
+      @media print {
+        @page {
+          size: 1440px 1020px;
+          margin: 0;
+        }
+
+        html.pdf-export-root,
+        body.pdf-export {
+          width: 1440px;
+          min-width: 1440px;
+          background: var(--bg);
+        }
+
+        body.pdf-export .topbar {
+          display: none;
+        }
+
+        body.pdf-export #document > section {
+          break-after: page;
+          page-break-after: always;
+        }
+      }
+
       body.lightbox-open { overflow: hidden; }
 
       body.client-intro-open {
@@ -1060,7 +1106,6 @@
         min-height: 0;
         object-fit: cover;
         display: block;
-        transform-origin: center;
       }
 
       .mobile-frame-arrows {
@@ -2336,8 +2381,11 @@
       `);
 
       const storageKey = 'dcoratto.portfolio.document.v1';
-      const isEditablePreview = new URLSearchParams(window.location.search).has('preview');
-      const isClientView = Boolean(window.__DCORATTO_CLIENT_VIEW__) && !isEditablePreview;
+      const urlParams = new URLSearchParams(window.location.search);
+      const isEditablePreview = urlParams.has('preview');
+      const isPdfExport = urlParams.has('pdf');
+      const shouldAutoPrintPdf = isPdfExport && urlParams.has('print');
+      const isClientView = Boolean(window.__DCORATTO_CLIENT_VIEW__) && !isEditablePreview && !isPdfExport;
       const DEFAULT_FRAME_SIZE = 120;
       const MIN_FRAME_SIZE = 40;
       
@@ -2345,6 +2393,10 @@
       if (isClientView) {
         document.documentElement.classList.add('client-view-root');
         document.body.classList.add('client-view');
+      }
+      if (isPdfExport) {
+        document.documentElement.classList.add('pdf-export-root');
+        document.body.classList.add('pdf-export');
       }
       
       let documentData = window.__DCORATTO_PORTFOLIO_DOCUMENT__
@@ -2419,6 +2471,7 @@
       renderDocument();
       resetDocumentHistory();
       initClientIntro();
+      markPdfExportReady();
 
       lightbox.addEventListener('click', (event) => {
         if (event.target === lightbox || event.target.tagName === 'BUTTON') closeLightbox();
@@ -2753,6 +2806,35 @@
         clientIntro.classList.add('active');
         document.body.classList.add('client-intro-open');
         clientIntro.setAttribute('aria-hidden', 'false');
+      }
+
+      function markPdfExportReady() {
+        if (!isPdfExport) return;
+        document.body.dataset.pdfReady = 'true';
+        window.__DCORATTO_PDF_READY__ = true;
+        window.dispatchEvent(new Event('dcoratto:pdf-ready'));
+        if (shouldAutoPrintPdf) {
+          waitForPdfExportAssets().then(() => {
+            window.setTimeout(() => {
+              window.focus();
+              window.print();
+            }, 350);
+          });
+        }
+      }
+
+      function waitForPdfExportAssets() {
+        const fontsReady = document.fonts?.ready?.catch?.(() => null) || Promise.resolve();
+        const imagesReady = Promise.all(Array.from(document.images || []).map((image) => {
+          if (image.complete) return Promise.resolve();
+          return new Promise((resolve) => {
+            const done = () => resolve();
+            image.addEventListener('load', done, { once: true });
+            image.addEventListener('error', done, { once: true });
+            window.setTimeout(done, 15000);
+          });
+        }));
+        return Promise.all([fontsReady, imagesReady]);
       }
 
       function renderCover() {
@@ -5408,7 +5490,6 @@
         const environmentName = environment?.title || environment?.name || 'Ambiente';
         const shape = supportedFrameShapes().includes(frame.shape) ? frame.shape : 'square';
         const hasPhoto = Boolean(frame.photo);
-        const imageStyle = `transform:translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
         const callouts = entry.callouts.slice().sort(mobileCalloutSort).map((callout, index) => ({
           ...callout,
           marker: index + 1,
@@ -5422,13 +5503,13 @@
               ${hasPhoto ? `data-lightbox-src="${escapeAttribute(frame.photo)}" data-lightbox-title="${escapeAttribute(frame.title || `Moldura ${orderIndex + 1}`)}"` : ''}
             >
               ${hasPhoto
-                ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || `Moldura ${orderIndex + 1}`)}" loading="lazy" style="${imageStyle}">`
+                ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || `Moldura ${orderIndex + 1}`)}" loading="lazy">`
                 : '<span class="doc-frame-empty">Moldura sem foto</span>'}
               ${renderMobileFrameArrows(callouts, environmentIndex, pageIndex, entry.frameIndex)}
               ${callouts.map((callout) => `
                 <span
                   class="mobile-frame-marker"
-                  style="left:${callout.target.x}%;top:${callout.target.y}%;--callout-color:${escapeAttribute(callout.color)}"
+                  style="left:${callout.start.x}%;top:${callout.start.y}%;--callout-color:${escapeAttribute(callout.color)}"
                 >${callout.marker}</span>
               `).join('')}
             </button>

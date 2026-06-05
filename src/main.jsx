@@ -32,7 +32,7 @@ function App() {
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-06-05-mobile-arrow-target-v1";
+  const SYSTEM_VERSION = "2026-06-05-pdf-export-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
@@ -196,6 +196,28 @@ function App() {
           status: 'draft',
           reset: true,
         }, window.location.origin);
+        return;
+      }
+      if (event.data?.type === 'dcoratto:generate-pdf') {
+        const source = event.source;
+        try {
+          const result = await generatePortfolioPdf({
+            preview: event.data.preview || remoteDocument?.preview,
+            fileName: event.data.fileName,
+          });
+          source?.postMessage({
+            type: 'dcoratto:pdf-result',
+            ok: true,
+            fileName: result.fileName,
+            pageCount: result.pageCount,
+          }, window.location.origin);
+        } catch (error) {
+          source?.postMessage({
+            type: 'dcoratto:pdf-result',
+            ok: false,
+            error: String(error?.message || error),
+          }, window.location.origin);
+        }
         return;
       }
       if (event.data?.type !== 'dcoratto:editor-state') return;
@@ -380,6 +402,175 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>
 )
+
+const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
+const PDF_VIEWPORT = { width: 1440, height: 1020 };
+
+async function generatePortfolioPdf({ preview, fileName } = {}) {
+  if (!preview || !Array.isArray(preview.environments) || !preview.environments.length) {
+    throw new Error('Adicione ao menos um ambiente antes de gerar o PDF.');
+  }
+
+  const [{ default: renderCanvas }, { jsPDF: PdfDocument }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+  ]);
+
+  localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
+
+  const frame = document.createElement('iframe');
+  frame.title = 'Renderizador de PDF DCoratto';
+  frame.style.position = 'fixed';
+  frame.style.left = '-20000px';
+  frame.style.top = '0';
+  frame.style.width = `${PDF_VIEWPORT.width}px`;
+  frame.style.height = `${PDF_VIEWPORT.height}px`;
+  frame.style.border = '0';
+  frame.style.opacity = '0';
+  frame.style.pointerEvents = 'none';
+  document.body.appendChild(frame);
+
+  try {
+    await loadPdfFrame(frame, `/portfolio_document.html?pdf=${Date.now()}`);
+    await waitForPdfDocumentReady(frame);
+
+    const doc = frame.contentDocument;
+    const win = frame.contentWindow;
+    const sections = Array.from(doc.querySelectorAll('#document > section'))
+      .filter(section => section.getBoundingClientRect().width && section.getBoundingClientRect().height);
+
+    if (!sections.length) throw new Error('Nao foi possivel encontrar paginas para gerar o PDF.');
+
+    let pdf = null;
+    for (const section of sections) {
+      section.scrollIntoView({ block: 'start' });
+      await waitForAnimationFrame(win);
+
+      const rect = section.getBoundingClientRect();
+      const pageWidth = Math.max(1, Math.ceil(rect.width || PDF_VIEWPORT.width));
+      const sectionHeight = Math.max(1, Math.ceil(rect.height || section.scrollHeight || PDF_VIEWPORT.height));
+      const canvas = await renderCanvas(section, {
+        backgroundColor: '#080807',
+        scale: Math.min(2, Math.max(1.25, window.devicePixelRatio || 1.5)),
+        useCORS: true,
+        allowTaint: false,
+        logging: false,
+        imageTimeout: 20000,
+        windowWidth: PDF_VIEWPORT.width,
+        windowHeight: Math.max(PDF_VIEWPORT.height, sectionHeight),
+      });
+
+      const pageHeight = Math.max(1, Math.round((canvas.height / canvas.width) * pageWidth));
+      const orientation = pageWidth >= pageHeight ? 'landscape' : 'portrait';
+      if (!pdf) {
+        pdf = new PdfDocument({
+          orientation,
+          unit: 'px',
+          format: [pageWidth, pageHeight],
+          compress: true,
+          hotfixes: ['px_scaling'],
+        });
+      } else {
+        pdf.addPage([pageWidth, pageHeight], orientation);
+      }
+      pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageWidth, pageHeight);
+    }
+
+    const safeFileName = normalizePdfFileName(fileName || portfolioPdfFileName(preview));
+    pdf.save(safeFileName);
+    return { fileName: safeFileName, pageCount: sections.length };
+  } finally {
+    frame.remove();
+  }
+}
+
+function loadPdfFrame(frame, src) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error('Tempo esgotado ao preparar o PDF.')), 30000);
+    frame.onload = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    frame.onerror = () => {
+      window.clearTimeout(timer);
+      reject(new Error('Nao foi possivel abrir o documento para PDF.'));
+    };
+    frame.src = src;
+  });
+}
+
+async function waitForPdfDocumentReady(frame) {
+  const doc = frame.contentDocument;
+  if (!doc) throw new Error('Nao foi possivel acessar o documento do PDF.');
+  await waitForCondition(() => doc.body?.dataset.pdfReady === 'true' && doc.querySelector('#document > section'), 15000);
+  await waitForPdfAssets(doc);
+  await waitForAnimationFrame(frame.contentWindow);
+}
+
+function waitForCondition(predicate, timeout = 10000, interval = 80) {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const tick = () => {
+      if (predicate()) {
+        resolve();
+        return;
+      }
+      if (Date.now() - startedAt > timeout) {
+        reject(new Error('Tempo esgotado ao renderizar o documento para PDF.'));
+        return;
+      }
+      window.setTimeout(tick, interval);
+    };
+    tick();
+  });
+}
+
+async function waitForPdfAssets(doc) {
+  await (doc.fonts?.ready?.catch?.(() => null) || Promise.resolve());
+  await Promise.all(Array.from(doc.images || []).map((image) => {
+    if (image.complete) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => resolve();
+      image.addEventListener('load', done, { once: true });
+      image.addEventListener('error', done, { once: true });
+      window.setTimeout(done, 20000);
+    });
+  }));
+}
+
+function waitForAnimationFrame(win = window) {
+  return new Promise(resolve => {
+    const target = win || window;
+    const raf = callback => (target.requestAnimationFrame || window.requestAnimationFrame).call(target, callback);
+    raf(() => raf(resolve));
+  });
+}
+
+function portfolioPdfFileName(preview = {}) {
+  const client = pdfNamePart(preview.client?.name || 'cliente');
+  const contract = pdfNamePart(preview.client?.contractNumber || '');
+  return ['projeto-inicial', client, contract].filter(Boolean).join('-') + '.pdf';
+}
+
+function normalizePdfFileName(value = '') {
+  const fileName = String(value || 'projeto-inicial.pdf')
+    .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 120);
+  return fileName.toLowerCase().endsWith('.pdf') ? fileName : `${fileName || 'projeto-inicial'}.pdf`;
+}
+
+function pdfNamePart(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 48);
+}
 
 function hydrateBrowserStorage(remote) {
   const hydrated = { ...(remote || {}) };

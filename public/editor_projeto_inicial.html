@@ -320,6 +320,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
     <button class="icon-btn" type="button" id="settingsBtn" onclick="openSettings()" title="Configurações" aria-label="Configurações">⚙</button>
     <button class="ghost-btn" type="button" id="newProjectBtn" onclick="startNewProject()">Novo projeto</button>
     <button class="ghost-btn" type="button" id="previewHtmlBtn" onclick="openHtmlPreview()">Preview HTML</button>
+    <button class="ghost-btn" type="button" id="generatePdfBtn" onclick="generateProjectPdf()">Gerar PDF</button>
     <button class="ghost-btn" type="button" id="saveDraftBtn" onclick="saveProjectDraft()">Salvar como rascunho</button>
     <button class="ghost-btn" type="button" id="sellProjectBtn" onclick="markProjectSold()">Marcar vendido</button>
     <button class="hbtn" type="button" id="publishClientBtn" onclick="publishClientHtml()">Gerar link para cliente</button>
@@ -377,6 +378,7 @@ footer span{font-size:10px;color:var(--muted);letter-spacing:.1em}
       </div>
       <div class="preview-actions">
         <button class="ghost-btn" type="button" onclick="refreshHtmlPreview()">Atualizar preview</button>
+        <button class="ghost-btn" type="button" id="previewGeneratePdfBtn" onclick="generateProjectPdf()">Gerar PDF</button>
         <button class="hbtn" type="button" id="previewPublishClientBtn" onclick="publishClientHtml()">Gerar link para cliente</button>
         <button class="settings-close" type="button" onclick="closePreview()" aria-label="Fechar preview">×</button>
       </div>
@@ -587,6 +589,7 @@ let editorSettings = loadEditorSettings();
 let builderDraft = loadBuilderDraft();
 let editingCatalogItemId = null;
 let editingFactoryName = '';
+let pdfGenerationPending = false;
 let editingMaterialOption = null;
 let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
 let clientHistoryItems = [];
@@ -3077,6 +3080,19 @@ window.addEventListener('message', event => {
     }
     return;
   }
+  if (event.data?.type === 'dcoratto:pdf-result') {
+    pdfGenerationPending = false;
+    setPdfButtonsBusy(false);
+    const status = document.getElementById('previewStatus');
+    if (event.data.ok) {
+      if (status) status.textContent = `PDF gerado com sucesso${event.data.fileName ? `: ${event.data.fileName}` : '.'}`;
+    } else {
+      const message = event.data.error || 'Nao foi possivel gerar o PDF.';
+      if (status) status.textContent = message;
+      alert(message);
+    }
+    return;
+  }
   if (event.data?.type === 'dcoratto:project-meta') {
     currentProjectId = event.data.projectId || currentProjectId;
     projectStatus = event.data.status || projectStatus;
@@ -3403,7 +3419,7 @@ document.addEventListener('change', event => {
 
 function isSoldReadOnlyAllowedTarget(target) {
   return Boolean(target?.closest(
-    '#historyBtn,#settingsBtn,#newProjectBtn,#previewHtmlBtn,.preview-overlay,.history-overlay,.settings-close'
+    '#historyBtn,#settingsBtn,#newProjectBtn,#previewHtmlBtn,#generatePdfBtn,#previewGeneratePdfBtn,.preview-overlay,.history-overlay,.settings-close'
   ));
 }
 
@@ -3475,6 +3491,67 @@ function refreshHtmlPreview() {
 function openHtmlPreview() {
   refreshHtmlPreview();
   document.getElementById('previewOverlay').classList.add('active');
+}
+
+function generateProjectPdf() {
+  if (pdfGenerationPending) return;
+  const preview = buildPreviewDocumentData();
+  if (!Array.isArray(preview.environments) || !preview.environments.length) {
+    alert('Adicione ao menos um ambiente antes de gerar o PDF.');
+    return;
+  }
+  safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
+  const fileName = previewPdfFileName(preview);
+  pdfGenerationPending = true;
+  setPdfButtonsBusy(true);
+  const status = document.getElementById('previewStatus');
+  if (status) status.textContent = 'Gerando PDF em layout desktop. Aguarde o download.';
+
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage({
+      type: 'dcoratto:generate-pdf',
+      preview,
+      fileName,
+    }, window.location.origin);
+    return;
+  }
+
+  const popup = window.open(`/portfolio_document.html?pdf=${Date.now()}&print=1`, '_blank', 'width=1440,height=1000');
+  if (!popup) {
+    pdfGenerationPending = false;
+    setPdfButtonsBusy(false);
+    alert('Permita pop-ups para abrir a versao de impressao do PDF.');
+    return;
+  }
+  window.setTimeout(() => {
+    pdfGenerationPending = false;
+    setPdfButtonsBusy(false);
+  }, 1800);
+}
+
+function setPdfButtonsBusy(isBusy) {
+  ['generatePdfBtn', 'previewGeneratePdfBtn'].forEach(id => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    button.disabled = Boolean(isBusy);
+    button.textContent = isBusy ? 'Gerando PDF...' : 'Gerar PDF';
+  });
+}
+
+function previewPdfFileName(preview = {}) {
+  const client = fileNamePart(preview.client?.name || 'cliente');
+  const contract = fileNamePart(preview.client?.contractNumber || '');
+  return ['projeto-inicial', client, contract].filter(Boolean).join('-') + '.pdf';
+}
+
+function fileNamePart(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 48);
 }
 
 function publishClientHtml() {
