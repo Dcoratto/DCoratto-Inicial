@@ -1060,6 +1060,7 @@
         min-height: 0;
         object-fit: cover;
         display: block;
+        transform-origin: center;
       }
 
       .mobile-frame-arrows {
@@ -5407,6 +5408,7 @@
         const environmentName = environment?.title || environment?.name || 'Ambiente';
         const shape = supportedFrameShapes().includes(frame.shape) ? frame.shape : 'square';
         const hasPhoto = Boolean(frame.photo);
+        const imageStyle = `transform:translate(${Number(frame.imgX || 0)}%, ${Number(frame.imgY || 0)}%) scale(${Number(frame.imgScale || 1)})`;
         const callouts = entry.callouts.slice().sort(mobileCalloutSort).map((callout, index) => ({
           ...callout,
           marker: index + 1,
@@ -5420,13 +5422,13 @@
               ${hasPhoto ? `data-lightbox-src="${escapeAttribute(frame.photo)}" data-lightbox-title="${escapeAttribute(frame.title || `Moldura ${orderIndex + 1}`)}"` : ''}
             >
               ${hasPhoto
-                ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || `Moldura ${orderIndex + 1}`)}" loading="lazy">`
+                ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || `Moldura ${orderIndex + 1}`)}" loading="lazy" style="${imageStyle}">`
                 : '<span class="doc-frame-empty">Moldura sem foto</span>'}
               ${renderMobileFrameArrows(callouts, environmentIndex, pageIndex, entry.frameIndex)}
               ${callouts.map((callout) => `
                 <span
                   class="mobile-frame-marker"
-                  style="left:${callout.start.x}%;top:${callout.start.y}%;--callout-color:${escapeAttribute(callout.color)}"
+                  style="left:${callout.target.x}%;top:${callout.target.y}%;--callout-color:${escapeAttribute(callout.color)}"
                 >${callout.marker}</span>
               `).join('')}
             </button>
