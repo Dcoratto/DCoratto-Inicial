@@ -2175,7 +2175,11 @@
         }
 
         body.client-view .environment-page.has-mobile-flow .page-frames {
-          display: none;
+          display: none !important;
+        }
+
+        body.client-view .environment-page:has(.mobile-frame-flow) .page-frames {
+          display: none !important;
         }
 
         body.client-view .environment-page.has-mobile-flow .mobile-frame-flow {

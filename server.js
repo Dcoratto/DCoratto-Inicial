@@ -16,7 +16,7 @@ const publicRoot = resolve('public');
 const indexFile = join(root, 'index.html');
 const htmlBucket = process.env.SUPABASE_HTML_BUCKET || process.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
 const photoBucket = process.env.SUPABASE_PHOTOS_BUCKET || process.env.VITE_SUPABASE_PHOTOS_BUCKET || 'dcoratto-photos';
-const clientMobileFirstVersion = '2026-06-03-mobile-first-v2';
+const clientMobileFirstVersion = '2026-06-05-mobile-feed-v3';
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   || process.env.SUPABASE_SERVICE_KEY
@@ -901,7 +901,7 @@ async function handleClientHtmlRequest(url, response) {
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'X-Content-Type-Options': 'nosniff',
     });
-    response.end(optimizeClientHtmlForMobile(html));
+    response.end(await optimizeClientHtmlForMobile(html));
   } catch (error) {
     response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
     response.end(`Nao foi possivel abrir o HTML do cliente: ${String(error?.message || error)}`);
@@ -910,16 +910,31 @@ async function handleClientHtmlRequest(url, response) {
 
 let cachedClientMobileCss = '';
 
-function optimizeClientHtmlForMobile(html = '') {
-  if (!html || html.includes('dcoratto-client-mobile-v1') || html.includes('data-dcoratto-mobile-client-optimized')) {
+async function optimizeClientHtmlForMobile(html = '') {
+  if (!html) return html;
+  if (clientHtmlIsCurrentMobileFirst(html)) {
     return html;
   }
+  const preview = extractPreviewFromHtmlContent(html);
+  if (preview) {
+    try {
+      return await buildStandaloneHtml(preview);
+    } catch (error) {
+      console.warn('Nao foi possivel reconstruir HTML mobile-first do cliente. Aplicando patch CSS de fallback.', error);
+    }
+  }
+  if (html.includes('data-dcoratto-mobile-client-optimized')) return html;
   const css = clientMobileCssPatch();
   if (!css) return html;
-  const style = `<style data-dcoratto-mobile-client-optimized="2026-06-03">\n${css}\n</style>`;
+  const style = `<style data-dcoratto-mobile-client-optimized="${clientMobileFirstVersion}">\n${css}\n</style>`;
   return html.includes('</head>')
     ? html.replace('</head>', `${style}</head>`)
     : `${style}${html}`;
+}
+
+function clientHtmlIsCurrentMobileFirst(html = '') {
+  return html.includes(`__DCORATTO_CLIENT_MOBILE_FIRST__ = ${JSON.stringify(clientMobileFirstVersion)}`)
+    || html.includes(`data-dcoratto-mobile-first="${clientMobileFirstVersion}"`);
 }
 
 function clientMobileCssPatch() {
