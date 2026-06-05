@@ -1109,9 +1109,9 @@
 
       .mobile-callout {
         display: grid;
-        grid-template-columns: 22px minmax(0, 1fr);
-        gap: 8px;
-        align-items: start;
+        grid-template-columns: 24px minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
         color: #f5eddf;
         font-family: 'Cormorant Garamond', Georgia, serif;
         font-size: 15px;
@@ -1126,11 +1126,15 @@
         padding-top: 0;
       }
 
+      .mobile-callout.has-image {
+        align-items: start;
+      }
+
       .mobile-callout-number {
         display: grid;
         place-items: center;
-        width: 20px;
-        height: 20px;
+        width: 22px;
+        height: 22px;
         border: 1px solid var(--callout-color, #d7c2a7);
         border-radius: 50%;
         color: #f7f2ea;
@@ -1141,8 +1145,7 @@
       }
 
       .mobile-callout-content {
-        display: grid;
-        gap: 5px;
+        display: block;
         min-width: 0;
       }
 
@@ -1157,6 +1160,7 @@
       }
 
       .mobile-callout-text {
+        display: block;
         min-width: 0;
       }
 
@@ -5330,7 +5334,7 @@
       function renderEnvironmentPage(environment, page, environmentIndex, pageIndex) {
         const pageNumber = page.number || `${String(environmentIndex + 1).padStart(2, '0')}.${String(pageIndex + 1).padStart(2, '0')}`;
         const frames = normalizeFrames(page);
-        const mobileFlow = isClientView ? renderMobileFrameFlow(page, frames, environmentIndex, pageIndex) : '';
+        const mobileFlow = isClientView ? renderMobileFrameFlow(environment, page, frames, environmentIndex, pageIndex) : '';
         return `
           <section class="environment-page ${isEditablePreview ? 'editable' : ''} ${mobileFlow ? 'has-mobile-flow' : ''}" id="${slug(environment.title)}-${slug(page.title || `pagina-${pageIndex + 1}`)}">
             <div class="page-fixed-title">
@@ -5358,7 +5362,7 @@
         `;
       }
 
-      function renderMobileFrameFlow(page, frames, environmentIndex, pageIndex) {
+      function renderMobileFrameFlow(environment, page, frames, environmentIndex, pageIndex) {
         if (!frames.length) return '';
         const frameEntries = frames.map((frame, frameIndex) => ({
           frame,
@@ -5383,7 +5387,7 @@
           .sort((a, b) => (Number(a.frame.y || 0) - Number(b.frame.y || 0)) || (Number(a.frame.x || 0) - Number(b.frame.x || 0)) || (a.order - b.order));
 
         const frameCards = ordered.map((entry, orderIndex) =>
-          renderMobileFrameCard(entry, orderIndex, ordered.length, environmentIndex, pageIndex)
+          renderMobileFrameCard(entry, orderIndex, environment, environmentIndex, pageIndex)
         ).join('');
         const freeElementCards = renderMobileFreeElementCards(page.freeElements);
         const extras = extraCallouts.length ? `
@@ -5398,8 +5402,9 @@
         return `<div class="mobile-frame-flow">${frameCards}${extras}${freeElementCards}</div>`;
       }
 
-      function renderMobileFrameCard(entry, orderIndex, totalFrames, environmentIndex, pageIndex) {
+      function renderMobileFrameCard(entry, orderIndex, environment, environmentIndex, pageIndex) {
         const frame = entry.frame;
+        const environmentName = environment?.title || environment?.name || 'Ambiente';
         const shape = supportedFrameShapes().includes(frame.shape) ? frame.shape : 'square';
         const hasPhoto = Boolean(frame.photo);
         const callouts = entry.callouts.slice().sort(mobileCalloutSort).map((callout, index) => ({
@@ -5408,7 +5413,7 @@
         }));
         return `
           <div class="mobile-frame-card shape-${escapeAttribute(shape)}">
-            <div class="mobile-feed-counter">Moldura ${String(orderIndex + 1).padStart(2, '0')} / ${String(totalFrames).padStart(2, '0')}</div>
+            <div class="mobile-feed-counter">${escapeHTML(environmentName)}</div>
             <button
               class="mobile-frame-media"
               type="button"
@@ -5425,7 +5430,6 @@
                 >${callout.marker}</span>
               `).join('')}
             </button>
-            ${frame.title ? `<div class="mobile-frame-title">${escapeHTML(frame.title)}</div>` : ''}
             ${callouts.length ? `<div class="mobile-frame-callouts">${callouts.map(renderMobileCallout).join('')}</div>` : ''}
           </div>
         `;
@@ -5450,7 +5454,6 @@
           <div class="mobile-callout ${callout.image ? 'has-image' : ''}" style="--callout-color:${escapeAttribute(callout.color)}">
             <span class="mobile-callout-number">${marker}</span>
             <span class="mobile-callout-content">
-              <span class="mobile-callout-kind">${escapeHTML(callout.kind || (callout.image ? 'Seta com imagem' : 'Seta com texto'))}</span>
               <span class="mobile-callout-text">${escapeHTML(callout.text || `Detalhe ${marker}`)}</span>
               ${callout.image ? `<img class="mobile-callout-image" src="${escapeAttribute(callout.image)}" alt="${escapeAttribute(callout.text || `Detalhe ${marker}`)}" loading="lazy">` : ''}
             </span>
