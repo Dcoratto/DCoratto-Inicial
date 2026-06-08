@@ -1104,8 +1104,10 @@
         width: 100%;
         height: 100%;
         min-height: 0;
-        object-fit: cover;
+        object-fit: contain;
+        object-position: center center;
         display: block;
+        background: #080807;
       }
 
       .mobile-frame-arrows {
@@ -1114,6 +1116,7 @@
         z-index: 2;
         width: 100%;
         height: 100%;
+        display: none;
         pointer-events: none;
       }
 
@@ -2270,7 +2273,7 @@
 
         body.client-view .mobile-frame-card.shape-circle .mobile-frame-media {
           aspect-ratio: 1 / 1;
-          border-radius: 50%;
+          border-radius: 0;
         }
 
         body.client-view .mobile-frame-card.shape-square .mobile-frame-media {
@@ -2295,7 +2298,8 @@
         body.client-view .mobile-callout-image {
           width: min(100%, 180px);
           max-height: 18svh;
-          object-fit: cover;
+          object-fit: contain;
+          background: #080807;
         }
 
         body.client-view .mobile-free-text {
@@ -2333,6 +2337,40 @@
           right: 12px;
         }
         /* /dcoratto-client-mobile-v1 */
+      }
+
+      body.pdf-export .cover {
+        min-height: calc(100vh - 84px) !important;
+        padding: 72px 28px !important;
+      }
+
+      body.pdf-export .environment {
+        min-height: calc(100vh - 84px) !important;
+        padding: 34px 60px 76px !important;
+      }
+
+      body.pdf-export .environment-page {
+        min-height: calc(100vh - 84px) !important;
+        padding: 42px 54px 58px !important;
+      }
+
+      body.pdf-export .page-frames {
+        width: 100% !important;
+        min-height: 720px !important;
+        margin: 0 !important;
+      }
+
+      body.pdf-export .mobile-frame-flow {
+        display: none !important;
+      }
+
+      body.pdf-export .photo-card img,
+      body.pdf-export .doc-photo-frame img,
+      body.pdf-export .mobile-frame-media img,
+      body.pdf-export .page-free-element.type-image img {
+        object-fit: contain !important;
+        object-position: center center !important;
+        background: #080807;
       }
     </style>
   </head>
@@ -5509,7 +5547,7 @@
               ${callouts.map((callout) => `
                 <span
                   class="mobile-frame-marker"
-                  style="left:${callout.start.x}%;top:${callout.start.y}%;--callout-color:${escapeAttribute(callout.color)}"
+                  style="left:${callout.target.x}%;top:${callout.target.y}%;--callout-color:${escapeAttribute(callout.color)}"
                 >${callout.marker}</span>
               `).join('')}
             </button>
@@ -5519,16 +5557,7 @@
       }
 
       function renderMobileFrameArrows(callouts, environmentIndex, pageIndex, frameIndex) {
-        if (!callouts.length) return '';
-        const markerDefs = callouts.map((callout, index) => {
-          const markerId = mobileArrowMarkerId(environmentIndex, pageIndex, frameIndex, index);
-          return `<marker id="${markerId}" viewBox="0 0 8 8" markerWidth="7" markerHeight="7" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="${escapeAttribute(callout.color)}"></path></marker>`;
-        }).join('');
-        const lines = callouts.map((callout, index) => {
-          const markerId = mobileArrowMarkerId(environmentIndex, pageIndex, frameIndex, index);
-          return `<line x1="${callout.start.x}" y1="${callout.start.y}" x2="${callout.target.x}" y2="${callout.target.y}" stroke="${escapeAttribute(callout.color)}" stroke-width="${callout.arrowWidth}" stroke-linecap="round" vector-effect="non-scaling-stroke" marker-end="url(#${markerId})"></line>`;
-        }).join('');
-        return `<svg class="mobile-frame-arrows" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs>${markerDefs}</defs>${lines}</svg>`;
+        return '';
       }
 
       function renderMobileCallout(callout, index) {
@@ -5743,8 +5772,8 @@
         const width = Math.max(1, Number(frame.width || 1));
         const height = Math.max(1, Number(frame.height || 1));
         return {
-          x: clampPercent(((Number(point.x || 0) - Number(frame.x || 0)) / width) * 100, 50, 4, 96),
-          y: clampPercent(((Number(point.y || 0) - Number(frame.y || 0)) / height) * 100, 50, 4, 96),
+          x: clampPercent(((Number(point.x || 0) - Number(frame.x || 0)) / width) * 100, 50, 0, 100),
+          y: clampPercent(((Number(point.y || 0) - Number(frame.y || 0)) / height) * 100, 50, 0, 100),
         };
       }
 

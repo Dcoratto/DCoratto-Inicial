@@ -32,7 +32,7 @@ function App() {
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-06-05-pdf-export-v1";
+  const SYSTEM_VERSION = "2026-06-08-mobile-contain-pdf-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
@@ -447,16 +447,16 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
       await waitForAnimationFrame(win);
 
       const rect = section.getBoundingClientRect();
-      const pageWidth = Math.max(1, Math.ceil(rect.width || PDF_VIEWPORT.width));
-      const sectionHeight = Math.max(1, Math.ceil(rect.height || section.scrollHeight || PDF_VIEWPORT.height));
+      const pageWidth = Math.max(1, Math.ceil(rect.width || PDF_VIEWPORT.width), Math.ceil(section.scrollWidth || 0));
+      const sectionHeight = Math.max(1, Math.ceil(rect.height || PDF_VIEWPORT.height), Math.ceil(section.scrollHeight || 0));
       const canvas = await renderCanvas(section, {
         backgroundColor: '#080807',
-        scale: Math.min(2, Math.max(1.25, window.devicePixelRatio || 1.5)),
+        scale: 2,
         useCORS: true,
         allowTaint: false,
         logging: false,
         imageTimeout: 20000,
-        windowWidth: PDF_VIEWPORT.width,
+        windowWidth: pageWidth,
         windowHeight: Math.max(PDF_VIEWPORT.height, sectionHeight),
       });
 
