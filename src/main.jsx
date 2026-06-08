@@ -454,10 +454,13 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
       await waitForAnimationFrame(win);
 
       try {
-        const rect = section.getBoundingClientRect();
+        const captureElement = preparedTarget.element || section;
+        captureElement.scrollIntoView?.({ block: 'start' });
+        await waitForAnimationFrame(win);
+        const rect = captureElement.getBoundingClientRect();
         const pageWidth = preparedTarget.pageWidth || PDF_VIEWPORT.width;
-        const sectionHeight = Math.max(1, Math.ceil(rect.height || PDF_VIEWPORT.height), Math.ceil(section.scrollHeight || 0));
-        const canvas = await renderCanvas(section, {
+        const sectionHeight = Math.max(1, Math.ceil(rect.height || PDF_VIEWPORT.height), Math.ceil(captureElement.scrollHeight || 0));
+        const canvas = await renderCanvas(captureElement, {
           backgroundColor: '#080807',
           scale: 2,
           useCORS: true,
@@ -558,9 +561,20 @@ function preparePdfFramePageForCapture(target) {
   if (!frames) return preparePdfSectionForCapture(section);
 
   const hiddenElements = new Map();
+  const restoreFramesStyle = rememberInlineStyles(frames, ['transform', 'transform-origin', 'margin-left', 'margin-top', 'width', 'min-height', 'height']);
+  const baseFramesRect = frames.getBoundingClientRect();
+  const baseFramesHeight = Math.max(frames.scrollHeight, frames.offsetHeight, baseFramesRect.height);
   const allFrames = Array.from(frames.querySelectorAll(':scope > .doc-photo-frame'));
   const includeAllAnnotations = allFrames.length <= 1;
   const relatedAnnotationIds = collectFrameRelatedAnnotationIds(frames, target.frame, includeAllAnnotations);
+
+  frames.style.transform = 'none';
+  frames.style.transformOrigin = 'top left';
+  frames.style.marginLeft = '0';
+  frames.style.marginTop = '0';
+  frames.style.setProperty('width', `${baseFramesRect.width}px`, 'important');
+  frames.style.setProperty('min-height', `${baseFramesHeight}px`, 'important');
+  frames.style.setProperty('height', `${baseFramesHeight}px`, 'important');
 
   allFrames.forEach((frame) => {
     if (frame !== target.frame) hidePdfElement(frame, hiddenElements);
@@ -577,17 +591,48 @@ function preparePdfFramePageForCapture(target) {
     }
   });
 
-  const preparedSection = preparePdfSectionForCapture(section, {
-    allowWiderPage: true,
-    includeContainerBounds: false,
-    trimVerticalWhitespace: true,
+  const visualBounds = collectPdfVisualBounds(frames, { includeContainerBounds: false });
+  if (!visualBounds) {
+    return {
+      pageWidth: PDF_VIEWPORT.width,
+      element: section,
+      restore() {
+        restoreInlineStyles(frames, restoreFramesStyle);
+        restoreHiddenPdfElements(hiddenElements);
+      },
+    };
+  }
+
+  const contentWidth = Math.max(1, visualBounds.right - visualBounds.left);
+  const contentHeight = Math.max(1, visualBounds.bottom - visualBounds.top);
+  const pageWidth = Math.ceil(Math.min(PDF_MAX_PAGE_WIDTH, contentWidth + (PDF_PAGE_MARGIN * 2)));
+  const scale = Math.min(1, Math.max(1, pageWidth - (PDF_PAGE_MARGIN * 2)) / contentWidth);
+  const pageHeight = Math.ceil((contentHeight * scale) + (PDF_PAGE_MARGIN * 2));
+  const sheet = createPdfFrameSheet(section.ownerDocument, {
+    pageWidth,
+    pageHeight,
   });
+  const frameClone = frames.cloneNode(true);
+  frameClone.style.position = 'absolute';
+  frameClone.style.left = `${PDF_PAGE_MARGIN - ((visualBounds.left - baseFramesRect.left) * scale)}px`;
+  frameClone.style.top = `${PDF_PAGE_MARGIN - ((visualBounds.top - baseFramesRect.top) * scale)}px`;
+  frameClone.style.width = `${baseFramesRect.width}px`;
+  frameClone.style.minHeight = `${baseFramesHeight}px`;
+  frameClone.style.height = `${baseFramesHeight}px`;
+  frameClone.style.margin = '0';
+  frameClone.style.transformOrigin = 'top left';
+  frameClone.style.transform = `scale(${scale})`;
+  sheet.appendChild(frameClone);
+  section.ownerDocument.body.appendChild(sheet);
+
+  restoreHiddenPdfElements(hiddenElements);
+  restoreInlineStyles(frames, restoreFramesStyle);
 
   return {
-    pageWidth: preparedSection.pageWidth,
+    pageWidth,
+    element: sheet,
     restore() {
-      preparedSection.restore();
-      restoreHiddenPdfElements(hiddenElements);
+      sheet.remove();
     },
   };
 }
@@ -732,6 +777,20 @@ function restoreHiddenPdfElements(hiddenElements) {
   hiddenElements.forEach((display, element) => {
     element.style.display = display;
   });
+}
+
+function createPdfFrameSheet(doc, { pageWidth, pageHeight }) {
+  const sheet = doc.createElement('section');
+  sheet.className = 'pdf-frame-sheet';
+  sheet.style.position = 'relative';
+  sheet.style.width = `${Math.max(1, Math.ceil(pageWidth))}px`;
+  sheet.style.minHeight = `${Math.max(1, Math.ceil(pageHeight))}px`;
+  sheet.style.height = `${Math.max(1, Math.ceil(pageHeight))}px`;
+  sheet.style.overflow = 'hidden';
+  sheet.style.background = '#080807';
+  sheet.style.color = '#f7f2ea';
+  sheet.style.fontFamily = 'Montserrat, Arial, sans-serif';
+  return sheet;
 }
 
 function rememberInlineStyles(element, properties) {
