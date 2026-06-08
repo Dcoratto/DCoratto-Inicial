@@ -590,7 +590,7 @@ let builderDraft = loadBuilderDraft();
 let editingCatalogItemId = null;
 let editingFactoryName = '';
 let pdfGenerationPending = false;
-let pdfGenerationFallbackTimer = null;
+let pdfGenerationTimeoutTimer = null;
 let editingMaterialOption = null;
 let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
 let clientHistoryItems = [];
@@ -3083,15 +3083,16 @@ window.addEventListener('message', event => {
   }
   if (event.data?.type === 'dcoratto:pdf-result') {
     pdfGenerationPending = false;
-    window.clearTimeout(pdfGenerationFallbackTimer);
-    pdfGenerationFallbackTimer = null;
+    window.clearTimeout(pdfGenerationTimeoutTimer);
+    pdfGenerationTimeoutTimer = null;
     setPdfButtonsBusy(false);
     const status = document.getElementById('previewStatus');
     if (event.data.ok) {
       if (status) status.textContent = `PDF gerado com sucesso${event.data.fileName ? `: ${event.data.fileName}` : '.'}`;
     } else {
       const message = event.data.error || 'Nao foi possivel gerar o PDF.';
-      openPdfPrintFallback(`${message} Abrindo a versao desktop para salvar em PDF.`);
+      if (status) status.textContent = message;
+      alert(message);
     }
     return;
   }
@@ -3509,19 +3510,17 @@ function generateProjectPdf() {
   const status = document.getElementById('previewStatus');
   if (status) status.textContent = 'Gerando PDF em layout desktop. Aguarde o download.';
 
-  if (editorActor?.isPrimary === false) {
-    openPdfPrintFallback('Abrindo a versao desktop para salvar em PDF.');
-    return;
-  }
-
   if (window.parent && window.parent !== window) {
     window.parent.postMessage({
       type: 'dcoratto:generate-pdf',
       preview,
       fileName,
     }, window.location.origin);
-    pdfGenerationFallbackTimer = window.setTimeout(() => {
-      openPdfPrintFallback('A geracao direta demorou mais que o esperado. Abrindo a versao desktop para salvar em PDF.');
+    pdfGenerationTimeoutTimer = window.setTimeout(() => {
+      pdfGenerationPending = false;
+      setPdfButtonsBusy(false);
+      const currentStatus = document.getElementById('previewStatus');
+      if (currentStatus) currentStatus.textContent = 'A geracao do PDF demorou mais que o esperado. Tente novamente.';
     }, 45000);
     return;
   }
@@ -3530,8 +3529,8 @@ function generateProjectPdf() {
 }
 
 function openPdfPrintFallback(message = 'Abrindo a versao desktop para salvar em PDF.') {
-  window.clearTimeout(pdfGenerationFallbackTimer);
-  pdfGenerationFallbackTimer = null;
+  window.clearTimeout(pdfGenerationTimeoutTimer);
+  pdfGenerationTimeoutTimer = null;
   const popup = window.open(`/portfolio_document.html?pdf=${Date.now()}&print=1`, '_blank', 'width=1440,height=1000');
   if (!popup) {
     pdfGenerationPending = false;
