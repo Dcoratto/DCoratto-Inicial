@@ -446,34 +446,41 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
       section.scrollIntoView({ block: 'start' });
       await waitForAnimationFrame(win);
 
-      const rect = section.getBoundingClientRect();
-      const pageWidth = Math.max(1, Math.ceil(rect.width || PDF_VIEWPORT.width), Math.ceil(section.scrollWidth || 0));
-      const sectionHeight = Math.max(1, Math.ceil(rect.height || PDF_VIEWPORT.height), Math.ceil(section.scrollHeight || 0));
-      const canvas = await renderCanvas(section, {
-        backgroundColor: '#080807',
-        scale: 2,
-        useCORS: true,
-        allowTaint: false,
-        logging: false,
-        imageTimeout: 20000,
-        windowWidth: pageWidth,
-        windowHeight: Math.max(PDF_VIEWPORT.height, sectionHeight),
-      });
+      const restoreSection = preparePdfSectionForCapture(section);
+      await waitForAnimationFrame(win);
 
-      const pageHeight = Math.max(1, Math.round((canvas.height / canvas.width) * pageWidth));
-      const orientation = pageWidth >= pageHeight ? 'landscape' : 'portrait';
-      if (!pdf) {
-        pdf = new PdfDocument({
-          orientation,
-          unit: 'px',
-          format: [pageWidth, pageHeight],
-          compress: true,
-          hotfixes: ['px_scaling'],
+      try {
+        const rect = section.getBoundingClientRect();
+        const pageWidth = PDF_VIEWPORT.width;
+        const sectionHeight = Math.max(1, Math.ceil(rect.height || PDF_VIEWPORT.height), Math.ceil(section.scrollHeight || 0));
+        const canvas = await renderCanvas(section, {
+          backgroundColor: '#080807',
+          scale: 2,
+          useCORS: true,
+          allowTaint: false,
+          logging: false,
+          imageTimeout: 20000,
+          windowWidth: pageWidth,
+          windowHeight: Math.max(PDF_VIEWPORT.height, sectionHeight),
         });
-      } else {
-        pdf.addPage([pageWidth, pageHeight], orientation);
+
+        const pageHeight = Math.max(1, Math.round((canvas.height / canvas.width) * pageWidth));
+        const orientation = pageWidth >= pageHeight ? 'landscape' : 'portrait';
+        if (!pdf) {
+          pdf = new PdfDocument({
+            orientation,
+            unit: 'px',
+            format: [pageWidth, pageHeight],
+            compress: true,
+            hotfixes: ['px_scaling'],
+          });
+        } else {
+          pdf.addPage([pageWidth, pageHeight], orientation);
+        }
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageWidth, pageHeight);
+      } finally {
+        restoreSection();
       }
-      pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageWidth, pageHeight);
     }
 
     const safeFileName = normalizePdfFileName(fileName || portfolioPdfFileName(preview));
@@ -482,6 +489,98 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
   } finally {
     frame.remove();
   }
+}
+
+function preparePdfSectionForCapture(section) {
+  const previousSectionStyle = {
+    minHeight: section.style.minHeight,
+    overflow: section.style.overflow,
+    width: section.style.width,
+  };
+
+  section.style.width = `${PDF_VIEWPORT.width}px`;
+  section.style.overflow = 'visible';
+
+  const frames = section.querySelector('.page-frames');
+  if (!frames) {
+    return () => {
+      section.style.minHeight = previousSectionStyle.minHeight;
+      section.style.overflow = previousSectionStyle.overflow;
+      section.style.width = previousSectionStyle.width;
+    };
+  }
+
+  const previousFramesStyle = {
+    transform: frames.style.transform,
+    transformOrigin: frames.style.transformOrigin,
+    marginLeft: frames.style.marginLeft,
+    marginTop: frames.style.marginTop,
+  };
+
+  frames.style.transform = 'none';
+  frames.style.transformOrigin = 'top left';
+  frames.style.marginLeft = '0';
+  frames.style.marginTop = '0';
+
+  const sectionRect = section.getBoundingClientRect();
+  const framesRect = frames.getBoundingClientRect();
+  const visualBounds = collectPdfVisualBounds(frames);
+
+  if (visualBounds) {
+    const contentWidth = Math.max(1, visualBounds.right - visualBounds.left);
+    const contentHeight = Math.max(1, visualBounds.bottom - visualBounds.top);
+    const maxWidth = Math.max(1, PDF_VIEWPORT.width - 72);
+    const scale = Math.min(1, maxWidth / contentWidth);
+    const desiredLeft = Math.max(0, (PDF_VIEWPORT.width - (contentWidth * scale)) / 2);
+    const framesLeft = framesRect.left - sectionRect.left;
+    const framesTop = framesRect.top - sectionRect.top;
+    const contentLeftInFrames = visualBounds.left - framesRect.left;
+    const contentTopInFrames = visualBounds.top - framesRect.top;
+    const translateX = desiredLeft - framesLeft - (contentLeftInFrames * scale);
+    const translateY = contentTopInFrames < 0 ? (-contentTopInFrames * scale) : 0;
+    const visualBottom = framesTop + translateY + ((visualBounds.bottom - framesRect.top) * scale);
+    const scaledFrameBottom = framesTop + translateY + Math.max(frames.scrollHeight, frames.offsetHeight, contentHeight) * scale;
+
+    frames.style.transform = `matrix(${scale}, 0, 0, ${scale}, ${translateX}, ${translateY})`;
+    section.style.minHeight = `${Math.ceil(Math.max(sectionRect.height, visualBottom, scaledFrameBottom) + 72)}px`;
+  }
+
+  return () => {
+    section.style.minHeight = previousSectionStyle.minHeight;
+    section.style.overflow = previousSectionStyle.overflow;
+    section.style.width = previousSectionStyle.width;
+    frames.style.transform = previousFramesStyle.transform;
+    frames.style.transformOrigin = previousFramesStyle.transformOrigin;
+    frames.style.marginLeft = previousFramesStyle.marginLeft;
+    frames.style.marginTop = previousFramesStyle.marginTop;
+  };
+}
+
+function collectPdfVisualBounds(container) {
+  const selectors = [
+    '.doc-photo-frame',
+    '.page-detail-frame',
+    '.page-free-element',
+    '.page-annotation-text',
+    '.page-annotation-line',
+    '.page-annotation-arrow-head',
+    '.doc-annotation-text',
+    '.doc-annotation-layer',
+  ];
+  const elements = [container, ...container.querySelectorAll(selectors.join(','))];
+  return elements.reduce((bounds, element) => {
+    const rect = element.getBoundingClientRect();
+    if (!rect || (!rect.width && !rect.height)) return bounds;
+    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) || !Number.isFinite(rect.right) || !Number.isFinite(rect.bottom)) return bounds;
+    if (!bounds) {
+      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+    }
+    bounds.left = Math.min(bounds.left, rect.left);
+    bounds.top = Math.min(bounds.top, rect.top);
+    bounds.right = Math.max(bounds.right, rect.right);
+    bounds.bottom = Math.max(bounds.bottom, rect.bottom);
+    return bounds;
+  }, null);
 }
 
 function loadPdfFrame(frame, src) {
