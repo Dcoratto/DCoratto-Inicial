@@ -591,6 +591,7 @@ let editingCatalogItemId = null;
 let editingFactoryName = '';
 let pdfGenerationPending = false;
 let pdfGenerationTimeoutTimer = null;
+let pdfPreparedFallbackWindow = null;
 let editingMaterialOption = null;
 let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
 let clientHistoryItems = [];
@@ -3088,9 +3089,11 @@ window.addEventListener('message', event => {
     setPdfButtonsBusy(false);
     const status = document.getElementById('previewStatus');
     if (event.data.ok) {
+      closePreparedPdfFallbackWindow();
       if (status) status.textContent = `PDF gerado com sucesso${event.data.fileName ? `: ${event.data.fileName}` : '.'}`;
     } else {
       const message = event.data.error || 'Nao foi possivel gerar o PDF.';
+      if (usePreparedPdfFallbackWindow(`O download direto falhou. Abrindo a versao de impressao do PDF. Detalhe: ${message}`)) return;
       if (status) status.textContent = message;
       alert(message);
     }
@@ -3507,6 +3510,7 @@ function generateProjectPdf() {
   const fileName = previewPdfFileName(preview);
   pdfGenerationPending = true;
   setPdfButtonsBusy(true);
+  prepareCollaboratorPdfFallbackWindow();
   const status = document.getElementById('previewStatus');
   if (status) status.textContent = 'Gerando PDF em layout desktop. Aguarde o download.';
 
@@ -3519,6 +3523,7 @@ function generateProjectPdf() {
     pdfGenerationTimeoutTimer = window.setTimeout(() => {
       pdfGenerationPending = false;
       setPdfButtonsBusy(false);
+      if (usePreparedPdfFallbackWindow('A geracao direta demorou mais que o esperado. Abrindo a versao de impressao do PDF.')) return;
       const currentStatus = document.getElementById('previewStatus');
       if (currentStatus) currentStatus.textContent = 'A geracao do PDF demorou mais que o esperado. Tente novamente.';
     }, 45000);
@@ -3526,6 +3531,52 @@ function generateProjectPdf() {
   }
 
   openPdfPrintFallback('Abrindo a versao desktop para salvar em PDF.');
+}
+
+function shouldPrepareCollaboratorPdfFallback() {
+  const role = String(editorActor?.role || '').toLowerCase();
+  return Boolean(editorActor?.email && !editorActor?.isPrimary && role !== 'owner');
+}
+
+function prepareCollaboratorPdfFallbackWindow() {
+  closePreparedPdfFallbackWindow();
+  if (!shouldPrepareCollaboratorPdfFallback() || !(window.parent && window.parent !== window)) return null;
+  try {
+    pdfPreparedFallbackWindow = window.open('', '_blank', 'width=1440,height=1000');
+    if (pdfPreparedFallbackWindow) {
+      pdfPreparedFallbackWindow.document.write('<!doctype html><title>Preparando PDF</title><body style="margin:0;background:#080807;color:#f7f2ea;font-family:Arial,sans-serif;display:grid;place-items:center;min-height:100vh"><div>Preparando PDF...</div></body>');
+      pdfPreparedFallbackWindow.document.close();
+    }
+  } catch {
+    pdfPreparedFallbackWindow = null;
+  }
+  return pdfPreparedFallbackWindow;
+}
+
+function closePreparedPdfFallbackWindow() {
+  if (!pdfPreparedFallbackWindow) return;
+  try {
+    if (!pdfPreparedFallbackWindow.closed) pdfPreparedFallbackWindow.close();
+  } catch {}
+  pdfPreparedFallbackWindow = null;
+}
+
+function usePreparedPdfFallbackWindow(message = 'Abrindo a versao desktop para salvar em PDF.') {
+  const preparedWindow = pdfPreparedFallbackWindow;
+  pdfPreparedFallbackWindow = null;
+  if (!preparedWindow || preparedWindow.closed) return false;
+  window.clearTimeout(pdfGenerationTimeoutTimer);
+  pdfGenerationTimeoutTimer = null;
+  pdfGenerationPending = false;
+  setPdfButtonsBusy(false);
+  try {
+    preparedWindow.location.href = `/portfolio_document.html?pdf=${Date.now()}&print=1`;
+  } catch {
+    return false;
+  }
+  const status = document.getElementById('previewStatus');
+  if (status) status.textContent = message;
+  return true;
 }
 
 function openPdfPrintFallback(message = 'Abrindo a versao desktop para salvar em PDF.') {
