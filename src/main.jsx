@@ -53,18 +53,14 @@ function App() {
             return null;
           });
         }
-        const localFallback = await loadLocalProjectSnapshot(remote?.projectId || getActiveProjectId(actor)).catch(() => null);
-        const browserFallback = readBrowserDocumentCache(getActiveProjectId(actor));
-        const fallbackState = snapshotHasDocumentContent(localFallback) ? localFallback : browserFallback;
-        const documentState = snapshotHasDocumentContent(remote) || !snapshotHasDocumentContent(fallbackState)
-          ? remote
-          : {
-              ...(remote || {}),
-              ...(fallbackState || {}),
-              projectId: remote?.projectId || fallbackState?.projectId || getActiveProjectId(actor),
-              status: fallbackState?.status || remote?.status || 'draft',
-              settings: remote?.settings || fallbackState?.settings || null,
-            };
+        const activeProjectId = getActiveProjectId(actor);
+        const localFallback = await loadLocalProjectSnapshot(remote?.projectId || activeProjectId).catch(() => null);
+        const browserFallback = readBrowserDocumentCache(activeProjectId, actor);
+        const documentState = chooseBestDocumentState({
+          remote,
+          candidates: [localFallback, browserFallback],
+          fallbackProjectId: activeProjectId,
+        });
         if (shouldSyncLocalSettings(cachedSettings, remote?.settings || {})) {
           const syncedSettings = await saveRemoteEditorSettings(
             mergeSettingsForSharedSync(cachedSettings, remote?.settings || {}),
@@ -85,14 +81,18 @@ function App() {
         if (hydrated?.settings) setRemoteSettings(hydrated.settings);
       } catch (error) {
         console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
-        const local = await loadLocalProjectSnapshot(getActiveProjectId(actor)).catch(() => null);
-        const browserFallback = readBrowserDocumentCache(getActiveProjectId(actor));
-        const localDocument = snapshotHasDocumentContent(local) ? local : browserFallback;
+        const activeProjectId = getActiveProjectId(actor);
+        const local = await loadLocalProjectSnapshot(activeProjectId).catch(() => null);
+        const browserFallback = readBrowserDocumentCache(activeProjectId, actor);
+        const localDocument = chooseBestDocumentState({
+          candidates: [local, browserFallback],
+          fallbackProjectId: activeProjectId,
+        });
         const settings = await loadRemoteEditorSettings().catch((settingsError) => {
           console.warn('Nao foi possivel carregar configuracoes compartilhadas pelo endpoint direto.', settingsError);
           return null;
         });
-        if (!cancelled && localDocument) {
+        if (!cancelled && snapshotHasDocumentContent(localDocument)) {
           let nextSettings = settings;
           if (shouldSyncLocalSettings(cachedSettings, nextSettings || {})) {
             nextSettings = await saveRemoteEditorSettings(
@@ -166,18 +166,15 @@ function App() {
         const projectId = event.data.projectId || '';
         loadLatestEditorState(actor, projectId)
           .then(async (remote) => {
-            const localFallback = await loadLocalProjectSnapshot(remote?.projectId || projectId).catch(() => null);
-            const browserFallback = readBrowserDocumentCache(remote?.projectId || projectId);
-            const fallbackState = snapshotHasDocumentContent(localFallback) ? localFallback : browserFallback;
-            const documentState = snapshotHasDocumentContent(remote) || !snapshotHasDocumentContent(fallbackState)
-              ? remote
-              : {
-                  ...(remote || {}),
-                  ...(fallbackState || {}),
-                  projectId: remote?.projectId || fallbackState?.projectId || projectId || null,
-                  status: fallbackState?.status || remote?.status || 'draft',
-                  settings: remote?.settings || fallbackState?.settings || remoteSettings,
-                };
+            const documentState = chooseBestDocumentState({
+              remote,
+              candidates: [
+                await loadLocalProjectSnapshot(remote?.projectId || projectId).catch(() => null),
+                readBrowserDocumentCache(remote?.projectId || projectId, actor),
+              ],
+              fallbackProjectId: projectId,
+              fallbackSettings: remoteSettings,
+            });
             const hydrated = hydrateBrowserStorage(documentState);
             setRemoteDocument(hydrated);
             if (hydrated?.settings) setRemoteSettings(hydrated.settings);
@@ -298,6 +295,7 @@ function App() {
       }
 
       if (action === 'save_as_draft') {
+        const source = event.source;
         window.clearTimeout(autosaveTimerRef.current);
         pendingAutosaveRef.current = null;
         persistEditorEvent(payload).then((result) => {
@@ -308,8 +306,20 @@ function App() {
               status: 'draft',
             }, window.location.origin);
           }
+          source?.postMessage({
+            type: 'dcoratto:draft-result',
+            ok: true,
+            projectId: result?.projectId || getActiveProjectId(actor),
+            source: result?.source || '',
+            queued: Boolean(result?.queued),
+          }, window.location.origin);
         }).catch((error) => {
           console.warn('Falha ao salvar rascunho remoto.', error);
+          source?.postMessage({
+            type: 'dcoratto:draft-result',
+            ok: false,
+            error: String(error?.message || error),
+          }, window.location.origin);
         });
         return;
       }
@@ -961,22 +971,69 @@ function pdfNamePart(value = '') {
 function snapshotHasDocumentContent(snapshot = {}) {
   if (Array.isArray(snapshot?.preview?.environments) && snapshot.preview.environments.length) return true;
   if (Array.isArray(snapshot?.draft?.ambientes) && snapshot.draft.ambientes.length) return true;
-  return Object.values(snapshot?.draft?.fields || {}).some((value) => {
+  return Object.entries(snapshot?.draft?.fields || {}).some(([key, value]) => {
+    if (key === 'factories') return false;
     if (Array.isArray(value)) return value.length > 0;
     return Boolean(String(value || '').trim());
   });
 }
 
-function readBrowserDocumentCache(projectId = '') {
+function chooseBestDocumentState({ remote = null, candidates = [], fallbackProjectId = '', fallbackSettings = null } = {}) {
+  const snapshots = [remote, ...candidates]
+    .filter(snapshotHasDocumentContent)
+    .sort((a, b) => documentSnapshotTime(b) - documentSnapshotTime(a));
+  const selected = snapshots[0] || remote || candidates.find(Boolean) || null;
+  if (!selected) {
+    return {
+      projectId: fallbackProjectId || null,
+      status: 'draft',
+      settings: fallbackSettings || null,
+    };
+  }
+  return {
+    ...(remote || {}),
+    ...(selected || {}),
+    projectId: selected.projectId || remote?.projectId || fallbackProjectId || null,
+    status: selected.status || remote?.status || 'draft',
+    settings: remote?.settings || selected.settings || fallbackSettings || null,
+  };
+}
+
+function documentSnapshotTime(snapshot = {}) {
+  const timestamps = [
+    snapshot.updatedAt,
+    snapshot.updated_at,
+    snapshot.snapshotUpdatedAt,
+    snapshot.draft?.updatedAt,
+    snapshot.preview?.updatedAt,
+    snapshot.data?.lastEventAt,
+  ];
+  for (const value of timestamps) {
+    const time = Date.parse(value || '');
+    if (Number.isFinite(time)) return time;
+  }
+  return snapshotHasDocumentContent(snapshot) ? 1 : 0;
+}
+
+function readBrowserDocumentCache(projectId = '', actor = null) {
   const draft = parseStoredJson(localStorage.getItem(BUILDER_STORAGE_KEY));
   const preview = parseStoredJson(localStorage.getItem(PORTFOLIO_STORAGE_KEY));
   if (!snapshotHasDocumentContent({ draft, preview })) return null;
+  if (!browserDraftMatchesActor(draft, actor)) return null;
   return {
-    projectId: projectId || null,
-    status: 'draft',
+    projectId: draft?.projectId || projectId || null,
+    status: draft?.status || 'draft',
     draft: draft || null,
     preview: preview || null,
+    actor: draft?.actor || actor || null,
+    updatedAt: draft?.updatedAt || null,
   };
+}
+
+function browserDraftMatchesActor(draft, actor) {
+  const draftEmail = String(draft?.actor?.email || '').trim().toLowerCase();
+  const actorEmail = String(actor?.email || '').trim().toLowerCase();
+  return !draftEmail || !actorEmail || draftEmail === actorEmail;
 }
 
 function hydrateBrowserStorage(remote) {

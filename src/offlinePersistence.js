@@ -40,6 +40,7 @@ export async function saveLocalProjectSnapshot(projectId, snapshot) {
   const existing = await getRecord(SNAPSHOTS_STORE, projectId).catch(() => null);
   const previous = existing?.snapshot || {};
   const incoming = snapshot || {};
+  const now = new Date().toISOString();
   const mergedSnapshot = {
     ...previous,
     ...incoming,
@@ -50,12 +51,13 @@ export async function saveLocalProjectSnapshot(projectId, snapshot) {
     action: incoming.action || previous.action || '',
     projectId: incoming.projectId || previous.projectId || projectId,
     status: incoming.status || previous.status || '',
+    snapshotUpdatedAt: now,
     actor: incoming.actor || previous.actor || null,
   };
   const record = {
     projectId,
     snapshot: mergedSnapshot,
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
   };
   await putRecord(SNAPSHOTS_STORE, record);
   return record;

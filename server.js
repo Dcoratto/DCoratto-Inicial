@@ -2482,7 +2482,8 @@ function catalogItemOptionGroup(type) {
 function hasPersistableContent(draft, preview) {
   const hasPreviewContent = Array.isArray(preview?.environments) && preview.environments.length > 0;
   const hasAmbientes = Array.isArray(draft?.ambientes) && draft.ambientes.length > 0;
-  const hasFields = Object.values(draft?.fields || {}).some((value) => {
+  const hasFields = Object.entries(draft?.fields || {}).some(([key, value]) => {
+    if (key === 'factories') return false;
     if (Array.isArray(value)) return value.length > 0;
     return Boolean(String(value || '').trim());
   });

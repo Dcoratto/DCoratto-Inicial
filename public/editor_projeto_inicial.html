@@ -1493,7 +1493,8 @@ async function loadProjectHistory(folder = 'active') {
     if (!response.ok) throw new Error(result?.error || 'Não foi possível carregar projetos');
     projectHistoryItems = result.projects || [];
     const localDraft = localDraftHistoryItem();
-    if (folder === 'drafts' && localDraft && !projectHistoryItems.some(item => item.id === currentProjectId)) {
+    const localDraftProjectId = localDraft?.projectId || currentProjectId || '';
+    if (folder === 'drafts' && localDraft && !projectHistoryItems.some(item => item.id === localDraftProjectId)) {
       projectHistoryItems = [localDraft, ...projectHistoryItems];
     }
     renderClientHistory();
@@ -1509,14 +1510,14 @@ async function loadProjectHistory(folder = 'active') {
 }
 
 function localDraftHistoryItem() {
-  const draft = builderDraft || loadBuilderDraft();
+  const draft = loadBuilderDraft() || builderDraft;
   const preview = loadPreviewCache();
   if (!hasLocalDraftContent(draft, preview)) return null;
   const fields = draft?.fields || {};
   const client = preview?.client || {};
   return {
     id: LOCAL_DRAFT_PROJECT_ID,
-    projectId: currentProjectId || '',
+    projectId: draft?.projectId || currentProjectId || '',
     title: preview?.projectType || 'Projeto Inicial',
     clientName: client.name || fields.clientName || 'Rascunho local',
     contractNumber: client.contractNumber || fields.contractNum || '',
@@ -1534,7 +1535,8 @@ function localDraftHistoryItem() {
 function hasLocalDraftContent(draft, preview) {
   if (Array.isArray(preview?.environments) && preview.environments.length) return true;
   if (Array.isArray(draft?.ambientes) && draft.ambientes.length) return true;
-  return Object.values(draft?.fields || {}).some(value => {
+  return Object.entries(draft?.fields || {}).some(([key, value]) => {
+    if (key === 'factories') return false;
     if (Array.isArray(value)) return value.length > 0;
     return Boolean(String(value || '').trim());
   });
@@ -1657,10 +1659,11 @@ function normalizeSearchText(value) {
 function editProjectFromHistory(projectId) {
   if (!projectId) return;
   if (projectId === LOCAL_DRAFT_PROJECT_ID) {
+    const draft = loadBuilderDraft();
     applyHydratedDocument({
-      draft: loadBuilderDraft(),
+      draft,
       preview: loadPreviewCache(),
-      projectId: currentProjectId || '',
+      projectId: draft?.projectId || currentProjectId || '',
       status: 'draft',
     });
     closeClientHistory();
@@ -2189,6 +2192,7 @@ if (builderDraft?.state) {
       corredica: builderDraft.state[a.id]?.corredica || [],
       cores: builderDraft.state[a.id]?.cores || [],
       obs: builderDraft.state[a.id]?.obs || [],
+      obsExtra: builderDraft.state[a.id]?.obsExtra || '',
     };
   });
 }
@@ -2755,19 +2759,30 @@ function buildPreviewDocumentData() {
 
 function saveBuilderDraft() {
   const draft = {
+    projectId: currentProjectId || '',
+    status: projectStatus || 'draft',
+    actor: editorActor || null,
     fields: {
       clientName: document.getElementById('clientName').value || '',
       contractNum: document.getElementById('contractNum').value || '',
       endereco: document.getElementById('endereco').value || '',
       factories: selectedFactories(),
     },
-    ambientes: AMBIENTES.map(normalizeEnvironment),
-    state,
+    ambientes: clonePlainData(AMBIENTES.map(normalizeEnvironment)),
+    state: clonePlainData(state),
     updatedAt: new Date().toISOString(),
   };
   builderDraft = draft;
   safeSetLocalStorage(BUILDER_STORAGE_KEY, JSON.stringify(draft));
   return draft;
+}
+
+function clonePlainData(value) {
+  try {
+    return JSON.parse(JSON.stringify(value ?? null));
+  } catch {
+    return value;
+  }
 }
 
 function postEditorEvent(action, payload = {}) {
@@ -2778,6 +2793,21 @@ function postEditorEvent(action, payload = {}) {
     ...payload,
     sentAt: new Date().toISOString(),
   }, window.location.origin);
+}
+
+function currentDocumentHasContent() {
+  if (Array.isArray(AMBIENTES) && AMBIENTES.length) return true;
+  return ['clientName', 'contractNum', 'endereco'].some(id => (
+    Boolean(String(document.getElementById(id)?.value || '').trim())
+  ));
+}
+
+function isExplicitEmptyDocumentAction(action = '') {
+  const normalized = String(action || '').toLowerCase();
+  return normalized.includes('delete')
+    || normalized.includes('deleted')
+    || normalized.includes('removed')
+    || normalized === 'new_project_reset';
 }
 
 function environmentPages(ambId) {
@@ -3160,6 +3190,30 @@ window.addEventListener('message', event => {
     }
     return;
   }
+  if (event.data?.type === 'dcoratto:draft-result') {
+    const button = document.getElementById('saveDraftBtn');
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Salvar como rascunho';
+    }
+    const status = document.getElementById('previewStatus');
+    if (event.data.ok) {
+      currentProjectId = event.data.projectId || currentProjectId;
+      projectStatus = 'draft';
+      if (status) {
+        status.textContent = event.data.queued
+          ? 'Rascunho salvo localmente. Ele será sincronizado quando o servidor responder.'
+          : 'Rascunho salvo. Ele ficará disponível na aba Rascunhos.';
+      }
+      if (historyFolder === 'drafts' && document.getElementById('historyOverlay')?.classList.contains('active')) {
+        loadProjectHistory('drafts');
+      }
+    } else {
+      const message = event.data.error || 'Não foi possível salvar o rascunho.';
+      if (status) status.textContent = `Rascunho salvo no navegador, mas houve falha na sincronização: ${message}`;
+    }
+    return;
+  }
   if (event.data?.type === 'dcoratto:project-meta') {
     currentProjectId = event.data.projectId || currentProjectId;
     projectStatus = event.data.status || projectStatus;
@@ -3185,12 +3239,31 @@ window.addEventListener('message', event => {
 
 function applyHydratedDocument(payload = {}) {
   const incomingSettings = payload.settings || null;
-  const incomingDraft = payload.draft || null;
-  const incomingPreview = payload.preview || null;
+  let incomingDraft = payload.draft || null;
+  let incomingPreview = payload.preview || null;
   const incomingProjectId = payload.projectId || '';
+  const localDraft = loadBuilderDraft() || builderDraft;
+  const localPreview = loadPreviewCache();
+  const localProjectId = localDraft?.projectId || currentProjectId || '';
+  const canUseLocalFallback = !payload.reset
+    && !hasLocalDraftContent(incomingDraft, incomingPreview)
+    && hasLocalDraftContent(localDraft, localPreview)
+    && (!incomingProjectId || !localProjectId || incomingProjectId === localProjectId || incomingProjectId === currentProjectId);
+  if (canUseLocalFallback) {
+    const fallbackDraft = loadBuilderDraft() || localDraft;
+    const fallbackPreview = loadPreviewCache() || localPreview;
+    return applyHydratedDocument({
+      ...payload,
+      reset: false,
+      draft: fallbackDraft,
+      preview: fallbackPreview,
+      projectId: fallbackDraft?.projectId || incomingProjectId || currentProjectId || '',
+      status: fallbackDraft?.status || payload.status || 'draft',
+    });
+  }
   const shouldResetDocument = Boolean(payload.reset || (incomingProjectId && incomingProjectId !== currentProjectId && !incomingDraft && !incomingPreview));
-  currentProjectId = incomingProjectId || currentProjectId || '';
-  projectStatus = payload.status || (shouldResetDocument ? 'draft' : projectStatus) || 'draft';
+  currentProjectId = incomingDraft?.projectId || incomingProjectId || currentProjectId || '';
+  projectStatus = incomingDraft?.status || payload.status || (shouldResetDocument ? 'draft' : projectStatus) || 'draft';
 
   if (incomingSettings) {
     applyRemoteEditorSettings(incomingSettings);
@@ -3249,6 +3322,7 @@ function resetProjectDocumentState() {
 }
 
 function resetBuilderState(incomingState = {}) {
+  incomingState = clonePlainData(incomingState) || {};
   Object.keys(state).forEach(key => delete state[key]);
   AMBIENTES.forEach(amb => {
     state[amb.id] = {
@@ -3357,6 +3431,13 @@ function mergePreviewDocument(preview) {
 
 function syncPreviewDocument(action = 'editor_sync') {
   if (isProjectSold()) return;
+  const existingDraft = loadBuilderDraft() || builderDraft;
+  const existingPreview = loadPreviewCache();
+  if (!currentDocumentHasContent()
+    && hasLocalDraftContent(existingDraft, existingPreview)
+    && !isExplicitEmptyDocumentAction(action)) {
+    return;
+  }
   const draft = saveBuilderDraft();
   const preview = buildPreviewDocumentData();
   safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
@@ -3368,6 +3449,19 @@ function saveProjectDraft() {
     alert('Projeto vendido. Alterações estão bloqueadas.');
     return;
   }
+  if (!currentDocumentHasContent()) {
+    const existingDraft = loadBuilderDraft() || builderDraft;
+    const existingPreview = loadPreviewCache();
+    if (hasLocalDraftContent(existingDraft, existingPreview)) {
+      applyHydratedDocument({
+        draft: existingDraft,
+        preview: existingPreview,
+        projectId: existingDraft?.projectId || currentProjectId || '',
+        status: 'draft',
+      });
+    }
+  }
+  projectStatus = 'draft';
   const draft = saveBuilderDraft();
   const preview = buildPreviewDocumentData();
   safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
