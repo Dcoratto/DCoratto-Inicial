@@ -570,6 +570,7 @@ const BOA_VISTA_COLORS = [];
 const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
 const CONFIG_STORAGE_KEY = 'dcoratto.editor.settings.v1';
 const BUILDER_STORAGE_KEY = 'dcoratto.builder.document.v1';
+const LOCAL_DRAFT_PROJECT_ID = '__local_draft__';
 const DEFAULT_LOGO = 'https://dcorattopremium-5am4gqhj.manus.space/manus-storage/logo-transparent_c8b8c4c4.png';
 const DEFAULT_MATERIAL_OPTIONS = {
   tampon: ["15mm","25mm","15 e 25mm","6mm","15 e 6mm"],
@@ -801,6 +802,14 @@ function applyRemoteEditorSettings(incoming = {}) {
 function loadBuilderDraft() {
   try {
     return JSON.parse(localStorage.getItem(BUILDER_STORAGE_KEY) || 'null') || null;
+  } catch {
+    return null;
+  }
+}
+
+function loadPreviewCache() {
+  try {
+    return JSON.parse(localStorage.getItem(PORTFOLIO_STORAGE_KEY) || 'null') || null;
   } catch {
     return null;
   }
@@ -1483,10 +1492,52 @@ async function loadProjectHistory(folder = 'active') {
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result?.error || 'Não foi possível carregar projetos');
     projectHistoryItems = result.projects || [];
+    const localDraft = localDraftHistoryItem();
+    if (folder === 'drafts' && localDraft && !projectHistoryItems.some(item => item.id === currentProjectId)) {
+      projectHistoryItems = [localDraft, ...projectHistoryItems];
+    }
     renderClientHistory();
   } catch (error) {
+    const localDraft = folder === 'drafts' ? localDraftHistoryItem() : null;
+    if (localDraft) {
+      projectHistoryItems = [localDraft];
+      renderClientHistory();
+      return;
+    }
     historyList.innerHTML = `<div class="history-empty">Erro ao carregar projetos: ${escapeHTML(error.message)}</div>`;
   }
+}
+
+function localDraftHistoryItem() {
+  const draft = builderDraft || loadBuilderDraft();
+  const preview = loadPreviewCache();
+  if (!hasLocalDraftContent(draft, preview)) return null;
+  const fields = draft?.fields || {};
+  const client = preview?.client || {};
+  return {
+    id: LOCAL_DRAFT_PROJECT_ID,
+    projectId: currentProjectId || '',
+    title: preview?.projectType || 'Projeto Inicial',
+    clientName: client.name || fields.clientName || 'Rascunho local',
+    contractNumber: client.contractNumber || fields.contractNum || '',
+    address: client.address || fields.endereco || '',
+    status: 'draft',
+    isDraft: true,
+    draftSavedAt: draft?.updatedAt || new Date().toISOString(),
+    updatedAt: draft?.updatedAt || new Date().toISOString(),
+    designerEmail: editorActor?.email || '',
+    designerName: editorActor?.name || 'Colaborador',
+    localOnly: true,
+  };
+}
+
+function hasLocalDraftContent(draft, preview) {
+  if (Array.isArray(preview?.environments) && preview.environments.length) return true;
+  if (Array.isArray(draft?.ambientes) && draft.ambientes.length) return true;
+  return Object.values(draft?.fields || {}).some(value => {
+    if (Array.isArray(value)) return value.length > 0;
+    return Boolean(String(value || '').trim());
+  });
 }
 
 function renderClientHistory() {
@@ -1605,6 +1656,16 @@ function normalizeSearchText(value) {
 
 function editProjectFromHistory(projectId) {
   if (!projectId) return;
+  if (projectId === LOCAL_DRAFT_PROJECT_ID) {
+    applyHydratedDocument({
+      draft: loadBuilderDraft(),
+      preview: loadPreviewCache(),
+      projectId: currentProjectId || '',
+      status: 'draft',
+    });
+    closeClientHistory();
+    return;
+  }
   window.parent?.postMessage({ type: 'dcoratto:load-project', projectId }, window.location.origin);
   closeClientHistory();
 }
@@ -3103,6 +3164,13 @@ window.addEventListener('message', event => {
     currentProjectId = event.data.projectId || currentProjectId;
     projectStatus = event.data.status || projectStatus;
     updateSoldLockUi();
+    if (event.data.status === 'draft') {
+      const status = document.getElementById('previewStatus');
+      if (status) status.textContent = 'Rascunho salvo. Ele ficará disponível na aba Rascunhos.';
+      if (historyFolder === 'drafts' && document.getElementById('historyOverlay')?.classList.contains('active')) {
+        loadProjectHistory('drafts');
+      }
+    }
     return;
   }
   if (event.data?.type === 'dcoratto:hydrate-document') {

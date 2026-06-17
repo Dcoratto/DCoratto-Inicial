@@ -53,6 +53,18 @@ function App() {
             return null;
           });
         }
+        const localFallback = await loadLocalProjectSnapshot(remote?.projectId || getActiveProjectId(actor)).catch(() => null);
+        const browserFallback = readBrowserDocumentCache(getActiveProjectId(actor));
+        const fallbackState = snapshotHasDocumentContent(localFallback) ? localFallback : browserFallback;
+        const documentState = snapshotHasDocumentContent(remote) || !snapshotHasDocumentContent(fallbackState)
+          ? remote
+          : {
+              ...(remote || {}),
+              ...(fallbackState || {}),
+              projectId: remote?.projectId || fallbackState?.projectId || getActiveProjectId(actor),
+              status: fallbackState?.status || remote?.status || 'draft',
+              settings: remote?.settings || fallbackState?.settings || null,
+            };
         if (shouldSyncLocalSettings(cachedSettings, remote?.settings || {})) {
           const syncedSettings = await saveRemoteEditorSettings(
             mergeSettingsForSharedSync(cachedSettings, remote?.settings || {}),
@@ -62,9 +74,9 @@ function App() {
             console.warn('Nao foi possivel sincronizar catalogo local com o servidor.', syncError);
             return null;
           });
-          if (syncedSettings) remote.settings = syncedSettings;
+          if (syncedSettings) documentState.settings = syncedSettings;
         }
-        const hydrated = hydrateBrowserStorage(remote);
+        const hydrated = hydrateBrowserStorage(documentState);
         if (!hydrated?.projectId) {
           hydrated.projectId = createNewActiveProjectId(actor);
           hydrated.status = 'draft';
@@ -74,11 +86,13 @@ function App() {
       } catch (error) {
         console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
         const local = await loadLocalProjectSnapshot(getActiveProjectId(actor)).catch(() => null);
+        const browserFallback = readBrowserDocumentCache(getActiveProjectId(actor));
+        const localDocument = snapshotHasDocumentContent(local) ? local : browserFallback;
         const settings = await loadRemoteEditorSettings().catch((settingsError) => {
           console.warn('Nao foi possivel carregar configuracoes compartilhadas pelo endpoint direto.', settingsError);
           return null;
         });
-        if (!cancelled && local) {
+        if (!cancelled && localDocument) {
           let nextSettings = settings;
           if (shouldSyncLocalSettings(cachedSettings, nextSettings || {})) {
             nextSettings = await saveRemoteEditorSettings(
@@ -90,8 +104,8 @@ function App() {
               return nextSettings;
             });
           }
-          if (nextSettings) local.settings = nextSettings;
-          const hydrated = hydrateBrowserStorage(local);
+          if (nextSettings) localDocument.settings = nextSettings;
+          const hydrated = hydrateBrowserStorage(localDocument);
           setRemoteDocument(hydrated);
           if (hydrated?.settings) setRemoteSettings(hydrated.settings);
         } else if (!cancelled && settings) {
@@ -151,17 +165,29 @@ function App() {
       if (event.data?.type === 'dcoratto:load-project') {
         const projectId = event.data.projectId || '';
         loadLatestEditorState(actor, projectId)
-          .then((remote) => {
-            const hydrated = hydrateBrowserStorage(remote);
+          .then(async (remote) => {
+            const localFallback = await loadLocalProjectSnapshot(remote?.projectId || projectId).catch(() => null);
+            const browserFallback = readBrowserDocumentCache(remote?.projectId || projectId);
+            const fallbackState = snapshotHasDocumentContent(localFallback) ? localFallback : browserFallback;
+            const documentState = snapshotHasDocumentContent(remote) || !snapshotHasDocumentContent(fallbackState)
+              ? remote
+              : {
+                  ...(remote || {}),
+                  ...(fallbackState || {}),
+                  projectId: remote?.projectId || fallbackState?.projectId || projectId || null,
+                  status: fallbackState?.status || remote?.status || 'draft',
+                  settings: remote?.settings || fallbackState?.settings || remoteSettings,
+                };
+            const hydrated = hydrateBrowserStorage(documentState);
             setRemoteDocument(hydrated);
             if (hydrated?.settings) setRemoteSettings(hydrated.settings);
             iframeRef.current?.contentWindow?.postMessage({
               type: 'dcoratto:hydrate-document',
-              draft: remote?.draft || null,
-              preview: remote?.preview || null,
-              settings: remote?.settings || remoteSettings,
-              projectId: remote?.projectId || projectId || null,
-              status: remote?.status || 'draft',
+              draft: documentState?.draft || null,
+              preview: documentState?.preview || null,
+              settings: documentState?.settings || remoteSettings,
+              projectId: documentState?.projectId || projectId || null,
+              status: documentState?.status || 'draft',
             }, window.location.origin);
           })
           .catch((error) => {
@@ -228,7 +254,7 @@ function App() {
         setRemoteDocument((previous) => ({
           ...(previous || {}),
           projectId: previous?.projectId || getActiveProjectId(actor),
-          status: previous?.status || 'draft',
+          status: action === 'save_as_draft' ? 'draft' : previous?.status || 'draft',
           draft: draft || previous?.draft || null,
           preview: preview || previous?.preview || null,
           settings: settings || previous?.settings || remoteSettings || null,
@@ -247,11 +273,13 @@ function App() {
       };
 
       saveLocalProjectSnapshot(getActiveProjectId(actor), {
+        projectId: getActiveProjectId(actor),
         draft: draft || null,
         preview: preview || null,
         settings: settings || null,
         settingsMutation: settingsMutation || null,
         action,
+        status: action === 'save_as_draft' ? 'draft' : remoteDocument?.status || 'draft',
         actor,
       }).catch((error) => console.warn('Falha ao salvar snapshot local imediato.', error));
 
@@ -270,6 +298,8 @@ function App() {
       }
 
       if (action === 'save_as_draft') {
+        window.clearTimeout(autosaveTimerRef.current);
+        pendingAutosaveRef.current = null;
         persistEditorEvent(payload).then((result) => {
           if (result?.projectId) {
             iframeRef.current?.contentWindow?.postMessage({
@@ -404,6 +434,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 )
 
 const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
+const BUILDER_STORAGE_KEY = 'dcoratto.builder.document.v1';
 const PDF_VIEWPORT = { width: 1440, height: 1020 };
 const PDF_PAGE_MARGIN = 36;
 const PDF_MAX_PAGE_WIDTH = 3200;
@@ -927,11 +958,32 @@ function pdfNamePart(value = '') {
     .slice(0, 48);
 }
 
+function snapshotHasDocumentContent(snapshot = {}) {
+  if (Array.isArray(snapshot?.preview?.environments) && snapshot.preview.environments.length) return true;
+  if (Array.isArray(snapshot?.draft?.ambientes) && snapshot.draft.ambientes.length) return true;
+  return Object.values(snapshot?.draft?.fields || {}).some((value) => {
+    if (Array.isArray(value)) return value.length > 0;
+    return Boolean(String(value || '').trim());
+  });
+}
+
+function readBrowserDocumentCache(projectId = '') {
+  const draft = parseStoredJson(localStorage.getItem(BUILDER_STORAGE_KEY));
+  const preview = parseStoredJson(localStorage.getItem(PORTFOLIO_STORAGE_KEY));
+  if (!snapshotHasDocumentContent({ draft, preview })) return null;
+  return {
+    projectId: projectId || null,
+    status: 'draft',
+    draft: draft || null,
+    preview: preview || null,
+  };
+}
+
 function hydrateBrowserStorage(remote) {
   const hydrated = { ...(remote || {}) };
   try {
-    if (remote?.draft) localStorage.setItem('dcoratto.builder.document.v1', JSON.stringify(remote.draft));
-    else localStorage.removeItem('dcoratto.builder.document.v1');
+    if (remote?.draft) localStorage.setItem(BUILDER_STORAGE_KEY, JSON.stringify(remote.draft));
+    else localStorage.removeItem(BUILDER_STORAGE_KEY);
     if (remote?.preview) localStorage.setItem('dcoratto.portfolio.document.v1', JSON.stringify(remote.preview));
     else localStorage.removeItem('dcoratto.portfolio.document.v1');
     if (remote?.settings) {

@@ -48,6 +48,8 @@ export async function saveLocalProjectSnapshot(projectId, snapshot) {
     settings: incoming.settings || previous.settings || null,
     settingsMutation: incoming.settingsMutation || previous.settingsMutation || null,
     action: incoming.action || previous.action || '',
+    projectId: incoming.projectId || previous.projectId || projectId,
+    status: incoming.status || previous.status || '',
     actor: incoming.actor || previous.actor || null,
   };
   const record = {

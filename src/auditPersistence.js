@@ -65,11 +65,13 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
   const projectId = getActiveProjectId(actor);
   if (draft || preview || settings) {
     saveLocalProjectSnapshot(projectId, {
+      projectId,
       draft: draft || null,
       preview: preview || null,
       settings: settings || null,
       settingsMutation: settingsMutation || null,
       action,
+      status: action === 'save_as_draft' ? 'draft' : undefined,
       actor: actor || null,
     }).catch((error) => console.warn('Nao foi possivel salvar snapshot local no IndexedDB.', error));
   }
