@@ -588,6 +588,7 @@ const DEFAULT_OBS_OPTIONS = [
 ];
 let editorSettings = loadEditorSettings();
 let builderDraft = loadBuilderDraft();
+if (builderDraft) builderDraft = migrateDraftToCanonical(builderDraft);
 let editingCatalogItemId = null;
 let editingFactoryName = '';
 let pdfGenerationPending = false;
@@ -1139,6 +1140,48 @@ function fileToDataURL(file, options = {}) {
   return optimizeImageForPersistence(file, options).then(result => result.previewDataUrl);
 }
 
+async function imageFileToReference(file, metadata = {}) {
+  const assetId = trackPendingAsset(file, metadata);
+  const [main, thumb] = await Promise.all([
+    optimizeImageForPersistence(file, { maxSize: 1920, quality: 0.82 }),
+    optimizeImageForPersistence(file, { maxSize: 480, quality: 0.72 }),
+  ]);
+  return {
+    src: main.previewDataUrl,
+    thumbSrc: thumb.previewDataUrl,
+    assetId,
+    asset: imageAssetMetadata(assetId, main, metadata, 'main'),
+    thumbAsset: imageAssetMetadata(assetId ? `${assetId}-thumb` : '', thumb, metadata, 'thumbnail'),
+  };
+}
+
+function imageAssetMetadata(assetId, optimized, metadata = {}, variant = 'main') {
+  return {
+    assetId,
+    kind: metadata.area || metadata.kind || 'project-image',
+    variant,
+    storageBucket: '',
+    storagePath: '',
+    publicUrl: '',
+    thumbPublicUrl: '',
+    localAssetId: assetId,
+    mimeType: optimized?.mimeType || 'image/webp',
+    width: optimized?.width || 0,
+    height: optimized?.height || 0,
+    size: optimized?.optimizedSize || 0,
+    uploadedAt: '',
+    syncStatus: 'pending',
+  };
+}
+
+function imageDisplaySrc(image = {}) {
+  return image.publicUrl || image.src || image.thumbPublicUrl || image.thumbSrc || DEFAULT_AMBIENTE_IMG;
+}
+
+function imageThumbSrc(image = {}) {
+  return image.thumbPublicUrl || image.thumbSrc || image.publicUrl || image.src || DEFAULT_AMBIENTE_IMG;
+}
+
 async function optimizeImageForPersistence(file, options = {}) {
   const fallbackDataUrl = () => readBlobAsDataURL(file);
   const originalSize = Number(file?.size || 0);
@@ -1263,8 +1306,11 @@ async function loadImageForOptimization(file) {
 async function handleLogoUpload(input) {
   const file = input.files?.[0];
   if (!file) return;
-  trackPendingAsset(file, { area: 'settings.logo' });
-  editorSettings.logo = await fileToDataURL(file);
+  const image = await imageFileToReference(file, { area: 'settings.logo', kind: 'logo' });
+  editorSettings.logo = image.src;
+  editorSettings.logoAssetId = image.assetId;
+  editorSettings.logoAsset = image.asset;
+  editorSettings.logoThumb = image.thumbSrc;
   saveEditorSettings();
   applyEditorSettings();
   syncPreviewDocument();
@@ -1717,14 +1763,18 @@ async function addManualCatalogItem() {
     return;
   }
 
-  if (file) trackPendingAsset(file, { area: 'catalog', type, name, line, manufacturer });
-  const textureUrl = file ? await fileToDataURL(file, { maxSize: 900, quality: 0.76 }) : currentTextureUrl;
+  const image = file ? await imageFileToReference(file, { area: 'catalog', kind: type, type, name, line, manufacturer }) : null;
+  const textureUrl = image ? image.src : currentTextureUrl;
   const imageMetadataReset = file ? {
     publicUrl: '',
     public_url: '',
     storageBucket: '',
     storagePath: '',
     storage_path: '',
+    assetId: image?.assetId || '',
+    asset: image?.asset || null,
+    thumbSrc: image?.thumbSrc || '',
+    thumbAsset: image?.thumbAsset || null,
     mimeType: '',
     mime_type: '',
     uploadedAt: '',
@@ -2076,10 +2126,9 @@ function colorKey(color) {
 }
 
 function pruneUnavailableColors() {
-  const available = new Set(availableColors().map(colorKey));
   AMBIENTES.forEach(amb => {
     const envState = ensureEnvironmentState(amb.id);
-    envState.cores = (envState.cores || []).filter(color => available.has(color.key || colorKey(color)));
+    envState.cores = (envState.cores || []).filter(color => color && (color.name || color.displayName || color.key || color.catalogKey));
   });
 }
 
@@ -2130,7 +2179,7 @@ function normalizeEnvironment(amb = {}) {
   const normalizedPhotos = (photos.length ? photos : [{ src: DEFAULT_AMBIENTE_IMG }]).map(normalizeCoverPhoto);
   return {
     ...amb,
-    img: normalizedPhotos[0]?.src || DEFAULT_AMBIENTE_IMG,
+    img: imageThumbSrc(normalizedPhotos[0]) || DEFAULT_AMBIENTE_IMG,
     photos: normalizedPhotos,
     layout: normalizeCoverLayout(amb.layout, normalizedPhotos.length),
     pages: Array.isArray(amb.pages) ? amb.pages : [],
@@ -2139,7 +2188,9 @@ function normalizeEnvironment(amb = {}) {
 
 function normalizeCoverPhoto(photo = {}) {
   return {
-    src: photo.src || DEFAULT_AMBIENTE_IMG,
+    ...photo,
+    src: photo.publicUrl || photo.src || DEFAULT_AMBIENTE_IMG,
+    thumbSrc: photo.thumbPublicUrl || photo.thumbSrc || photo.publicUrl || photo.src || DEFAULT_AMBIENTE_IMG,
     label: photo.label || '',
   };
 }
@@ -2206,14 +2257,16 @@ function buildSwatchHTML(ambId, field) {
     <div class="swatch-section">
       <div class="swatch-section-title">${escapeHTML(factory)}</div>
       ${items.map(c => {
-        const key = colorKey(c);
-        const selected = state[ambId]?.cores.some(item => item.key === key || (!item.key && item.name === c.name));
+        const colorSnapshot = catalogColorSnapshot(c);
+        const key = colorSnapshot.key;
+        const selected = state[ambId]?.cores.some(item => item.key === key || item.catalogKey === colorSnapshot.catalogKey || (!item.key && item.name === c.name));
         const lineLabel = c.line && normalizeFactoryName(c.line) !== catalogItemFactory(c) ? c.line : '';
         return `
           <div class="swatch-wrap">
             <div class="swatch ${selected ? 'selected' : ''}" title="${escapeAttribute([factory, lineLabel, c.displayName || c.name].filter(Boolean).join(' · '))}"
               style="${c.textureUrl ? `background-image:url('${escapeAttribute(c.textureUrl)}');background-color:${escapeAttribute(c.hex)}` : `background:${escapeAttribute(c.hex)}`}"
-              onclick="toggleColor('${escapeJS(ambId)}','${escapeJS(c.name)}','${escapeJS(c.hex)}',this,'${escapeJS(c.textureUrl || '')}','${escapeJS(c.manufacturer || '')}','${escapeJS(c.line || '')}','${escapeJS(c.quality || '')}')">
+              data-color-payload="${escapeAttribute(JSON.stringify(colorSnapshot))}"
+              onclick="toggleColorFromSwatch('${escapeJS(ambId)}',this)">
             </div>
             <div class="swatch-name">${escapeHTML(c.name)}</div>
             <div class="swatch-line">${escapeHTML(lineLabel)}</div>
@@ -2221,6 +2274,36 @@ function buildSwatchHTML(ambId, field) {
       }).join('')}
     </div>
   `).join('');
+}
+
+function catalogColorSnapshot(item = {}) {
+  const factory = catalogItemFactory(item);
+  const catalogKey = item.catalogKey || item.catalog_key || stableCatalogKey({
+    category: item.type || item.category || 'color',
+    factory,
+    line: item.line || item.lineName || item.line_name,
+    quality: item.quality || item.materialType || item.material_type,
+    name: item.name,
+  });
+  const snapshot = {
+    catalogItemId: item.id || item.catalogItemId || '',
+    catalogKey,
+    key: '',
+    name: item.displayName || item.name || '',
+    displayName: item.displayName || item.name || '',
+    hex: item.hex || '#d8d2c8',
+    textureUrl: catalogItemTextureUrl(item),
+    factory,
+    manufacturer: item.manufacturer || item.factory || factory,
+    line: item.line || item.lineName || item.line_name || '',
+    quality: item.quality || '',
+    materialType: item.materialType || item.material_type || item.type || item.category || 'color',
+    publicUrl: item.publicUrl || item.public_url || item.imageUrl || item.image_url || catalogItemTextureUrl(item),
+    storagePath: item.storagePath || item.storage_path || item.data?.storagePath || item.data?.storage_path || '',
+    appliedAt: '',
+  };
+  snapshot.key = catalogKey || colorKey(snapshot);
+  return snapshot;
 }
 
 function buildCheckboxHTML(ambId, field) {
@@ -2313,7 +2396,7 @@ function renderCard(amb) {
   return `
   <div class="amb-card" id="card-${escapeAttribute(amb.id)}">
     <div class="amb-header" onclick="toggleCard('${escapeJS(amb.id)}')">
-      <img class="amb-thumb" src="${amb.img}" alt="${escapeAttribute(amb.name)}">
+      <img class="amb-thumb" src="${escapeAttribute(imageThumbSrc(coverPhotos[0]))}" alt="${escapeAttribute(amb.name)}" loading="lazy" decoding="async">
       <div class="amb-info">
         <div class="amb-name">${escapeHTML(amb.name)}</div>
         <div class="amb-summary" id="summary-${amb.id}">Clique para configurar</div>
@@ -2372,7 +2455,7 @@ function renderCard(amb) {
         <div class="cover-photo-grid">
           ${coverPhotos.map((photo, photoIndex) => `
             <div class="cover-photo-card">
-              <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.label || amb.name)}">
+              <img src="${escapeAttribute(imageDisplaySrc(photo))}" alt="${escapeAttribute(photo.label || amb.name)}" loading="lazy" decoding="async">
               ${coverPhotos.length > 1 ? `<button type="button" onclick="removeCoverPhoto('${escapeJS(amb.id)}',${photoIndex})">Excluir</button>` : ''}
               <input type="text" value="${escapeAttribute(photo.label || '')}" placeholder="Rótulo opcional" oninput="updateCoverPhotoLabel('${escapeJS(amb.id)}',${photoIndex},this.value)">
             </div>
@@ -2409,14 +2492,14 @@ async function handleCoverPhotosUpload(ambId, input) {
   const existing = environmentCoverPhotos(amb).filter(photo => photo.src && photo.src !== DEFAULT_AMBIENTE_IMG);
   const uploaded = [];
   for (const file of files) {
-    trackPendingAsset(file, { area: 'environment.cover', environmentId: ambId });
+    const image = await imageFileToReference(file, { area: 'environment.cover', kind: 'cover', environmentId: ambId });
     uploaded.push({
       label: '',
-      src: await fileToDataURL(file),
+      ...image,
     });
   }
   amb.photos = [...existing, ...uploaded];
-  amb.img = amb.photos[0]?.src || DEFAULT_AMBIENTE_IMG;
+  amb.img = imageThumbSrc(amb.photos[0]) || DEFAULT_AMBIENTE_IMG;
   if (!amb.layout || amb.layout === 'single') amb.layout = coverLayoutForCount(amb.photos.length);
   input.value = '';
   renderAmbientes();
@@ -2429,7 +2512,7 @@ function removeCoverPhoto(ambId, photoIndex) {
   if (!confirm('Excluir esta foto da capa do ambiente?')) return;
   const photos = environmentCoverPhotos(amb).filter((_, index) => index !== photoIndex);
   amb.photos = photos.length ? photos : [{ label: '', src: DEFAULT_AMBIENTE_IMG }];
-  amb.img = amb.photos[0]?.src || DEFAULT_AMBIENTE_IMG;
+  amb.img = imageThumbSrc(amb.photos[0]) || DEFAULT_AMBIENTE_IMG;
   amb.layout = coverLayoutForCount(amb.photos.length);
   renderAmbientes();
   syncPreviewDocument('environment_cover_photo_deleted');
@@ -2451,10 +2534,8 @@ renderAmbientes();
 initializeEmptyFilters();
 
 function handleFactoryChange() {
-  const factories = selectedFactories();
   pruneUnavailableColors();
   AMBIENTES.forEach(amb => {
-    state[amb.id].cores = state[amb.id].cores.filter(c => !c.manufacturer || factories.includes(c.manufacturer));
     const swatches = document.querySelector(`#card-${amb.id} .color-swatches`);
     if (swatches) swatches.innerHTML = buildSwatchHTML(amb.id);
     renderSelectedColors(amb.id);
@@ -2561,15 +2642,46 @@ function toggleHandle(ambId, value) {
   toggleMaterialImageOption(ambId, 'puxador', value);
 }
 
-function toggleColor(ambId, name, hex, el, textureUrl='', manufacturer='', line='', quality='') {
+function toggleColorFromSwatch(ambId, el) {
+  let color = null;
+  try {
+    color = JSON.parse(el?.dataset?.colorPayload || 'null');
+  } catch {
+    color = null;
+  }
+  if (!color) return;
+  toggleColor(ambId, color, '', el);
+}
+
+function toggleColor(ambId, colorOrName, hex, el, textureUrl='', manufacturer='', line='', quality='') {
   const s = state[ambId].cores;
-  const key = `${manufacturer}|${line}|${name}|${quality}`;
-  const idx = s.findIndex(c => c.key === key || (!c.key && c.name === name));
+  const color = typeof colorOrName === 'object'
+    ? { ...colorOrName }
+    : {
+      name: colorOrName,
+      displayName: colorOrName,
+      hex,
+      textureUrl,
+      manufacturer,
+      factory: manufacturer,
+      line,
+      quality,
+      materialType: 'color',
+      publicUrl: textureUrl,
+      storagePath: '',
+    };
+  color.name ||= color.displayName || '';
+  color.displayName ||= color.name;
+  color.manufacturer ||= color.factory || '';
+  color.factory ||= color.manufacturer || '';
+  color.catalogKey ||= color.catalog_key || color.key || colorKey(color);
+  color.key ||= color.catalogKey || colorKey(color);
+  const idx = s.findIndex(c => c.key === color.key || c.catalogKey === color.catalogKey || (!c.key && c.name === color.name));
   if (idx > -1) {
     s.splice(idx, 1);
     el.classList.remove('selected');
   } else {
-    s.push({key, name, hex, textureUrl, manufacturer, line, quality});
+    s.push({ ...color, appliedAt: color.appliedAt || new Date().toISOString() });
     el.classList.add('selected');
   }
   renderSelectedColors(ambId);
@@ -2691,7 +2803,11 @@ function normalizedEnvironmentPages(amb) {
     freeElements: Array.isArray(page.freeElements) ? page.freeElements : [],
     photos: normalizedPageFrames(page).filter(frame => frame.photo).map((frame, frameIndex) => ({
       title: frame.title || `${page.title || `Página ${index + 1}`} - Moldura ${frameIndex + 1}`,
-      src: frame.photo,
+      src: frame.publicUrl || frame.photo,
+      thumbSrc: frame.thumbPublicUrl || frame.thumbSrc || frame.publicUrl || frame.photo,
+      assetId: frame.assetId || '',
+      asset: frame.photoAsset || frame.asset || null,
+      thumbAsset: frame.thumbAsset || null,
     })),
     hasData: Boolean(page.title || page.description || (page.annotations || []).length || (page.freeElements || []).length || normalizedPageFrames(page).some(frame => frame.photo)),
   })).filter(page => page.hasData);
@@ -2699,10 +2815,20 @@ function normalizedEnvironmentPages(amb) {
 
 function clientVisibleColor(color = {}) {
   return {
+    catalogItemId: color.catalogItemId || color.catalog_item_id || '',
+    catalogKey: color.catalogKey || color.catalog_key || color.key || '',
+    key: color.key || color.catalogKey || color.catalog_key || '',
     name: color.displayName || color.name || '',
     hex: color.hex || '',
     textureUrl: color.textureUrl || '',
+    factory: color.factory || color.manufacturer || '',
+    manufacturer: color.manufacturer || color.factory || '',
+    line: color.line || '',
     quality: color.quality || '',
+    materialType: color.materialType || color.material_type || 'color',
+    publicUrl: color.publicUrl || color.public_url || color.textureUrl || '',
+    storagePath: color.storagePath || color.storage_path || '',
+    appliedAt: color.appliedAt || '',
   };
 }
 
@@ -2718,7 +2844,15 @@ function buildPreviewDocumentData() {
         .map((photo) => ({
           label: photo.label || '',
           title: photo.label || '',
-          src: photo.src,
+          src: photo.publicUrl || photo.src,
+          thumbSrc: photo.thumbPublicUrl || photo.thumbSrc || photo.publicUrl || photo.src,
+          assetId: photo.assetId || '',
+          asset: photo.asset || null,
+          thumbAsset: photo.thumbAsset || null,
+          publicUrl: photo.publicUrl || '',
+          thumbPublicUrl: photo.thumbPublicUrl || '',
+          storagePath: photo.storagePath || '',
+          thumbStoragePath: photo.thumbStoragePath || '',
         }));
       const layout = normalizeCoverLayout(amb.layout, coverPhotos.length);
       return {
@@ -2754,6 +2888,14 @@ function buildPreviewDocumentData() {
       manufacturers: [],
     },
     environments: environments.length ? environments : [],
+    canonicalPage: {
+      preset: 'DCORATTO_CANONICAL_1440x1020',
+      width: 1440,
+      height: 1020,
+      coordinateSystemVersion: 2,
+      unit: 'px',
+    },
+    coordinateSystemVersion: 2,
   };
 }
 
@@ -2762,6 +2904,14 @@ function saveBuilderDraft() {
     projectId: currentProjectId || '',
     status: projectStatus || 'draft',
     actor: editorActor || null,
+    canonicalPage: {
+      preset: 'DCORATTO_CANONICAL_1440x1020',
+      width: 1440,
+      height: 1020,
+      coordinateSystemVersion: 2,
+      unit: 'px',
+    },
+    coordinateSystemVersion: 2,
     fields: {
       clientName: document.getElementById('clientName').value || '',
       contractNum: document.getElementById('contractNum').value || '',
@@ -2872,7 +3022,15 @@ function normalizedPageFrames(page) {
   return ensurePageFrames(page).map((frame, frameIndex) => ({
     id: frame.id,
     title: frame.title || `Moldura ${frameIndex + 1}`,
-    photo: frame.photo || '',
+    photo: frame.publicUrl || frame.photo || '',
+    thumbSrc: frame.thumbPublicUrl || frame.thumbSrc || frame.publicUrl || frame.photo || '',
+    assetId: frame.assetId || '',
+    photoAsset: frame.photoAsset || frame.asset || null,
+    thumbAsset: frame.thumbAsset || null,
+    publicUrl: frame.publicUrl || '',
+    thumbPublicUrl: frame.thumbPublicUrl || '',
+    storagePath: frame.storagePath || '',
+    thumbStoragePath: frame.thumbStoragePath || '',
     shape: ['circle', 'square'].includes(frame.shape) ? frame.shape : 'square',
     x: Number(frame.x),
     y: Number(frame.y),
@@ -2940,8 +3098,15 @@ async function handleFramePhotoUpload(ambId, pageId, frameId, input) {
   const page = environmentPages(ambId).find(item => item.id === pageId);
   const frame = ensurePageFrames(page).find(item => item.id === frameId);
   if (!frame) return;
-  trackPendingAsset(file, { area: 'environment.page.frame', environmentId: ambId, pageId, frameId });
-  frame.photo = await fileToDataURL(file);
+  const image = await imageFileToReference(file, { area: 'environment.page.frame', kind: 'frame', environmentId: ambId, pageId, frameId });
+  frame.photo = image.src;
+  frame.thumbSrc = image.thumbSrc;
+  frame.assetId = image.assetId;
+  frame.photoAsset = image.asset;
+  frame.thumbAsset = image.thumbAsset;
+  frame.publicUrl = '';
+  frame.thumbPublicUrl = '';
+  input.value = '';
   renderAmbientes();
   syncPreviewDocument('environment_page_frame_photo_uploaded');
 }
@@ -3030,7 +3195,7 @@ function startAnnotationDrag(event, ambId, pageId, frameId, annotationId, handle
 function renderFrameEditor(ambId, pageId, frame) {
   return `
     <div class="frame-editor ${frame.photo ? '' : 'empty'}">
-      ${frame.photo ? `<img src="${escapeAttribute(frame.photo)}" alt="${escapeAttribute(frame.title || 'Moldura')}">` : 'Envie uma foto para esta moldura'}
+      ${frame.photo ? `<img src="${escapeAttribute(frame.publicUrl || frame.photo)}" alt="${escapeAttribute(frame.title || 'Moldura')}">` : 'Envie uma foto para esta moldura'}
     </div>
   `;
 }
@@ -3104,8 +3269,15 @@ async function handlePagePhotoUpload(ambId, pageId, input) {
   if (!file) return;
   const page = environmentPages(ambId).find(item => item.id === pageId);
   if (!page) return;
-  trackPendingAsset(file, { area: 'environment.page', environmentId: ambId, pageId });
-  page.photo = await fileToDataURL(file);
+  const image = await imageFileToReference(file, { area: 'environment.page', kind: 'page', environmentId: ambId, pageId });
+  page.photo = image.src;
+  page.thumbSrc = image.thumbSrc;
+  page.assetId = image.assetId;
+  page.photoAsset = image.asset;
+  page.thumbAsset = image.thumbAsset;
+  page.publicUrl = '';
+  page.thumbPublicUrl = '';
+  input.value = '';
   renderAmbientes();
   syncPreviewDocument('environment_page_photo_uploaded');
 }
@@ -3145,6 +3317,10 @@ function renderEnvironmentPages(amb) {
 
 window.addEventListener('message', event => {
   if (event.origin !== window.location.origin) return;
+  if (event.data?.type === 'dcoratto:force-local-flush') {
+    syncPreviewDocument(event.data.action || 'forced_local_flush');
+    return;
+  }
   if (event.data?.type === 'dcoratto:session') {
     editorActor = event.data.actor || editorActor;
     updateEmployeeManagerUi();
@@ -3272,6 +3448,7 @@ function applyHydratedDocument(payload = {}) {
   if (shouldResetDocument) {
     resetProjectDocumentState();
   } else if (incomingDraft) {
+    incomingDraft = migrateDraftToCanonical(incomingDraft);
     builderDraft = incomingDraft;
     AMBIENTES = Array.isArray(incomingDraft.ambientes)
       ? incomingDraft.ambientes.map(normalizeEnvironment)
@@ -3283,6 +3460,7 @@ function applyHydratedDocument(payload = {}) {
   }
 
   if (incomingPreview) {
+    incomingPreview = migratePreviewToCanonical(incomingPreview);
     mergePreviewDocument(incomingPreview);
     safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(incomingPreview));
   }
@@ -3294,6 +3472,44 @@ function applyHydratedDocument(payload = {}) {
     syncPreviewDocument('remote_document_loaded');
   }
   updateSoldLockUi();
+}
+
+function migrateDraftToCanonical(draft = {}) {
+  if (Number(draft.coordinateSystemVersion || 0) >= 2) return draft;
+  return {
+    ...draft,
+    canonicalPage: draft.canonicalPage || {
+      preset: 'DCORATTO_CANONICAL_1440x1020',
+      width: 1440,
+      height: 1020,
+      coordinateSystemVersion: 2,
+      unit: 'px',
+    },
+    coordinateSystemVersion: 2,
+    legacyCoordinateBackup: draft.legacyCoordinateBackup || {
+      coordinateSystemVersion: draft.coordinateSystemVersion || 1,
+      migratedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function migratePreviewToCanonical(preview = {}) {
+  if (Number(preview.coordinateSystemVersion || 0) >= 2) return preview;
+  return {
+    ...preview,
+    canonicalPage: preview.canonicalPage || {
+      preset: 'DCORATTO_CANONICAL_1440x1020',
+      width: 1440,
+      height: 1020,
+      coordinateSystemVersion: 2,
+      unit: 'px',
+    },
+    coordinateSystemVersion: 2,
+    legacyCoordinateBackup: preview.legacyCoordinateBackup || {
+      coordinateSystemVersion: preview.coordinateSystemVersion || 1,
+      migratedAt: new Date().toISOString(),
+    },
+  };
 }
 
 function resetProjectDocumentState() {
@@ -3399,7 +3615,7 @@ function mergePreviewDocument(preview) {
       : [];
     if (coverPhotos.length) {
       amb.photos = coverPhotos.map(normalizeCoverPhoto);
-      amb.img = coverPhotos[0].src;
+      amb.img = imageThumbSrc(amb.photos[0]);
     }
     amb.layout = normalizeCoverLayout(previewEnvironment.layout, amb.photos?.length || 1);
     amb.pages = Array.isArray(previewEnvironment.pages)
@@ -3412,7 +3628,15 @@ function mergePreviewDocument(preview) {
         frames: Array.isArray(page.frames) ? page.frames.map(frame => ({
           id: frame.id || `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
           title: frame.title || 'Moldura',
-          photo: frame.photo || '',
+          photo: frame.publicUrl || frame.photo || '',
+          thumbSrc: frame.thumbPublicUrl || frame.thumbSrc || frame.publicUrl || frame.photo || '',
+          assetId: frame.assetId || '',
+          photoAsset: frame.photoAsset || frame.asset || null,
+          thumbAsset: frame.thumbAsset || null,
+          publicUrl: frame.publicUrl || '',
+          thumbPublicUrl: frame.thumbPublicUrl || '',
+          storagePath: frame.storagePath || '',
+          thumbStoragePath: frame.thumbStoragePath || '',
           shape: ['circle', 'square'].includes(frame.shape) ? frame.shape : 'square',
           x: frame.x,
           y: frame.y,
@@ -3430,6 +3654,7 @@ function mergePreviewDocument(preview) {
 }
 
 function syncPreviewDocument(action = 'editor_sync') {
+  if (typeof action !== 'string') action = 'editor_sync';
   if (isProjectSold()) return;
   const existingDraft = loadBuilderDraft() || builderDraft;
   const existingPreview = loadPreviewCache();
@@ -3595,6 +3820,10 @@ window.addEventListener('beforeunload', () => {
   syncPreviewDocument('before_unload_autosave');
 });
 
+window.addEventListener('pagehide', () => {
+  syncPreviewDocument('pagehide_autosave');
+});
+
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') syncPreviewDocument('visibility_hidden_autosave');
 });
@@ -3637,7 +3866,7 @@ async function copyClientLink(url) {
 }
 
 ['clientName', 'contractNum', 'endereco'].forEach(id => {
-  document.getElementById(id)?.addEventListener('input', syncPreviewDocument);
+  document.getElementById(id)?.addEventListener('input', () => syncPreviewDocument('field_input_updated'));
 });
 syncPreviewDocument();
 

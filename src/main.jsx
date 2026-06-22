@@ -10,7 +10,13 @@ import {
   loadRemoteEditorSettings,
   saveRemoteEditorSettings,
 } from './auditPersistence'
-import { loadLocalProjectSnapshot, saveLocalProjectSnapshot, savePendingAsset } from './offlinePersistence'
+import {
+  loadLocalDraftSnapshot,
+  loadLocalProjectSnapshot,
+  saveLocalMutation,
+  saveLocalProjectSnapshot,
+  savePendingAsset,
+} from './offlinePersistence'
 import { optimizeImageToWebp } from './imageOptimizer'
 import './styles.css'
 
@@ -32,7 +38,7 @@ function App() {
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
-  const SYSTEM_VERSION = "2026-06-08-mobile-contain-pdf-v1";
+  const SYSTEM_VERSION = "2026-06-22-write-through-canonical-v1";
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
@@ -54,7 +60,8 @@ function App() {
           });
         }
         const activeProjectId = getActiveProjectId(actor);
-        const localFallback = await loadLocalProjectSnapshot(remote?.projectId || activeProjectId).catch(() => null);
+        const localFallback = await loadLocalDraftSnapshot(remote?.projectId || activeProjectId, actor.email)
+          .catch(() => loadLocalProjectSnapshot(remote?.projectId || activeProjectId).catch(() => null));
         const browserFallback = readBrowserDocumentCache(activeProjectId, actor);
         const documentState = chooseBestDocumentState({
           remote,
@@ -82,7 +89,8 @@ function App() {
       } catch (error) {
         console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
         const activeProjectId = getActiveProjectId(actor);
-        const local = await loadLocalProjectSnapshot(activeProjectId).catch(() => null);
+        const local = await loadLocalDraftSnapshot(activeProjectId, actor.email)
+          .catch(() => loadLocalProjectSnapshot(activeProjectId).catch(() => null));
         const browserFallback = readBrowserDocumentCache(activeProjectId, actor);
         const localDocument = chooseBestDocumentState({
           candidates: [local, browserFallback],
@@ -143,10 +151,12 @@ function App() {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type === 'dcoratto:pending-asset') {
         const optimized = await optimizeImageToWebp(event.data.file).catch(() => null);
+        const thumbnail = await optimizeImageToWebp(event.data.file, { maxSize: 480, quality: 0.72 }).catch(() => null);
         savePendingAsset({
           id: event.data.assetId,
           projectId: getActiveProjectId(actor),
           file: optimized?.blob || event.data.file,
+          thumbnailBlob: thumbnail?.blob || null,
           metadata: {
             ...(event.data.metadata || {}),
             fileName: optimized?.fileName || event.data.file?.name || '',
@@ -157,7 +167,17 @@ function App() {
             optimizedSize: optimized?.optimizedSize || event.data.file?.size || 0,
             compressionRatio: optimized?.compressionRatio || 1,
             convertedToWebp: Boolean(optimized?.converted),
+            syncStatus: 'pending',
           },
+          thumbnailMetadata: thumbnail ? {
+            fileName: `thumb-${thumbnail.fileName || event.data.file?.name || 'image.webp'}`,
+            mimeType: thumbnail.mimeType || 'image/webp',
+            width: thumbnail.width || 0,
+            height: thumbnail.height || 0,
+            size: thumbnail.optimizedSize || 0,
+            quality: 0.72,
+            syncStatus: 'pending',
+          } : null,
           actor,
         }).catch((error) => console.warn('Falha ao guardar asset offline.', error));
         return;
@@ -169,7 +189,8 @@ function App() {
             const documentState = chooseBestDocumentState({
               remote,
               candidates: [
-                await loadLocalProjectSnapshot(remote?.projectId || projectId).catch(() => null),
+                await loadLocalDraftSnapshot(remote?.projectId || projectId, actor.email)
+                  .catch(() => loadLocalProjectSnapshot(remote?.projectId || projectId).catch(() => null)),
                 readBrowserDocumentCache(remote?.projectId || projectId, actor),
               ],
               fallbackProjectId: projectId,
@@ -259,7 +280,10 @@ function App() {
         }));
       }
 
+      const eventId = event.data.eventId || crypto.randomUUID();
       const payload = {
+        id: eventId,
+        eventId,
         action,
         actor,
         draft,
@@ -269,16 +293,31 @@ function App() {
         saveHtml: action === 'generate_project_initial',
       };
 
-      saveLocalProjectSnapshot(getActiveProjectId(actor), {
-        projectId: getActiveProjectId(actor),
+      const activeProjectId = getActiveProjectId(actor);
+      const localSnapshot = {
+        projectId: activeProjectId,
+        userEmail: actor.email || '',
         draft: draft || null,
         preview: preview || null,
         settings: settings || null,
         settingsMutation: settingsMutation || null,
         action,
         status: action === 'save_as_draft' ? 'draft' : remoteDocument?.status || 'draft',
+        canonicalPage: CANONICAL_PAGE,
+        syncStatus: 'dirty',
         actor,
-      }).catch((error) => console.warn('Falha ao salvar snapshot local imediato.', error));
+      };
+      try {
+        await saveLocalProjectSnapshot(activeProjectId, localSnapshot);
+        await saveLocalMutation({
+          ...payload,
+          projectId: activeProjectId,
+          userEmail: actor.email || '',
+          status: 'pending',
+        });
+      } catch (error) {
+        console.warn('Falha ao gravar write-through local imediato.', error);
+      }
 
       if (settings || settingsMutation) {
         persistEditorEvent(payload).then((result) => {
@@ -406,6 +445,40 @@ function App() {
     if (isLogged && !isBootstrapping) sendSessionAndSettingsToEditor();
   }, [isLogged, isBootstrapping, remoteSettings]);
 
+  useEffect(() => {
+    if (!isLogged) return undefined;
+
+    const requestEditorFlush = (action) => {
+      iframeRef.current?.contentWindow?.postMessage({
+        type: 'dcoratto:force-local-flush',
+        action,
+      }, window.location.origin);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') requestEditorFlush('visibility_hidden_flush');
+    };
+    const handlePageHide = () => requestEditorFlush('pagehide_flush');
+    const handleBeforeUnload = () => requestEditorFlush('before_unload_flush');
+    const handleOnline = () => {
+      requestEditorFlush('online_flush');
+      flushOfflineQueue().catch((error) => console.warn('Falha ao sincronizar fila ao voltar online.', error));
+    };
+    const handleOffline = () => requestEditorFlush('offline_flush');
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [isLogged]);
+
   if (!isLogged) {
     return <Login onLoginSuccess={(user) => {
       setCurrentUser(user);
@@ -445,7 +518,15 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
 const BUILDER_STORAGE_KEY = 'dcoratto.builder.document.v1';
-const PDF_VIEWPORT = { width: 1440, height: 1020 };
+const PAGE_PRESET = 'DCORATTO_CANONICAL_1440x1020';
+const CANONICAL_PAGE = Object.freeze({
+  preset: PAGE_PRESET,
+  width: 1440,
+  height: 1020,
+  coordinateSystemVersion: 2,
+  unit: 'px',
+});
+const PDF_VIEWPORT = { width: CANONICAL_PAGE.width, height: CANONICAL_PAGE.height };
 const PDF_PAGE_MARGIN = 36;
 const PDF_MAX_PAGE_WIDTH = 3200;
 
@@ -459,7 +540,13 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
     import('jspdf'),
   ]);
 
-  localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
+  const canonicalPreview = {
+    ...preview,
+    canonicalPage: preview.canonicalPage || CANONICAL_PAGE,
+    coordinateSystemVersion: Number(preview.coordinateSystemVersion || CANONICAL_PAGE.coordinateSystemVersion),
+  };
+
+  localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(canonicalPreview));
 
   const frame = document.createElement('iframe');
   frame.title = 'Renderizador de PDF DCoratto';
@@ -540,29 +627,7 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
 }
 
 function createPdfCaptureTargets(sections) {
-  return sections.flatMap((section) => {
-    const frames = Array.from(section.querySelectorAll('.page-frames > .doc-photo-frame'))
-      .filter(frame => frame.querySelector('img'));
-    if (!frames.length) {
-      const photoCards = Array.from(section.querySelectorAll('.photo-mural .photo-card'))
-        .filter(card => card.querySelector('img'));
-      if (!photoCards.length) return [{ type: 'section', section }];
-      return photoCards.map((photoCard, photoIndex) => ({
-        type: 'photo',
-        section,
-        photoCard,
-        photoIndex,
-        photoCount: photoCards.length,
-      }));
-    }
-    return frames.map((frame, frameIndex) => ({
-      type: 'frame',
-      section,
-      frame,
-      frameIndex,
-      frameCount: frames.length,
-    }));
-  });
+  return sections.map(section => ({ type: 'section', section }));
 }
 
 function preparePdfCaptureTarget(target) {
@@ -679,72 +744,16 @@ function preparePdfFramePageForCapture(target) {
 }
 
 function preparePdfSectionForCapture(section, options = {}) {
-  const {
-    allowWiderPage = false,
-    includeContainerBounds = true,
-    trimVerticalWhitespace = false,
-  } = options;
-  const restoreSectionStyle = rememberInlineStyles(section, ['min-height', 'overflow', 'width']);
+  const restoreSectionStyle = rememberInlineStyles(section, ['min-height', 'height', 'overflow', 'width']);
 
   section.style.width = `${PDF_VIEWPORT.width}px`;
+  section.style.minHeight = `${PDF_VIEWPORT.height}px`;
   section.style.overflow = 'visible';
 
-  const frames = section.querySelector('.page-frames');
-  if (!frames) {
-    return {
-      pageWidth: PDF_VIEWPORT.width,
-      restore() {
-        restoreInlineStyles(section, restoreSectionStyle);
-      },
-    };
-  }
-
-  const restoreFramesStyle = rememberInlineStyles(frames, ['transform', 'transform-origin', 'margin-left', 'margin-top', 'width', 'min-height']);
-  const baseFramesRect = frames.getBoundingClientRect();
-  const baseFramesHeight = Math.max(frames.scrollHeight, frames.offsetHeight, baseFramesRect.height);
-
-  frames.style.transform = 'none';
-  frames.style.transformOrigin = 'top left';
-  frames.style.marginLeft = '0';
-  frames.style.marginTop = '0';
-  frames.style.setProperty('width', `${baseFramesRect.width}px`, 'important');
-  frames.style.setProperty('min-height', `${baseFramesHeight}px`, 'important');
-
-  const sectionRect = section.getBoundingClientRect();
-  const framesRect = frames.getBoundingClientRect();
-  const visualBounds = collectPdfVisualBounds(frames, { includeContainerBounds });
-  let pageWidth = PDF_VIEWPORT.width;
-
-  if (visualBounds) {
-    const contentWidth = Math.max(1, visualBounds.right - visualBounds.left);
-    const contentHeight = Math.max(1, visualBounds.bottom - visualBounds.top);
-    pageWidth = allowWiderPage
-      ? Math.ceil(Math.min(PDF_MAX_PAGE_WIDTH, Math.max(PDF_VIEWPORT.width, contentWidth + (PDF_PAGE_MARGIN * 2))))
-      : PDF_VIEWPORT.width;
-    const maxWidth = Math.max(1, pageWidth - (PDF_PAGE_MARGIN * 2));
-    const scale = Math.min(1, maxWidth / contentWidth);
-    const desiredLeft = Math.max(0, (pageWidth - (contentWidth * scale)) / 2);
-    const framesLeft = framesRect.left - sectionRect.left;
-    const framesTop = framesRect.top - sectionRect.top;
-    const contentLeftInFrames = visualBounds.left - framesRect.left;
-    const contentTopInFrames = visualBounds.top - framesRect.top;
-    const translateX = desiredLeft - framesLeft - (contentLeftInFrames * scale);
-    const translateY = trimVerticalWhitespace
-      ? -(contentTopInFrames * scale)
-      : contentTopInFrames < 0 ? (-contentTopInFrames * scale) : 0;
-    const visualBottom = framesTop + translateY + ((visualBounds.bottom - framesRect.top) * scale);
-    const scaledFrameBottom = framesTop + translateY + Math.max(frames.scrollHeight, frames.offsetHeight, contentHeight) * scale;
-
-    section.style.width = `${pageWidth}px`;
-    frames.style.transform = `matrix(${scale}, 0, 0, ${scale}, ${translateX}, ${translateY})`;
-    section.style.minHeight = `${Math.ceil(Math.max(sectionRect.height, visualBottom, scaledFrameBottom) + 72)}px`;
-  }
-
   return {
-    pageWidth,
+    pageWidth: PDF_VIEWPORT.width,
     restore() {
       restoreInlineStyles(section, restoreSectionStyle);
-      restoreInlineStyles(frames, restoreFramesStyle);
     },
   };
 }
@@ -1001,10 +1010,14 @@ function chooseBestDocumentState({ remote = null, candidates = [], fallbackProje
 
 function documentSnapshotTime(snapshot = {}) {
   const timestamps = [
+    snapshot.localUpdatedAt,
+    snapshot.remoteUpdatedAt,
     snapshot.updatedAt,
     snapshot.updated_at,
     snapshot.snapshotUpdatedAt,
+    snapshot.draft?.localUpdatedAt,
     snapshot.draft?.updatedAt,
+    snapshot.preview?.localUpdatedAt,
     snapshot.preview?.updatedAt,
     snapshot.data?.lastEventAt,
   ];

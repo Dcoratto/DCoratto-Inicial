@@ -21,6 +21,10 @@
         --muted: #8a8070;
         --text: #f7f2ea;
         --danger: #ff6a55;
+        --canonical-page-width: 1440px;
+        --canonical-page-height: 1020px;
+        --canonical-frame-width: 1332;
+        --canonical-frame-height: 720;
       }
 
       body.client-view {
@@ -564,7 +568,8 @@
 
       .page-frames {
         position: relative;
-        min-height: 720px;
+        min-height: 0;
+        aspect-ratio: var(--canonical-frame-width) / var(--canonical-frame-height);
         display: block;
       }
 
@@ -1072,6 +1077,26 @@
       }
 
       .page-arrow-point.is-selected { display: block; }
+
+      .mobile-arrow-marker {
+        position: absolute;
+        z-index: 48;
+        display: none;
+        width: 22px;
+        height: 22px;
+        place-items: center;
+        border: 1px solid rgba(247,242,234,.92);
+        border-radius: 999px;
+        background: var(--callout-color, #080807);
+        color: #f7f2ea;
+        font-family: 'Montserrat', sans-serif;
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 8px 18px rgba(0,0,0,.42);
+        pointer-events: none;
+      }
 
       .mobile-frame-flow {
         display: none;
@@ -1850,7 +1875,8 @@
 
         .page-frames {
           width: min(100%, 460px);
-          min-height: min(760px, 78svh);
+          min-height: 0;
+          aspect-ratio: var(--canonical-frame-width) / var(--canonical-frame-height);
           margin: 0 auto;
         }
 
@@ -2224,22 +2250,43 @@
 
         body.client-view .page-frames {
           width: min(100%, 430px);
-          min-height: clamp(430px, 118vw, 620px);
+          min-height: 0;
+          aspect-ratio: var(--canonical-frame-width) / var(--canonical-frame-height);
         }
 
         body.client-view .environment-page.has-mobile-flow .page-frames {
-          display: none !important;
+          display: block !important;
         }
 
         body.client-view .environment-page:has(.mobile-frame-flow) .page-frames {
-          display: none !important;
+          display: block !important;
         }
 
         body.client-view .environment-page.has-mobile-flow .mobile-frame-flow {
-          display: grid;
+          display: none !important;
           width: min(100%, 430px);
           margin: 14px auto 0;
           gap: 0;
+        }
+
+        body.client-view .page-annotation-line,
+        body.client-view .page-annotation-arrow-head,
+        body.client-view .page-annotation-text,
+        body.client-view .doc-annotation-layer,
+        body.client-view .doc-annotation-text {
+          display: none !important;
+        }
+
+        body.client-view .mobile-arrow-marker {
+          display: inline-grid;
+        }
+
+        body.client-view .doc-photo-frame img,
+        body.client-view .page-detail-frame img,
+        body.client-view .page-free-element.type-image img {
+          object-fit: contain !important;
+          object-position: center center !important;
+          background: #080807;
         }
 
         body.client-view .mobile-frame-card {
@@ -2356,8 +2403,15 @@
 
       body.pdf-export .page-frames {
         width: 100% !important;
-        min-height: 720px !important;
+        min-height: 0 !important;
+        aspect-ratio: var(--canonical-frame-width) / var(--canonical-frame-height) !important;
         margin: 0 !important;
+      }
+
+      body.pdf-export #document > section {
+        width: 1440px !important;
+        min-height: 1020px !important;
+        overflow: visible !important;
       }
 
       body.pdf-export .mobile-frame-flow {
@@ -2419,6 +2473,19 @@
       `);
 
       const storageKey = 'dcoratto.portfolio.document.v1';
+      const CANONICAL_PAGE = Object.freeze({
+        preset: 'DCORATTO_CANONICAL_1440x1020',
+        width: 1440,
+        height: 1020,
+        coordinateSystemVersion: 2,
+        unit: 'px',
+      });
+      const CANONICAL_FRAME = Object.freeze({
+        width: 1332,
+        height: 720,
+        coordinateSystemVersion: 2,
+        unit: 'percent',
+      });
       const urlParams = new URLSearchParams(window.location.search);
       const isEditablePreview = urlParams.has('preview');
       const isPdfExport = urlParams.has('pdf');
@@ -2651,6 +2718,9 @@
             branding: { logo: '', companyName: "D'Coratto Sob Medida" },
             client: { name: 'CLIENTE MODELO', address: '', contractNumber: '', manufacturers: [] },
             environments: [],
+            canonicalPage: CANONICAL_PAGE,
+            canonicalFrame: CANONICAL_FRAME,
+            coordinateSystemVersion: 2,
           };
         }
 
@@ -2668,6 +2738,9 @@
             manufacturers: raw.client?.manufacturers || [],
           },
           environments: (raw.environments || []).filter(environment => environment && environment.title),
+          canonicalPage: raw.canonicalPage || CANONICAL_PAGE,
+          canonicalFrame: raw.canonicalFrame || CANONICAL_FRAME,
+          coordinateSystemVersion: Number(raw.coordinateSystemVersion || 2),
         };
       }
 
@@ -5956,6 +6029,12 @@
             ></span>` : ''}
           `;
           }).join('')}
+          ${isClientView ? page.annotations.map((annotation, annotationIndex) => isDetailAnnotation(annotation) ? '' : `
+            <span
+              class="mobile-arrow-marker"
+              style="left:${Number(annotation.toX ?? 20)}%;top:${Number(annotation.toY ?? 20)}%;z-index:${70 + annotationIndex};--callout-color:${escapeAttribute(pageAnnotationArrowColor(annotation))}"
+            >${annotationIndex + 1}</span>
+          `).join('') : ''}
         `;
       }
 
@@ -5964,7 +6043,8 @@
           page.frames.forEach((frame, index) => {
             frame.id ||= `frame-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
             frame.title ||= `Moldura ${index + 1}`;
-            frame.photo ||= frame.photos?.[0]?.src || '';
+            frame.photo ||= frame.publicUrl || frame.photos?.[0]?.publicUrl || frame.photos?.[0]?.src || '';
+            frame.thumbSrc ||= frame.thumbPublicUrl || frame.photos?.[0]?.thumbPublicUrl || frame.photos?.[0]?.thumbSrc || frame.photo || '';
             frame.shape = supportedFrameShapes().includes(frame.shape || frame.frameType)
               ? (frame.shape || frame.frameType)
               : 'square';
@@ -6075,7 +6155,13 @@
             ></span>` : ''}
           `;
         }).join('');
-        return `<svg class="doc-annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs>${defs}</defs>${lines}</svg>${labels}`;
+        const mobileMarkers = isClientView ? annotations.map((annotation, annotationIndex) => `
+          <span
+            class="mobile-arrow-marker"
+            style="left:${Number(annotation.toX)}%;top:${Number(annotation.toY)}%;--callout-color:${escapeAttribute(annotation.arrowColor || '#d7c2a7')}"
+          >${annotationIndex + 1}</span>
+        `).join('') : '';
+        return `<svg class="doc-annotation-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs>${defs}</defs>${lines}</svg>${labels}${mobileMarkers}`;
       }
 
       function frameArrowMarkerId(environmentIndex, pageIndex, frameIndex, annotationIndex) {
@@ -6110,9 +6196,11 @@
       function normalizePhotos(photos) {
         const list = photos && photos.length ? photos : [{ label: '', src: fallbackImage }];
         return list.map((photo) => ({
+          ...photo,
           label: photo.label || '',
           title: photo.label || '',
-          src: photo.src || fallbackImage,
+          src: photo.publicUrl || photo.src || fallbackImage,
+          thumbSrc: photo.thumbPublicUrl || photo.thumbSrc || photo.publicUrl || photo.src || fallbackImage,
         }));
       }
 

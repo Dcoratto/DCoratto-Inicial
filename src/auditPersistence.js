@@ -46,11 +46,11 @@ export function readOfflineQueue() {
   return listPendingMutations().catch(() => []);
 }
 
-export async function persistEditorEvent({ action, actor, draft, preview, settings, settingsMutation = null, saveHtml = false }) {
+export async function persistEditorEvent({ id = '', eventId = '', action, actor, draft, preview, settings, settingsMutation = null, saveHtml = false }) {
   if (actor?.email) sessionStorage.setItem('dcoratto.current.actor.v1', JSON.stringify(actor));
   const payload = {
-    id: crypto.randomUUID(),
-    eventId: crypto.randomUUID(),
+    id: id || eventId || crypto.randomUUID(),
+    eventId: eventId || id || crypto.randomUUID(),
     action,
     actor,
     draft: draft || null,
@@ -60,12 +60,14 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
     saveHtml,
     createdAt: new Date().toISOString(),
   };
-  payload.id = payload.eventId;
+  payload.eventId = payload.eventId || payload.id || crypto.randomUUID();
+  payload.id = payload.id || payload.eventId;
 
   const projectId = getActiveProjectId(actor);
   if (draft || preview || settings) {
-    saveLocalProjectSnapshot(projectId, {
+    const snapshot = {
       projectId,
+      userEmail: actor?.email || '',
       draft: draft || null,
       preview: preview || null,
       settings: settings || null,
@@ -73,13 +75,22 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
       action,
       status: action === 'save_as_draft' ? 'draft' : undefined,
       actor: actor || null,
-    }).catch((error) => console.warn('Nao foi possivel salvar snapshot local no IndexedDB.', error));
+      syncStatus: 'dirty',
+    };
+    await saveLocalProjectSnapshot(projectId, snapshot).catch((error) => console.warn('Nao foi possivel salvar snapshot local no IndexedDB.', error));
   }
+
+  await enqueue({
+    ...payload,
+    projectId,
+    status: 'pending',
+  });
 
   if (saveHtml && preview?.environments) {
     try {
       const result = await publishClientHtmlWithServer(payload);
       if (result?.projectId) setActiveProjectId(result.projectId, actor);
+      await markMutationSynced(payload.id);
       await flushOfflineQueue();
       return result;
     } catch (error) {
@@ -93,6 +104,7 @@ export async function persistEditorEvent({ action, actor, draft, preview, settin
     try {
       const result = await persistEditorEventWithServer(payload);
       if (result?.projectId) setActiveProjectId(result.projectId, actor);
+      await markMutationSynced(payload.id);
       await flushOfflineQueue();
       return result;
     } catch (error) {
@@ -234,6 +246,7 @@ async function enqueue(event) {
     id: event.id,
     eventId: event.eventId || event.id,
     projectId: getActiveProjectId(event.actor),
+    userEmail: event.actor?.email || '',
     action: event.action,
     actor: event.actor,
     draft: event.draft || null,
