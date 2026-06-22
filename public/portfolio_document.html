@@ -2648,12 +2648,28 @@
         font-size: var(--text-size, 15px);
       }
 
-      body.client-view .document-page .page-annotation-line,
-      body.client-view .document-page .page-annotation-arrow-head,
-      body.client-view .document-page .page-annotation-text,
-      body.client-view .document-page .doc-annotation-layer,
-      body.client-view .document-page .doc-annotation-text {
-        display: block !important;
+      @media (min-width: 701px) {
+        body.client-view .document-page .page-annotation-line,
+        body.client-view .document-page .page-annotation-arrow-head,
+        body.client-view .document-page .page-annotation-text,
+        body.client-view .document-page .doc-annotation-layer,
+        body.client-view .document-page .doc-annotation-text {
+          display: block !important;
+        }
+      }
+
+      @media (max-width: 700px) {
+        body.client-view .document-page .page-annotation-line,
+        body.client-view .document-page .page-annotation-arrow-head,
+        body.client-view .document-page .page-annotation-text,
+        body.client-view .document-page .doc-annotation-layer,
+        body.client-view .document-page .doc-annotation-text {
+          display: none !important;
+        }
+
+        body.client-view .document-page .mobile-arrow-marker {
+          display: inline-grid !important;
+        }
       }
 
       body.client-view .document-page .mobile-frame-flow {
@@ -2692,6 +2708,10 @@
       .document-page .pdf-overflow-element {
         outline: 2px solid var(--danger) !important;
         outline-offset: 3px;
+      }
+
+      .document-page .pdf-hidden-extra-cover-photo {
+        display: none !important;
       }
 
       body.pdf-export #document {
@@ -3045,7 +3065,7 @@
           };
         }
 
-        return {
+        const normalized = {
           projectType: raw.projectType || 'Projeto Inicial',
           year: raw.year || new Date().getFullYear(),
           branding: {
@@ -3063,6 +3083,8 @@
           canonicalFrame: raw.canonicalFrame || CANONICAL_FRAME,
           coordinateSystemVersion: Number(raw.coordinateSystemVersion || 2),
         };
+        normalizeDocumentLayoutForCanonical(normalized);
+        return normalized;
       }
 
       function loadPageAnnotationDefaults() {
@@ -3263,12 +3285,11 @@
           page.closest('.document-page-viewport')?.querySelector('.pdf-safe-warning')?.remove();
 
           const pageRect = page.getBoundingClientRect();
-          const scale = pageRect.width / CANONICAL_PAGE.width || 1;
-          const safeRect = {
-            left: pageRect.left + (CANONICAL_PAGE.safeMarginX * scale),
-            right: pageRect.right - (CANONICAL_PAGE.safeMarginX * scale),
-            top: pageRect.top + (CANONICAL_PAGE.safeMarginTop * scale),
-            bottom: pageRect.bottom - (CANONICAL_PAGE.safeMarginBottom * scale),
+          const physicalRect = {
+            left: pageRect.left,
+            right: pageRect.right,
+            top: pageRect.top,
+            bottom: pageRect.bottom,
           };
           const candidates = Array.from(page.querySelectorAll([
             '[data-pdf-bounds]',
@@ -3290,10 +3311,10 @@
             if (style.display === 'none' || style.visibility === 'hidden') return;
             const rect = element.getBoundingClientRect();
             if (!rect.width && !rect.height) return;
-            const outside = rect.left < safeRect.left - 1
-              || rect.right > safeRect.right + 1
-              || rect.top < safeRect.top - 1
-              || rect.bottom > safeRect.bottom + 1;
+            const outside = rect.left < physicalRect.left - 1
+              || rect.right > physicalRect.right + 1
+              || rect.top < physicalRect.top - 1
+              || rect.bottom > physicalRect.bottom + 1;
             const fitMaxHeight = Number(element.dataset.pdfMaxHeight || 0);
             const clipsText = element.matches('.page-description, .info-panel')
               ? (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1)
@@ -3305,7 +3326,7 @@
               || (element.matches('.page-free-element') ? 'Elemento livre' : '')
               || (element.matches('.doc-photo-frame') ? 'Moldura de imagem' : '')
               || 'Conteudo';
-            if (!issues.includes(`${label} ultrapassa a area segura`)) issues.push(`${label} ultrapassa a area segura`);
+            if (!issues.includes(`${label} ultrapassa o limite fisico da pagina PDF`)) issues.push(`${label} ultrapassa o limite fisico da pagina PDF`);
             if (mark && isEditablePreview) element.classList.add('pdf-overflow-element');
           });
 
@@ -3319,7 +3340,7 @@
           if (mark && isEditablePreview && issues.length) {
             const warning = document.createElement('div');
             warning.className = 'pdf-safe-warning';
-            warning.textContent = `${result.label}: ha conteudo fora da area segura do PDF. Reposicione ou reduza o elemento antes de exportar.`;
+            warning.textContent = `${result.label}: ha conteudo fora do limite fisico da pagina PDF. Reposicione ou reduza o elemento antes de exportar.`;
             page.closest('.document-page-viewport')?.appendChild(warning);
           }
           return result;
@@ -3369,7 +3390,7 @@
             window.setTimeout(() => {
               const validation = validatePdfLayout({ mark: false });
               if (!validation.valid) {
-                window.alert('Existem elementos fora da area segura do PDF. Ajuste o projeto no editor antes de exportar.');
+                window.alert('Existem elementos fora do limite fisico da pagina PDF. Ajuste o projeto no editor antes de exportar.');
                 return;
               }
               window.focus();
@@ -3675,6 +3696,7 @@
             const annotation = pageAnnotation(Number(node.dataset.environmentIndex), Number(node.dataset.pageIndex), Number(node.dataset.annotationIndex));
             if (!annotation) return;
             annotation.text = node.textContent.trim() || 'Texto da seta';
+            updatePageAnnotationText(node, annotation, node.closest('[data-page-frames]'));
             savePageAnnotationDefaults(annotation);
             persistWithoutRender();
           });
@@ -3966,6 +3988,105 @@
         return Math.max(min, Math.min(max, number));
       }
 
+      function clampBoxToPercentPage(box, fallback = {}) {
+        const width = clampPercent(box?.width, fallback.width ?? 20, 1, 100);
+        const height = clampPercent(box?.height, fallback.height ?? 20, 1, 100);
+        return {
+          x: clampPercent(box?.x, fallback.x ?? 0, 0, 100 - width),
+          y: clampPercent(box?.y, fallback.y ?? 0, 0, 100 - height),
+          width,
+          height,
+        };
+      }
+
+      function normalizeDocumentLayoutForCanonical(data) {
+        if (!data || !Array.isArray(data.environments)) return data;
+        data.canonicalPage = data.canonicalPage || CANONICAL_PAGE;
+        data.canonicalFrame = data.canonicalFrame || CANONICAL_FRAME;
+        data.coordinateSystemVersion = 2;
+        data.environments.forEach((environment) => {
+          environment.pages = Array.isArray(environment.pages) ? environment.pages : [];
+          environment.pages.forEach((page) => {
+            page.frames = Array.isArray(page.frames) ? page.frames : [];
+            page.frames.forEach((frame, frameIndex) => {
+              applyFrameLayout(frame, frameIndex);
+              normalizeFrameAnnotations(frame);
+            });
+            page.annotations = Array.isArray(page.annotations) ? page.annotations : [];
+            page.annotations.forEach((annotation, annotationIndex) => {
+              normalizePageAnnotation(annotation, annotationIndex);
+            });
+            page.freeElements = Array.isArray(page.freeElements) ? page.freeElements : [];
+            page.freeElements.forEach(normalizeFreeElementBox);
+          });
+        });
+        return data;
+      }
+
+      function normalizePageAnnotation(annotation, index = 0) {
+        if (!annotation || typeof annotation !== 'object') return annotation;
+        annotation.type = isDetailAnnotation(annotation) ? 'detail-image' : 'text';
+        annotation.fromX = clampPercent(annotation.fromX, 30, 0, 100);
+        annotation.fromY = clampPercent(annotation.fromY, 30 + Math.min(index * 4, 20), 0, 100);
+        annotation.toX = clampPercent(annotation.toX, 20, 0, 100);
+        annotation.toY = clampPercent(annotation.toY, 20, 0, 100);
+        annotation.arrowColor ||= '#d7c2a7';
+        annotation.textColor ||= '#f7f2ea';
+        annotation.fontSize = clampPercent(annotation.fontSize, 15, 9, 32);
+        annotation.arrowWidth = clampPercent(annotation.arrowWidth, 0.9, 0.4, 2.5);
+        if (isDetailAnnotation(annotation)) {
+          annotation.detailShape = pageDetailShape(annotation);
+          annotation.detailSize = pageDetailSize(annotation);
+          annotation.detailHeight = clampPercent(annotation.detailHeight, annotation.detailSize, 6, 44);
+          annotation.fromX = clampPercent(annotation.fromX, 30, annotation.detailSize / 2, 100 - annotation.detailSize / 2);
+          annotation.fromY = clampPercent(annotation.fromY, 30, annotation.detailHeight / 2, 100 - annotation.detailHeight / 2);
+          annotation.imgScale = clampPercent(annotation.imgScale, 1, 1, 3);
+          annotation.imgX = clampPercent(annotation.imgX, 0, -100, 100);
+          annotation.imgY = clampPercent(annotation.imgY, 0, -100, 100);
+        }
+        return annotation;
+      }
+
+      function normalizeFreeElementBox(element) {
+        if (!element || typeof element !== 'object') return element;
+        const type = element.type === 'image' ? 'image' : 'text';
+        const fallback = {
+          x: 50,
+          y: 50,
+          width: type === 'image' ? 22 : 24,
+          height: type === 'image' ? 16 : 8,
+        };
+        const box = clampBoxToPercentPage(element, fallback);
+        element.type = type;
+        element.x = box.x;
+        element.y = box.y;
+        element.width = box.width;
+        element.height = box.height;
+        element.fontSize = clampPercent(element.fontSize, type === 'image' ? 22 : 22, 8, 64);
+        element.imgScale = clampPercent(element.imgScale, 1, 1, 3);
+        element.imgX = clampPercent(element.imgX, 0, -100, 100);
+        element.imgY = clampPercent(element.imgY, 0, -100, 100);
+        return element;
+      }
+
+      function clampDeltaForPercentBounds(bounds, dx, dy) {
+        return {
+          dx: Math.max(-bounds.minX, Math.min(100 - bounds.maxX, dx)),
+          dy: Math.max(-bounds.minY, Math.min(100 - bounds.maxY, dy)),
+        };
+      }
+
+      function annotationPointBounds(points) {
+        const xs = points.map(point => Number(point.x || 0));
+        const ys = points.map(point => Number(point.y || 0));
+        return {
+          minX: Math.min(...xs),
+          maxX: Math.max(...xs),
+          minY: Math.min(...ys),
+          maxY: Math.max(...ys),
+        };
+      }
+
       function isDetailAnnotation(annotation) {
         return annotation?.type === 'detail-image';
       }
@@ -3991,6 +4112,8 @@
         if (!node || !annotation) return;
         const size = pageDetailSize(annotation);
         const height = Math.max(6, Math.min(44, Number(annotation.detailHeight ?? size)));
+        annotation.fromX = clampPercent(annotation.fromX, 30, size / 2, 100 - size / 2);
+        annotation.fromY = clampPercent(annotation.fromY, 30, height / 2, 100 - height / 2);
         node.style.left = `${Number(annotation.fromX ?? 0)}%`;
         node.style.top = `${Number(annotation.fromY ?? 0)}%`;
         node.style.setProperty('--detail-width', `${size}%`);
@@ -4056,6 +4179,43 @@
         node.style.setProperty('--text-offset-x', placement.x);
         node.style.setProperty('--text-offset-y', placement.y);
         node.style.setProperty('--text-align', placement.align);
+        if (clampPositionedNodeToDocumentPage(node, annotation, pageNode)) {
+          const id = node.dataset.pageAnnotationText;
+          if (id && pageNode) {
+            const line = pageNode.querySelector(`[data-page-annotation-line="${id}"]`);
+            const tail = pageNode.querySelector(`[data-page-annotation-tail="${id}"]`);
+            const toolbar = pageNode.querySelector(`[data-page-annotation-toolbar][data-environment-index="${node.dataset.environmentIndex}"][data-page-index="${node.dataset.pageIndex}"][data-annotation-index="${node.dataset.annotationIndex}"]`);
+            updatePageAnnotationLine(line, annotation, pageNode);
+            if (tail) {
+              tail.style.left = `${annotation.fromX}%`;
+              tail.style.top = `${annotation.fromY}%`;
+            }
+            if (toolbar) {
+              toolbar.style.left = `${annotation.fromX}%`;
+              toolbar.style.top = `${annotation.fromY}%`;
+            }
+          }
+        }
+      }
+
+      function clampPositionedNodeToDocumentPage(node, annotation, pageNode) {
+        const documentPage = node?.closest?.('[data-document-page]');
+        const pageRect = documentPage?.getBoundingClientRect?.();
+        const canvasRect = pageNode?.getBoundingClientRect?.();
+        if (!pageRect?.width || !pageRect?.height || !canvasRect?.width || !canvasRect?.height || !annotation) return false;
+        const rect = node.getBoundingClientRect();
+        let shiftX = 0;
+        let shiftY = 0;
+        if (rect.left < pageRect.left) shiftX += pageRect.left - rect.left;
+        if (rect.right > pageRect.right) shiftX -= rect.right - pageRect.right;
+        if (rect.top < pageRect.top) shiftY += pageRect.top - rect.top;
+        if (rect.bottom > pageRect.bottom) shiftY -= rect.bottom - pageRect.bottom;
+        if (Math.abs(shiftX) < 0.5 && Math.abs(shiftY) < 0.5) return false;
+        annotation.fromX = clampPercent(Number(annotation.fromX || 0) + (shiftX / canvasRect.width) * 100, annotation.fromX, 0, 100);
+        annotation.fromY = clampPercent(Number(annotation.fromY || 0) + (shiftY / canvasRect.height) * 100, annotation.fromY, 0, 100);
+        node.style.left = `${annotation.fromX}%`;
+        node.style.top = `${annotation.fromY}%`;
+        return true;
       }
 
       function pageAnnotationTextPlacementStyle(annotation) {
@@ -5127,11 +5287,20 @@
         }).filter(Boolean);
 
         const move = (pointerEvent) => {
-          const dx = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
-          const dy = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
+          const rawDx = ((pointerEvent.clientX - startX) / canvasRect.width) * 100;
+          const rawDy = ((pointerEvent.clientY - startY) / canvasRect.height) * 100;
+          const bounds = selected.reduce((acc, item) => {
+            const width = Number(item.frame.width || 20);
+            acc.minX = Math.min(acc.minX, item.x);
+            acc.maxX = Math.max(acc.maxX, item.x + width);
+            acc.minY = Math.min(acc.minY, item.y);
+            acc.maxY = Math.max(acc.maxY, item.y + item.height);
+            return acc;
+          }, { minX: 100, maxX: 0, minY: 100, maxY: 0 });
+          const { dx, dy } = clampDeltaForPercentBounds(bounds, rawDx, rawDy);
           selected.forEach((item) => {
-            item.frame.x = Math.max(0, Math.min(100 - Number(item.frame.width || 20), item.x + dx));
-            item.frame.y = Math.max(0, Math.min(100 - item.height, item.y + dy));
+            item.frame.x = item.x + dx;
+            item.frame.y = item.y + dy;
             item.node.style.left = `${item.frame.x}%`;
             item.node.style.top = `${item.frame.y}%`;
           });
@@ -5516,12 +5685,14 @@
 
         const move = (pointerEvent) => {
           const point = pagePoint(pointerEvent, pageNode);
-          const dx = point.x - start.x;
-          const dy = point.y - start.y;
-          annotation.fromX = Math.max(0, Math.min(100, initial.fromX + dx));
-          annotation.fromY = Math.max(0, Math.min(100, initial.fromY + dy));
-          annotation.toX = Math.max(0, Math.min(100, initial.toX + dx));
-          annotation.toY = Math.max(0, Math.min(100, initial.toY + dy));
+          const delta = clampDeltaForPercentBounds(annotationPointBounds([
+            { x: initial.fromX, y: initial.fromY },
+            { x: initial.toX, y: initial.toY },
+          ]), point.x - start.x, point.y - start.y);
+          annotation.fromX = initial.fromX + delta.dx;
+          annotation.fromY = initial.fromY + delta.dy;
+          annotation.toX = initial.toX + delta.dx;
+          annotation.toY = initial.toY + delta.dy;
           updatePageAnnotationLine(node, annotation, pageNode);
           if (label) {
             updatePageAnnotationText(label, annotation, pageNode);
@@ -5580,7 +5751,17 @@
         const keyY = handle === 'head' ? 'toY' : 'fromY';
 
         const move = (pointerEvent) => {
-          const point = pagePoint(pointerEvent, pageNode);
+          const rawPoint = pagePoint(pointerEvent, pageNode);
+          const detailWidth = isDetailAnnotation(annotation) && handle === 'text' ? pageDetailSize(annotation) : 0;
+          const detailHeight = isDetailAnnotation(annotation) && handle === 'text'
+            ? clampPercent(annotation.detailHeight, detailWidth, 6, 44)
+            : 0;
+          const point = detailWidth
+            ? {
+                x: clampPercent(rawPoint.x, rawPoint.x, detailWidth / 2, 100 - detailWidth / 2),
+                y: clampPercent(rawPoint.y, rawPoint.y, detailHeight / 2, 100 - detailHeight / 2),
+              }
+            : rawPoint;
           annotation[keyX] = point.x;
           annotation[keyY] = point.y;
           const id = `${node.dataset.environmentIndex}-${node.dataset.pageIndex}-${node.dataset.annotationIndex}`;
@@ -5847,11 +6028,14 @@
         }
 
         const start = pagePoint(event, pageNode);
+        normalizeFreeElementBox(element);
         const initial = { x: Number(element.x || 0), y: Number(element.y || 0) };
+        const elementWidth = Number(element.width || (element.type === 'image' ? 22 : 24));
+        const elementHeight = Number(element.height || (element.type === 'image' ? 16 : 8));
         const move = (pointerEvent) => {
           const point = pagePoint(pointerEvent, pageNode);
-          element.x = Math.max(0, Math.min(96, initial.x + point.x - start.x));
-          element.y = Math.max(0, Math.min(96, initial.y + point.y - start.y));
+          element.x = Math.max(0, Math.min(100 - elementWidth, initial.x + point.x - start.x));
+          element.y = Math.max(0, Math.min(100 - elementHeight, initial.y + point.y - start.y));
           node.style.left = `${element.x}%`;
           node.style.top = `${element.y}%`;
         };
@@ -5912,7 +6096,8 @@
       }
 
       function renderEnvironment(environment, index) {
-        const photos = normalizePhotos(environment.photos);
+        const allPhotos = normalizePhotos(environment.photos);
+        const photos = isPdfExport && allPhotos.length > 1 ? allPhotos.slice(0, 1) : allPhotos;
         const layout = normalizeMuralLayout(environment.layout, photos.length);
         const overviewPage = wrapDocumentPage(`
           <section class="document-page environment ${isEditablePreview ? 'editable' : ''}" data-document-page data-page-label="${escapeAttribute(environment.title)}" id="${slug(environment.title)}">
@@ -6335,6 +6520,7 @@
       function renderFreeElements(page, environmentIndex, pageIndex) {
         page.freeElements = Array.isArray(page.freeElements) ? page.freeElements : [];
         return page.freeElements.map((element, elementIndex) => {
+          normalizeFreeElementBox(element);
           const key = freeElementKey(environmentIndex, pageIndex, elementIndex);
           const selected = selectedFreeElementKeys.has(key);
           const type = element.type === 'image' ? 'image' : 'text';
@@ -6376,6 +6562,7 @@
 
       function renderPageAnnotations(page, environmentIndex, pageIndex) {
         page.annotations = Array.isArray(page.annotations) ? page.annotations : [];
+        page.annotations.forEach((annotation, annotationIndex) => normalizePageAnnotation(annotation, annotationIndex));
         return `
           ${page.annotations.map((annotation, annotationIndex) => {
             const zIndex = 30 + annotationIndex;

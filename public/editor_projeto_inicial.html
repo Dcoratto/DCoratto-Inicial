@@ -86,6 +86,7 @@ body.project-sold .cover-section,body.project-sold .ambientes{opacity:.72}
 .page-fields .field-full{grid-column:1/-1}
 .page-photo-preview{width:100%;max-width:240px;aspect-ratio:16/10;object-fit:cover;border:1px solid var(--border);border-radius:3px;background:#11100e}
 .cover-photo-tools{margin-top:16px;border-top:1px solid rgba(184,151,106,.18);padding-top:14px}
+.cover-pdf-note{margin-top:10px;border:1px solid rgba(184,151,106,.28);background:rgba(184,151,106,.06);color:#d7c2a7;padding:9px 11px;font-size:10px;letter-spacing:.08em;line-height:1.45;text-transform:uppercase}
 .cover-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px;margin-top:10px}
 .cover-photo-card{position:relative;border:1px solid var(--border);border-radius:3px;overflow:hidden;background:#111}
 .cover-photo-card img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block}
@@ -2452,6 +2453,7 @@ function renderCard(amb) {
             <input type="file" accept="image/*" multiple onchange="handleCoverPhotosUpload('${escapeJS(amb.id)}',this)" style="display:none">
           </label>
         </div>
+        <div class="cover-pdf-note">apenas a primeira imagem da capa ser&aacute; considerada no formato PDF</div>
         <div class="cover-photo-grid">
           ${coverPhotos.map((photo, photoIndex) => `
             <div class="cover-photo-card">

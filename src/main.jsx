@@ -577,7 +577,7 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
         .slice(0, 3)
         .map(page => `${page.label}: ${page.issues[0]}`)
         .join(' | ');
-      throw new Error(`Existem elementos fora da area segura do PDF. Ajuste-os no editor antes de exportar.${details ? ` ${details}` : ''}`);
+      throw new Error(`Existem elementos fora do limite fisico da pagina PDF. Ajuste-os no editor antes de exportar.${details ? ` ${details}` : ''}`);
     }
 
     const sections = Array.from(doc.querySelectorAll('#document .document-page'))

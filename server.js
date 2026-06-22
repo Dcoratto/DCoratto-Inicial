@@ -2670,7 +2670,12 @@ async function nextHtmlVersionNumber(projectId) {
 async function buildStandaloneHtml(preview) {
   const template = await readPortfolioTemplate();
   if (!template) throw new Error('Template portfolio_document.html nao encontrado para gerar o link do cliente.');
-  const serialized = JSON.stringify(sanitizeClientPreview(preview))
+  const clientPreview = sanitizeClientPreview(preview);
+  const serialized = JSON.stringify(clientPreview)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  const pageConfig = JSON.stringify(standalonePageConfig(clientPreview))
     .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
@@ -2679,6 +2684,7 @@ async function buildStandaloneHtml(preview) {
     <meta name="referrer" content="no-referrer">
     <meta name="dcoratto-client-layout" content="mobile-first">
     <script>
+      window.DCORATTO_PAGE_CONFIG = Object.freeze(${pageConfig});
       window.__DCORATTO_CLIENT_MOBILE_FIRST__ = ${JSON.stringify(clientMobileFirstVersion)};
       window.__DCORATTO_PORTFOLIO_DOCUMENT__ = ${serialized};
       window.__DCORATTO_CLIENT_VIEW__ = true;
@@ -2693,6 +2699,23 @@ async function buildStandaloneHtml(preview) {
     </script>`;
   const html = template.replace('</head>', `${hardening}</head>`);
   return html.replace('<body>', `<body data-dcoratto-mobile-first="${clientMobileFirstVersion}">`);
+}
+
+function standalonePageConfig(preview = {}) {
+  const page = preview.canonicalPage || {};
+  const frame = preview.canonicalFrame || {};
+  return {
+    preset: page.preset || 'DCORATTO_CANONICAL_1440x1020',
+    width: Number(page.width || 1440),
+    height: Number(page.height || 1020),
+    safeMarginX: Number(page.safeMarginX || 54),
+    safeMarginTop: Number(page.safeMarginTop || 42),
+    safeMarginBottom: Number(page.safeMarginBottom || 58),
+    frameWidth: Number(frame.width || page.frameWidth || 1332),
+    frameHeight: Number(frame.height || page.frameHeight || 720),
+    coordinateSystemVersion: Number(page.coordinateSystemVersion || preview.coordinateSystemVersion || 2),
+    unit: page.unit || 'px',
+  };
 }
 
 function sanitizeClientPreview(preview = {}) {
