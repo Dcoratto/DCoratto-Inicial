@@ -89,6 +89,40 @@ function fetchWithSupabaseTimeout(input, init = {}) {
   }).finally(() => clearTimeout(timer));
 }
 
+async function withSupabaseOperationTimeout(operation) {
+  if (Date.now() < supabaseUnavailableUntil) {
+    const circuitError = new Error('supabase_circuit_open');
+    circuitError.code = 'supabase_unavailable';
+    throw circuitError;
+  }
+
+  let timer = null;
+  const operationPromise = Promise.resolve().then(operation);
+  operationPromise.catch(() => null);
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      supabaseUnavailableUntil = Date.now() + supabaseCircuitCooldownMs;
+      const timeoutError = new Error('supabase_request_timeout');
+      timeoutError.code = 'supabase_unavailable';
+      reject(timeoutError);
+    }, supabaseRequestTimeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([operationPromise, timeoutPromise]);
+    supabaseUnavailableUntil = 0;
+    return result;
+  } catch (error) {
+    const normalized = normalizeExternalServiceError(error);
+    if (normalized.retryable) {
+      supabaseUnavailableUntil = Date.now() + supabaseCircuitCooldownMs;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function loadLocalEnvFile(fileName, overrideLocal = false) {
   const filePath = resolve(fileName);
   if (!existsSync(filePath)) return;
@@ -279,10 +313,10 @@ async function handleLoginRequest(request, response) {
     let retryableLoginError = null;
     if (supabaseServer) {
       try {
-        const { data, error } = await supabaseServer.rpc('verify_app_login', {
+        const { data, error } = await withSupabaseOperationTimeout(() => supabaseServer.rpc('verify_app_login', {
           login_email: email,
           login_password: password,
-        });
+        }));
         if (!error && data?.ok && data?.user?.email) {
           const remoteUser = normalizeAppUser(data.user);
           upsertRuntimeLoginUser({
@@ -362,12 +396,12 @@ async function handleAppUsersGet(url, response) {
       return;
     }
 
-    const { data, error } = await supabaseServer
+    const { data, error } = await withSupabaseOperationTimeout(() => supabaseServer
       .from('app_users')
       .select('email, display_name, role, active, created_at, updated_at')
       .eq('active', true)
       .order('display_name', { ascending: true })
-      .order('email', { ascending: true });
+      .order('email', { ascending: true }));
     if (error) throw error;
     cacheRuntimeUserMetadata(data || []);
 
@@ -429,14 +463,14 @@ async function handleAppUsersUpsert(request, response) {
       return;
     }
 
-    const { data, error } = await supabaseServer.rpc('upsert_app_user', {
+    const { data, error } = await withSupabaseOperationTimeout(() => supabaseServer.rpc('upsert_app_user', {
       manager_email: actorEmail,
       original_email: originalEmail || '',
       user_email: email,
       user_display_name: name,
       user_role: role,
       user_password: password,
-    });
+    }));
     if (error) throw error;
     sendJson(response, 200, { ok: true, source: 'supabase', user: publicAppUser(data?.user || data) });
   } catch (error) {
@@ -489,10 +523,10 @@ async function handleAppUsersDelete(url, response) {
       return;
     }
 
-    const { error } = await supabaseServer
+    const { error } = await withSupabaseOperationTimeout(() => supabaseServer
       .from('app_users')
       .update({ active: false })
-      .eq('email', email);
+      .eq('email', email));
     if (error) throw error;
     sendJson(response, 200, { ok: true, source: 'supabase', email });
   } catch (error) {
@@ -534,7 +568,7 @@ async function handleClientLinkRequest(request, response) {
     body = await readJsonBody(request);
     const projectId = safeId(body.projectId) || crypto.randomUUID();
     const actorEmail = normalizeEmail(body.actor?.email);
-    const existingProject = await loadProjectForWrite(projectId);
+    const existingProject = await withSupabaseOperationTimeout(() => loadProjectForWrite(projectId));
     if (existingProject && !canAccessPrivateProject(existingProject, actorEmail)) {
       sendJson(response, 403, { error: 'forbidden_project_access' });
       return;
@@ -630,7 +664,7 @@ async function handleEditorEventRequest(request, response) {
       draft: body.draft || null,
       preview: body.preview || null,
     });
-    await persistEditorState({
+    await withSupabaseOperationTimeout(() => persistEditorState({
       projectId,
       actor: body.actor,
       action: body.action,
@@ -640,7 +674,7 @@ async function handleEditorEventRequest(request, response) {
       settingsMutation: body.settingsMutation || null,
       eventId: body.eventId,
       createdAt: body.createdAt,
-    });
+    }));
 
     sendJson(response, 200, {
       ok: true,
@@ -671,11 +705,11 @@ async function handleLatestEditorStateRequest(url, response) {
 
     let project = null;
     if (requestedProjectId) {
-      const { data, error } = await supabaseServer
+      const { data, error } = await withSupabaseOperationTimeout(() => supabaseServer
         .from('document_projects')
         .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_at, deleted_for_users')
         .eq('id', requestedProjectId)
-        .maybeSingle();
+        .maybeSingle());
       if (error) throw error;
       project = data || null;
       if (project && !canAccessPrivateProject(project, actorEmail)) {
@@ -694,7 +728,7 @@ async function handleLatestEditorStateRequest(url, response) {
       if (!isAdminEmail(actorEmail)) {
         query = query.or(privateProjectAccessOr(actorEmail));
       }
-      const { data: projects, error: projectError } = await query;
+      const { data: projects, error: projectError } = await withSupabaseOperationTimeout(() => query);
       if (projectError) throw projectError;
       project = (projects || [])
         .filter(item => !isDeletedForUser(item, actorEmail))
@@ -703,7 +737,7 @@ async function handleLatestEditorStateRequest(url, response) {
 
     let settings = null;
     try {
-      settings = await loadSharedEditorSettings();
+      settings = await withSupabaseOperationTimeout(() => loadSharedEditorSettings());
     } catch (settingsError) {
       console.warn('Nao foi possivel carregar configuracoes remotas.', settingsError);
     }
@@ -831,7 +865,7 @@ async function handleEditorSettingsGet(response) {
       return;
     }
 
-    const settings = await loadSharedEditorSettings();
+    const settings = await withSupabaseOperationTimeout(() => loadSharedEditorSettings());
     lastKnownEditorSettings = settings;
     sendJson(response, 200, {
       ok: true,
@@ -877,12 +911,12 @@ async function handleCatalogMaterialsGet(url, response) {
       query = query.or(`name.ilike.%${term}%,code.ilike.%${term}%,catalog_key.ilike.%${term}%`);
     }
 
-    const { data, error } = await query;
+    const { data, error } = await withSupabaseOperationTimeout(() => query);
     if (error) throw error;
     const tableItems = (data || []).map(catalogMaterialToSettingsItem).filter(Boolean);
     let items = tableItems;
     try {
-      const settings = await loadSharedEditorSettings();
+      const settings = await withSupabaseOperationTimeout(() => loadSharedEditorSettings());
       const payloadItems = (settings.catalogItems || []).filter(item => catalogItemMatchesFiltersPayload(item, filters));
       items = mergeCatalogItemsPayload(tableItems, payloadItems).slice(0, filters.limit);
     } catch (settingsError) {
@@ -1195,7 +1229,7 @@ async function handleClientHistoryRequest(url, response) {
     if (!isAdminEmail(actorEmail)) {
       query = query.or(`created_by.eq.${escapePostgrestValue(actorEmail)},assigned_to_email.eq.${escapePostgrestValue(actorEmail)}`);
     }
-    const { data: versions, error } = await query;
+    const { data: versions, error } = await withSupabaseOperationTimeout(() => query);
     
     if (error) throw error;
 
@@ -1274,7 +1308,7 @@ async function handleProjectsRequest(url, response) {
       query = query.or(privateProjectAccessOr(actorEmail));
     }
 
-    const { data, error } = await query;
+    const { data, error } = await withSupabaseOperationTimeout(() => query);
     if (error) throw error;
     const projects = (data || [])
       .filter(project => !isDeletedForUser(project, actorEmail))
