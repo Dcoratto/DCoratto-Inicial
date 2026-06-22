@@ -7,7 +7,6 @@ import {
   persistEditorEvent,
   flushOfflineQueue,
   loadLatestEditorState,
-  loadRemoteEditorSettings,
   saveRemoteEditorSettings,
 } from './auditPersistence'
 import {
@@ -45,102 +44,73 @@ function App() {
     if (!isLogged || !actor.email) return undefined;
     let cancelled = false;
     setIsBootstrapping(true);
+    const activeProjectId = getActiveProjectId(actor);
+    const cachedSettings = readLocalEditorSettings();
+    const browserFallback = readBrowserDocumentCache(activeProjectId, actor);
+    const immediateDocument = hydrateBrowserStorage(chooseBestDocumentState({
+      candidates: [browserFallback],
+      fallbackProjectId: activeProjectId,
+      fallbackSettings: cachedSettings,
+    }));
+    immediateDocument.projectId = immediateDocument.projectId || activeProjectId;
+    immediateDocument.status = immediateDocument.status || 'draft';
+    setRemoteDocument(immediateDocument);
+    if (immediateDocument.settings) setRemoteSettings(immediateDocument.settings);
+    setIsBootstrapping(false);
 
-    flushOfflineQueue().catch((error) => console.warn('Falha ao limpar fila offline:', error));
+    async function hydratePersistentState() {
+      const localFallback = await loadLocalDraftSnapshot(activeProjectId, actor.email)
+        .catch(() => loadLocalProjectSnapshot(activeProjectId).catch(() => null));
+      if (!cancelled && localFallback) {
+        const localDocument = hydrateBrowserStorage(chooseBestDocumentState({
+          candidates: [localFallback, browserFallback],
+          fallbackProjectId: activeProjectId,
+          fallbackSettings: cachedSettings,
+        }));
+        setRemoteDocument(localDocument);
+        if (localDocument.settings) setRemoteSettings(localDocument.settings);
+      }
 
-    async function bootstrapRemoteState() {
-      const cachedSettings = readLocalEditorSettings();
       try {
         const remote = await loadLatestEditorState(actor);
         if (cancelled) return;
-        if (!remote?.settings) {
-          remote.settings = await loadRemoteEditorSettings().catch((settingsError) => {
-            console.warn('Nao foi possivel carregar configuracoes compartilhadas diretamente.', settingsError);
-            return null;
-          });
+        let remoteLocalFallback = localFallback;
+        if (remote?.projectId && remote.projectId !== activeProjectId) {
+          remoteLocalFallback = await loadLocalDraftSnapshot(remote.projectId, actor.email)
+            .catch(() => loadLocalProjectSnapshot(remote.projectId).catch(() => localFallback));
         }
-        const activeProjectId = getActiveProjectId(actor);
-        const localFallback = await loadLocalDraftSnapshot(remote?.projectId || activeProjectId, actor.email)
-          .catch(() => loadLocalProjectSnapshot(remote?.projectId || activeProjectId).catch(() => null));
-        const browserFallback = readBrowserDocumentCache(activeProjectId, actor);
         const documentState = chooseBestDocumentState({
           remote,
-          candidates: [localFallback, browserFallback],
+          candidates: [remoteLocalFallback, browserFallback],
           fallbackProjectId: activeProjectId,
+          fallbackSettings: cachedSettings,
         });
-        if (shouldSyncLocalSettings(cachedSettings, remote?.settings || {})) {
+        if (remote?.settings && shouldSyncLocalSettings(cachedSettings, remote.settings)) {
           const syncedSettings = await saveRemoteEditorSettings(
-            mergeSettingsForSharedSync(cachedSettings, remote?.settings || {}),
+            mergeSettingsForSharedSync(cachedSettings, remote.settings),
             actor,
             { type: 'settings-sync', createdAt: new Date().toISOString() },
-          ).catch((syncError) => {
-            console.warn('Nao foi possivel sincronizar catalogo local com o servidor.', syncError);
-            return null;
-          });
+          ).catch(() => null);
           if (syncedSettings) documentState.settings = syncedSettings;
         }
+        if (cancelled) return;
         const hydrated = hydrateBrowserStorage(documentState);
-        if (!hydrated?.projectId) {
-          hydrated.projectId = createNewActiveProjectId(actor);
-          hydrated.status = 'draft';
-        }
+        hydrated.projectId = hydrated.projectId || activeProjectId;
+        hydrated.status = hydrated.status || 'draft';
         setRemoteDocument(hydrated);
-        if (hydrated?.settings) setRemoteSettings(hydrated.settings);
+        if (hydrated.settings) setRemoteSettings(hydrated.settings);
       } catch (error) {
-        console.warn('Nao foi possivel carregar o rascunho remoto pelo servidor.', error);
-        const activeProjectId = getActiveProjectId(actor);
-        const local = await loadLocalDraftSnapshot(activeProjectId, actor.email)
-          .catch(() => loadLocalProjectSnapshot(activeProjectId).catch(() => null));
-        const browserFallback = readBrowserDocumentCache(activeProjectId, actor);
-        const localDocument = chooseBestDocumentState({
-          candidates: [local, browserFallback],
-          fallbackProjectId: activeProjectId,
-        });
-        const settings = await loadRemoteEditorSettings().catch((settingsError) => {
-          console.warn('Nao foi possivel carregar configuracoes compartilhadas pelo endpoint direto.', settingsError);
-          return null;
-        });
-        if (!cancelled && snapshotHasDocumentContent(localDocument)) {
-          let nextSettings = settings;
-          if (shouldSyncLocalSettings(cachedSettings, nextSettings || {})) {
-            nextSettings = await saveRemoteEditorSettings(
-              mergeSettingsForSharedSync(cachedSettings, nextSettings || {}),
-              actor,
-              { type: 'settings-sync', createdAt: new Date().toISOString() },
-            ).catch((syncError) => {
-              console.warn('Nao foi possivel sincronizar catalogo local apos fallback.', syncError);
-              return nextSettings;
-            });
-          }
-          if (nextSettings) localDocument.settings = nextSettings;
-          const hydrated = hydrateBrowserStorage(localDocument);
-          setRemoteDocument(hydrated);
-          if (hydrated?.settings) setRemoteSettings(hydrated.settings);
-        } else if (!cancelled && settings) {
-          let nextSettings = settings;
-          if (shouldSyncLocalSettings(cachedSettings, nextSettings || {})) {
-            nextSettings = await saveRemoteEditorSettings(
-              mergeSettingsForSharedSync(cachedSettings, nextSettings || {}),
-              actor,
-              { type: 'settings-sync', createdAt: new Date().toISOString() },
-            ).catch((syncError) => {
-              console.warn('Nao foi possivel sincronizar catalogo local sem rascunho local.', syncError);
-              return nextSettings;
-            });
-          }
-          const hydrated = hydrateBrowserStorage({ settings: nextSettings, projectId: createNewActiveProjectId(actor), status: 'draft' });
-          setRemoteDocument(hydrated);
-          setRemoteSettings(hydrated.settings);
-        }
+        console.warn('Rascunho remoto indisponivel; editor mantido no estado local.', error);
       }
     }
 
-    bootstrapRemoteState()
-      .finally(() => {
-        if (!cancelled) setIsBootstrapping(false);
-      });
+    hydratePersistentState();
+    const queueTimer = window.setTimeout(() => {
+      flushOfflineQueue().catch((error) => console.warn('Falha ao limpar fila offline:', error));
+    }, 2500);
     return () => {
       cancelled = true;
+      window.clearTimeout(queueTimer);
     };
   }, [isLogged, actor.email]);
 

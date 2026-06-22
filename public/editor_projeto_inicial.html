@@ -1370,7 +1370,9 @@ async function loadEmployees() {
     employeeItems = Array.isArray(result.users) ? result.users : [];
     safeSetLocalStorage(EMPLOYEES_CACHE_KEY, JSON.stringify({ users: employeeItems, loadedAt: new Date().toISOString() }));
     renderEmployeeList();
-    if (status) status.textContent = 'Cadastre vendedores e projetistas para acessarem o sistema.';
+    if (status) status.textContent = result?.stale
+      ? (result.message || 'Exibindo a ultima lista local de funcionarios.')
+      : 'Cadastre vendedores e projetistas para acessarem o sistema.';
   } catch (error) {
     const cached = loadCachedEmployees();
     if (cached.length) {
@@ -1476,7 +1478,9 @@ async function saveEmployee() {
     if (!response.ok) throw new Error(result?.message || result?.error || 'Não foi possível salvar funcionário.');
     cancelEmployeeEdit();
     await loadEmployees();
-    if (status) status.textContent = 'Funcionário salvo.';
+    if (status) status.textContent = result?.pendingSync
+      ? 'Funcionário salvo localmente. Sincronização remota pendente.'
+      : 'Funcionário salvo.';
   } catch (error) {
     if (status) status.textContent = cleanApiErrorMessage(error);
   } finally {
@@ -1499,7 +1503,9 @@ async function deleteEmployee(email) {
     if (!response.ok) throw new Error(result?.message || result?.error || 'Não foi possível excluir funcionário.');
     if (editingEmployeeEmail === email) cancelEmployeeEdit();
     await loadEmployees();
-    if (status) status.textContent = 'Funcionário excluído.';
+    if (status) status.textContent = result?.pendingSync
+      ? 'Funcionário removido localmente. Sincronização remota pendente.'
+      : 'Funcionário excluído.';
   } catch (error) {
     if (status) status.textContent = cleanApiErrorMessage(error);
   }

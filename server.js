@@ -17,7 +17,8 @@ const indexFile = join(root, 'index.html');
 const htmlBucket = process.env.SUPABASE_HTML_BUCKET || process.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
 const photoBucket = process.env.SUPABASE_PHOTOS_BUCKET || process.env.VITE_SUPABASE_PHOTOS_BUCKET || 'dcoratto-photos';
 const clientMobileFirstVersion = '2026-06-08-mobile-contain-markers-v1';
-const supabaseRequestTimeoutMs = Math.max(3000, Number(process.env.SUPABASE_REQUEST_TIMEOUT_MS || 12000));
+const supabaseRequestTimeoutMs = Math.min(4000, Math.max(1000, Number(process.env.SUPABASE_REQUEST_TIMEOUT_MS || 2500)));
+const supabaseCircuitCooldownMs = Math.max(5000, Number(process.env.SUPABASE_CIRCUIT_COOLDOWN_MS || 20000));
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   || process.env.SUPABASE_SERVICE_KEY
@@ -33,6 +34,7 @@ const localLoginUsers = [
   { email: 'vinicius@dcoratto.com.br', password: 'Dcoratto@Vinicius26', name: 'Vinicius', role: 'team' },
 ];
 const runtimeLoginUsers = localLoginUsers.map(user => ({ ...user }));
+let supabaseUnavailableUntil = 0;
 const supabaseServer = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -41,6 +43,11 @@ const supabaseServer = supabaseUrl && supabaseServiceKey
   : null;
 
 function fetchWithSupabaseTimeout(input, init = {}) {
+  if (Date.now() < supabaseUnavailableUntil) {
+    const circuitError = new Error('supabase_circuit_open');
+    circuitError.code = 'supabase_unavailable';
+    return Promise.reject(circuitError);
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort(new Error('supabase_request_timeout'));
@@ -52,6 +59,16 @@ function fetchWithSupabaseTimeout(input, init = {}) {
   return fetch(input, {
     ...init,
     signal: controller.signal,
+  }).then((response) => {
+    if (response.status >= 500 || response.status === 408 || response.status === 429) {
+      supabaseUnavailableUntil = Date.now() + supabaseCircuitCooldownMs;
+    } else if (response.ok) {
+      supabaseUnavailableUntil = 0;
+    }
+    return response;
+  }).catch((error) => {
+    supabaseUnavailableUntil = Date.now() + supabaseCircuitCooldownMs;
+    throw error;
   }).finally(() => clearTimeout(timer));
 }
 
@@ -218,6 +235,10 @@ async function handleLoginRequest(request, response) {
       return;
     }
     const fallbackUser = findRuntimeLoginUser(email, password);
+    if (fallbackUser) {
+      sendJson(response, 200, { ok: true, source: 'local', user: normalizeAppUser(fallbackUser) });
+      return;
+    }
 
     if (supabaseServer) {
       try {
@@ -226,14 +247,18 @@ async function handleLoginRequest(request, response) {
           login_password: password,
         });
         if (!error && data?.ok && data?.user?.email) {
-          sendJson(response, 200, { ok: true, source: 'supabase', user: normalizeAppUser(data.user) });
+          const remoteUser = normalizeAppUser(data.user);
+          upsertRuntimeLoginUser({
+            originalEmail: email,
+            email: remoteUser.email,
+            name: remoteUser.name,
+            role: remoteUser.role,
+            password,
+          });
+          sendJson(response, 200, { ok: true, source: 'supabase', user: remoteUser });
           return;
         }
         if (!error) {
-          if (fallbackUser) {
-            sendJson(response, 200, { ok: true, source: 'local', user: normalizeAppUser(fallbackUser) });
-            return;
-          }
           sendJson(response, 401, { error: 'Credenciais incorretas.' });
           return;
         }
@@ -246,12 +271,7 @@ async function handleLoginRequest(request, response) {
       }
     }
 
-    if (!fallbackUser) {
-      sendJson(response, 401, { error: 'Credenciais incorretas.' });
-      return;
-    }
-
-    sendJson(response, 200, { ok: true, source: 'local', user: normalizeAppUser(fallbackUser) });
+    sendJson(response, 401, { error: 'Credenciais incorretas.' });
   } catch (error) {
     sendErrorJson(response, error, { endpoint: '/api/login', durationMs: Date.now() - startedAt });
   }
@@ -279,10 +299,7 @@ async function handleAppUsersGet(url, response) {
       sendJson(response, 200, {
         ok: true,
         source: 'local',
-        users: runtimeLoginUsers
-          .filter(user => user.active !== false)
-          .map(publicAppUser)
-          .sort(sortAppUsers),
+        users: localPublicAppUsers(),
       });
       return;
     }
@@ -294,13 +311,28 @@ async function handleAppUsersGet(url, response) {
       .order('display_name', { ascending: true })
       .order('email', { ascending: true });
     if (error) throw error;
+    cacheRuntimeUserMetadata(data || []);
 
     sendJson(response, 200, {
       ok: true,
       source: 'supabase',
-      users: (data || []).map(publicAppUser).sort(sortAppUsers),
+      users: mergePublicAppUsers(data || [], runtimeLoginUsers),
     });
   } catch (error) {
+    const normalized = normalizeExternalServiceError(error);
+    if (normalized.retryable) {
+      logNormalizedServerError(normalized, { endpoint: '/api/app-users', actorEmail, durationMs: Date.now() - startedAt });
+      sendJson(response, 200, {
+        ok: true,
+        source: 'local-cache',
+        stale: true,
+        warning: normalized.code,
+        message: 'Exibindo a ultima lista local de funcionarios enquanto o Supabase esta indisponivel.',
+        retryable: true,
+        users: localPublicAppUsers(),
+      });
+      return;
+    }
     sendErrorJson(response, error, { endpoint: '/api/app-users', actorEmail, durationMs: Date.now() - startedAt });
   }
 }
@@ -332,9 +364,10 @@ async function handleAppUsersUpsert(request, response) {
       return;
     }
 
+    const localUser = upsertRuntimeLoginUser({ originalEmail, email, name, role, password });
+
     if (!supabaseServer) {
-      const user = upsertRuntimeLoginUser({ originalEmail, email, name, role, password });
-      sendJson(response, 200, { ok: true, source: 'local', user: publicAppUser(user) });
+      sendJson(response, 200, { ok: true, source: 'local', user: publicAppUser(localUser) });
       return;
     }
 
@@ -351,11 +384,20 @@ async function handleAppUsersUpsert(request, response) {
   } catch (error) {
     const normalized = normalizeExternalServiceError(error);
     if (normalized.retryable) {
-      sendErrorJson(response, error, {
+      logNormalizedServerError(normalized, {
         endpoint: '/api/app-users',
         action: 'upsert',
         actorEmail: body?.actor?.email,
         durationMs: Date.now() - startedAt,
+      });
+      const localUser = findRuntimeUserByEmail(body?.email);
+      sendJson(response, 202, {
+        ok: true,
+        source: 'local-cache',
+        pendingSync: true,
+        warning: normalized.code,
+        message: 'Funcionario salvo localmente. A sincronizacao remota sera tentada quando o Supabase voltar.',
+        user: publicAppUser(localUser || body),
       });
     } else {
       sendJson(response, 500, { ok: false, error: 'app_user_error', message: normalizeAppUserError(error), retryable: false });
@@ -381,9 +423,10 @@ async function handleAppUsersDelete(url, response) {
       return;
     }
 
+    const localUser = findRuntimeUserByEmail(email);
+    if (localUser) localUser.active = false;
+
     if (!supabaseServer) {
-      const user = runtimeLoginUsers.find(item => item.email === email);
-      if (user) user.active = false;
       sendJson(response, 200, { ok: true, source: 'local', email });
       return;
     }
@@ -395,6 +438,23 @@ async function handleAppUsersDelete(url, response) {
     if (error) throw error;
     sendJson(response, 200, { ok: true, source: 'supabase', email });
   } catch (error) {
+    const normalized = normalizeExternalServiceError(error);
+    if (normalized.retryable) {
+      logNormalizedServerError(normalized, {
+        endpoint: '/api/app-users',
+        action: 'delete',
+        actorEmail,
+        durationMs: Date.now() - startedAt,
+      });
+      sendJson(response, 200, {
+        ok: true,
+        source: 'local-cache',
+        pendingSync: true,
+        warning: normalized.code,
+        email,
+      });
+      return;
+    }
     sendErrorJson(response, error, {
       endpoint: '/api/app-users',
       action: 'delete',
@@ -2894,7 +2954,7 @@ function normalizeExternalServiceError(error) {
   );
   const rawCode = String(error?.code || error?.status || error?.name || '').trim();
   const haystack = `${rawCode} ${rawMessage}`.toLowerCase();
-  const looksLikeHtml = /<!doctype html|<html[\s>]|<\/html>|cloudflare|supabase\.co|connection timed out|error code 522|522:|524:|gateway timeout|bad gateway|service unavailable|supabase_request_timeout|aborterror|networkerror|fetch failed|econnreset|etimedout|enotfound|socket hang up/i
+  const looksLikeHtml = /<!doctype html|<html[\s>]|<\/html>|cloudflare|supabase\.co|connection timed out|error code 522|522:|524:|gateway timeout|bad gateway|service unavailable|supabase_request_timeout|supabase_circuit_open|supabase_unavailable|aborterror|networkerror|fetch failed|econnreset|etimedout|enotfound|socket hang up/i
     .test(haystack);
 
   if (looksLikeHtml) {
@@ -2972,6 +3032,49 @@ function publicAppUser(user = {}) {
     updatedAt: user.updated_at || user.updatedAt || null,
     createdAt: user.created_at || user.createdAt || null,
   };
+}
+
+function findRuntimeUserByEmail(email) {
+  const normalizedEmail = normalizeEmail(email);
+  return runtimeLoginUsers.find(user => normalizeEmail(user.email) === normalizedEmail) || null;
+}
+
+function cacheRuntimeUserMetadata(users = []) {
+  (Array.isArray(users) ? users : []).forEach((user) => {
+    const normalized = normalizeAppUser(user);
+    if (!normalized.email) return;
+    const existing = findRuntimeUserByEmail(normalized.email);
+    if (existing) {
+      existing.name = normalized.name;
+      existing.role = normalized.role;
+      existing.active = user.active !== false;
+      existing.updatedAt = user.updated_at || user.updatedAt || existing.updatedAt || null;
+      return;
+    }
+    runtimeLoginUsers.push({
+      email: normalized.email,
+      name: normalized.name,
+      role: normalized.role,
+      password: '',
+      active: user.active !== false,
+      createdAt: user.created_at || user.createdAt || null,
+      updatedAt: user.updated_at || user.updatedAt || null,
+    });
+  });
+}
+
+function mergePublicAppUsers(...groups) {
+  const usersByEmail = new Map();
+  groups.flat().forEach((user) => {
+    const publicUser = publicAppUser(user);
+    if (!publicUser.email || publicUser.active === false || usersByEmail.has(publicUser.email)) return;
+    usersByEmail.set(publicUser.email, publicUser);
+  });
+  return [...usersByEmail.values()].sort(sortAppUsers);
+}
+
+function localPublicAppUsers() {
+  return mergePublicAppUsers(runtimeLoginUsers);
 }
 
 function sortAppUsers(a, b) {
