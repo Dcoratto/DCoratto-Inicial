@@ -17,6 +17,7 @@ const indexFile = join(root, 'index.html');
 const htmlBucket = process.env.SUPABASE_HTML_BUCKET || process.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
 const photoBucket = process.env.SUPABASE_PHOTOS_BUCKET || process.env.VITE_SUPABASE_PHOTOS_BUCKET || 'dcoratto-photos';
 const clientMobileFirstVersion = '2026-06-08-mobile-contain-markers-v1';
+const supabaseRequestTimeoutMs = Math.max(3000, Number(process.env.SUPABASE_REQUEST_TIMEOUT_MS || 12000));
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   || process.env.SUPABASE_SERVICE_KEY
@@ -35,8 +36,24 @@ const runtimeLoginUsers = localLoginUsers.map(user => ({ ...user }));
 const supabaseServer = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: fetchWithSupabaseTimeout },
   })
   : null;
+
+function fetchWithSupabaseTimeout(input, init = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error('supabase_request_timeout'));
+  }, supabaseRequestTimeoutMs);
+  if (init.signal) {
+    if (init.signal.aborted) controller.abort(init.signal.reason);
+    else init.signal.addEventListener('abort', () => controller.abort(init.signal.reason), { once: true });
+  }
+  return fetch(input, {
+    ...init,
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
+}
 
 function loadLocalEnvFile(fileName, overrideLocal = false) {
   const filePath = resolve(fileName);
@@ -191,6 +208,7 @@ createServer(async (request, response) => {
 });
 
 async function handleLoginRequest(request, response) {
+  const startedAt = Date.now();
   try {
     const body = await readJsonBody(request);
     const email = normalizeEmail(body.email);
@@ -215,7 +233,11 @@ async function handleLoginRequest(request, response) {
           return;
         }
       } catch (error) {
-        console.warn('Login por Supabase indisponivel; usando fallback local.', error);
+        logNormalizedServerError(normalizeExternalServiceError(error), {
+          endpoint: '/api/login',
+          actorEmail: email,
+          durationMs: Date.now() - startedAt,
+        });
       }
     }
 
@@ -227,13 +249,14 @@ async function handleLoginRequest(request, response) {
 
     sendJson(response, 200, { ok: true, source: 'local', user: normalizeAppUser(fallbackUser) });
   } catch (error) {
-    sendJson(response, 500, { error: String(error?.message || error) });
+    sendErrorJson(response, error, { endpoint: '/api/login', durationMs: Date.now() - startedAt });
   }
 }
 
 async function handleAppUsersGet(url, response) {
+  const startedAt = Date.now();
+  const actorEmail = normalizeEmail(url.searchParams.get('actor'));
   try {
-    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
     if (!canManageAppUsers(actorEmail)) {
       sendJson(response, 403, { error: 'Apenas a conta principal pode gerenciar funcionarios.' });
       return;
@@ -265,13 +288,15 @@ async function handleAppUsersGet(url, response) {
       users: (data || []).map(publicAppUser).sort(sortAppUsers),
     });
   } catch (error) {
-    sendJson(response, 500, { error: String(error?.message || error) });
+    sendErrorJson(response, error, { endpoint: '/api/app-users', actorEmail, durationMs: Date.now() - startedAt });
   }
 }
 
 async function handleAppUsersUpsert(request, response) {
+  const startedAt = Date.now();
+  let body = {};
   try {
-    const body = await readJsonBody(request);
+    body = await readJsonBody(request);
     const actorEmail = normalizeEmail(body.actor?.email);
     if (!canManageAppUsers(actorEmail)) {
       sendJson(response, 403, { error: 'Apenas a conta principal pode gerenciar funcionarios.' });
@@ -311,14 +336,25 @@ async function handleAppUsersUpsert(request, response) {
     if (error) throw error;
     sendJson(response, 200, { ok: true, source: 'supabase', user: publicAppUser(data?.user || data) });
   } catch (error) {
-    sendJson(response, 500, { error: normalizeAppUserError(error) });
+    const normalized = normalizeExternalServiceError(error);
+    if (normalized.retryable) {
+      sendErrorJson(response, error, {
+        endpoint: '/api/app-users',
+        action: 'upsert',
+        actorEmail: body?.actor?.email,
+        durationMs: Date.now() - startedAt,
+      });
+    } else {
+      sendJson(response, 500, { ok: false, error: 'app_user_error', message: normalizeAppUserError(error), retryable: false });
+    }
   }
 }
 
 async function handleAppUsersDelete(url, response) {
+  const startedAt = Date.now();
+  const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+  const email = normalizeEmail(url.searchParams.get('email'));
   try {
-    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
-    const email = normalizeEmail(url.searchParams.get('email'));
     if (!canManageAppUsers(actorEmail)) {
       sendJson(response, 403, { error: 'Apenas a conta principal pode gerenciar funcionarios.' });
       return;
@@ -346,20 +382,25 @@ async function handleAppUsersDelete(url, response) {
     if (error) throw error;
     sendJson(response, 200, { ok: true, source: 'supabase', email });
   } catch (error) {
-    sendJson(response, 500, { error: String(error?.message || error) });
+    sendErrorJson(response, error, {
+      endpoint: '/api/app-users',
+      action: 'delete',
+      actorEmail,
+      durationMs: Date.now() - startedAt,
+    });
   }
 }
 
 async function handleClientLinkRequest(request, response) {
+  const startedAt = Date.now();
+  let body = {};
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para gerar links persistentes.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para gerar links persistentes. Seus dados locais foram preservados e a sincronizacao sera tentada novamente.');
       return;
     }
 
-    const body = await readJsonBody(request);
+    body = await readJsonBody(request);
     const projectId = safeId(body.projectId) || crypto.randomUUID();
     const actorEmail = normalizeEmail(body.actor?.email);
     const existingProject = await loadProjectForWrite(projectId);
@@ -425,22 +466,27 @@ async function handleClientLinkRequest(request, response) {
       storageWarning: storageResult.warning || '',
     });
   } catch (error) {
-    sendJson(response, 500, {
-      error: String(error?.message || error),
+    sendErrorJson(response, error, {
+      endpoint: '/api/client-links',
+      action: 'generate_project_initial',
+      projectId: body?.projectId,
+      actorEmail: body?.actor?.email,
+      payloadBytes: approximateJsonBytes(body),
+      durationMs: Date.now() - startedAt,
     });
   }
 }
 
 async function handleEditorEventRequest(request, response) {
+  const startedAt = Date.now();
+  let body = {};
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para persistir o editor.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para persistir o editor. Seus dados locais foram preservados e a sincronizacao sera tentada novamente.');
       return;
     }
 
-    const body = await readJsonBody(request);
+    body = await readJsonBody(request);
     const projectId = safeId(body.projectId) || crypto.randomUUID();
     const actorEmail = normalizeEmail(body.actor?.email);
     const existingProject = await loadProjectForWrite(projectId);
@@ -471,23 +517,27 @@ async function handleEditorEventRequest(request, response) {
       projectId,
     });
   } catch (error) {
-    sendJson(response, 500, {
-      error: String(error?.message || error),
+    sendErrorJson(response, error, {
+      endpoint: '/api/editor-events',
+      action: body?.action,
+      projectId: body?.projectId,
+      actorEmail: body?.actor?.email,
+      payloadBytes: approximateJsonBytes(body),
+      durationMs: Date.now() - startedAt,
     });
   }
 }
 
 async function handleLatestEditorStateRequest(url, response) {
+  const startedAt = Date.now();
+  const requestedProjectId = safeId(url.searchParams.get('projectId'));
+  const actorEmail = normalizeEmail(url.searchParams.get('actor'));
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar o rascunho.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para carregar o rascunho. Continue usando o rascunho local salvo neste dispositivo.');
       return;
     }
 
-    const requestedProjectId = safeId(url.searchParams.get('projectId'));
-    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
     let project = null;
     if (requestedProjectId) {
       const { data, error } = await supabaseServer
@@ -538,21 +588,24 @@ async function handleLatestEditorStateRequest(url, response) {
       settings,
     });
   } catch (error) {
-    sendJson(response, 500, {
-      error: String(error?.message || error),
+    sendErrorJson(response, error, {
+      endpoint: '/api/editor-state/latest',
+      projectId: requestedProjectId,
+      actorEmail,
+      durationMs: Date.now() - startedAt,
     });
   }
 }
 
 async function handleProjectStatusRequest(request, response) {
+  const startedAt = Date.now();
+  let body = {};
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para atualizar o status.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para atualizar o status. A alteracao sera tentada novamente quando o banco voltar.');
       return;
     }
-    const body = await readJsonBody(request);
+    body = await readJsonBody(request);
     const projectId = safeId(body.projectId);
     const status = String(body.status || '').trim();
     if (!projectId || !['draft', 'active', 'review', 'approved', 'archived', 'sold'].includes(status)) {
@@ -590,20 +643,26 @@ async function handleProjectStatusRequest(request, response) {
     if (error) throw error;
     sendJson(response, 200, { ok: true, projectId, status });
   } catch (error) {
-    sendJson(response, 500, { error: String(error?.message || error) });
+    sendErrorJson(response, error, {
+      endpoint: '/api/project-status',
+      action: body?.status,
+      projectId: body?.projectId,
+      actorEmail: body?.actor?.email,
+      durationMs: Date.now() - startedAt,
+    });
   }
 }
 
 async function handleProjectRestoreRequest(request, response) {
+  const startedAt = Date.now();
+  let body = {};
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para restaurar projetos.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para restaurar projetos. Tente novamente em alguns instantes.');
       return;
     }
 
-    const body = await readJsonBody(request);
+    body = await readJsonBody(request);
     const projectId = safeId(body.projectId);
     const actorEmail = normalizeEmail(body.actor?.email);
     if (!projectId) {
@@ -624,16 +683,20 @@ async function handleProjectRestoreRequest(request, response) {
       restoredAt: restored.restoredAt,
     });
   } catch (error) {
-    sendJson(response, 500, { error: String(error?.message || error) });
+    sendErrorJson(response, error, {
+      endpoint: '/api/project-restore',
+      projectId: body?.projectId,
+      actorEmail: body?.actor?.email,
+      durationMs: Date.now() - startedAt,
+    });
   }
 }
 
 async function handleEditorSettingsGet(response) {
+  const startedAt = Date.now();
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar configuracoes.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para carregar configuracoes. Usando cache local quando disponivel.');
       return;
     }
 
@@ -644,16 +707,15 @@ async function handleEditorSettingsGet(response) {
       settings,
     });
   } catch (error) {
-    sendJson(response, 500, { error: String(error?.message || error) });
+    sendErrorJson(response, error, { endpoint: '/api/editor-settings', durationMs: Date.now() - startedAt });
   }
 }
 
 async function handleCatalogMaterialsGet(url, response) {
+  const startedAt = Date.now();
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar catalogos.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para carregar catalogos. Tente novamente em alguns instantes.');
       return;
     }
 
@@ -702,7 +764,7 @@ async function handleCatalogMaterialsGet(url, response) {
       items,
     });
   } catch (error) {
-    sendJson(response, 500, { error: String(error?.message || error) });
+    sendErrorJson(response, error, { endpoint: '/api/catalog-materials', durationMs: Date.now() - startedAt });
   }
 }
 
@@ -737,15 +799,15 @@ function normalizeCatalogSearch(value = '') {
 }
 
 async function handleEditorSettingsPost(request, response) {
+  const startedAt = Date.now();
+  let body = {};
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para salvar configuracoes.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para salvar configuracoes. A sincronizacao sera tentada novamente.');
       return;
     }
 
-    const body = await readJsonBody(request);
+    body = await readJsonBody(request);
     const settings = await saveSharedEditorSettings(body.settings || {}, body.actor || null, body.settingsMutation || null);
     sendJson(response, 200, {
       ok: true,
@@ -753,20 +815,25 @@ async function handleEditorSettingsPost(request, response) {
       settings,
     });
   } catch (error) {
-    sendJson(response, 500, { error: String(error?.message || error) });
+    sendErrorJson(response, error, {
+      endpoint: '/api/editor-settings',
+      action: body?.settingsMutation?.type || 'settings_save',
+      actorEmail: body?.actor?.email,
+      payloadBytes: approximateJsonBytes(body),
+      durationMs: Date.now() - startedAt,
+    });
   }
 }
 
 async function handleClientHistoryRequest(url, response) {
+  const startedAt = Date.now();
+  const actorEmail = normalizeEmail(url.searchParams.get('actor'));
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar histórico de clientes.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para carregar historico de clientes. Tente novamente em alguns instantes.');
       return;
     }
 
-    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
     const includeDeleted = url.searchParams.get('includeDeleted') === 'true' && isAdminEmail(actorEmail);
     let query = supabaseServer
       .from('document_html_versions')
@@ -807,22 +874,23 @@ async function handleClientHistoryRequest(url, response) {
       history,
     });
   } catch (error) {
-    sendJson(response, 500, {
-      error: String(error?.message || error),
+    sendErrorJson(response, error, {
+      endpoint: '/api/client-history',
+      actorEmail,
+      durationMs: Date.now() - startedAt,
     });
   }
 }
 
 async function handleProjectsRequest(url, response) {
+  const startedAt = Date.now();
+  const actorEmail = normalizeEmail(url.searchParams.get('actor'));
   try {
     if (!supabaseServer) {
-      sendJson(response, 503, {
-        error: 'Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no servidor para carregar projetos.',
-      });
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para carregar projetos. Usando rascunhos locais quando disponivel.');
       return;
     }
 
-    const actorEmail = normalizeEmail(url.searchParams.get('actor'));
     const folder = String(url.searchParams.get('folder') || 'active').trim();
     let query = supabaseServer
       .from('document_projects')
@@ -867,8 +935,10 @@ async function handleProjectsRequest(url, response) {
 
     sendJson(response, 200, { ok: true, source: 'server-supabase', projects });
   } catch (error) {
-    sendJson(response, 500, {
-      error: String(error?.message || error),
+    sendErrorJson(response, error, {
+      endpoint: '/api/projects',
+      actorEmail,
+      durationMs: Date.now() - startedAt,
     });
   }
 }
@@ -904,7 +974,7 @@ async function handleClientHtmlRequest(url, response) {
     response.end(await optimizeClientHtmlForMobile(html));
   } catch (error) {
     response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-    response.end(`Nao foi possivel abrir o HTML do cliente: ${String(error?.message || error)}`);
+    response.end(`Nao foi possivel abrir o HTML do cliente: ${normalizeExternalServiceError(error).message}`);
   }
 }
 
@@ -920,7 +990,10 @@ async function optimizeClientHtmlForMobile(html = '') {
     try {
       return await buildStandaloneHtml(preview);
     } catch (error) {
-      console.warn('Nao foi possivel reconstruir HTML mobile-first do cliente. Aplicando patch CSS de fallback.', error);
+      logNormalizedServerError(normalizeExternalServiceError(error), {
+        endpoint: 'client-html-mobile-optimize',
+        action: 'rebuild_mobile_html',
+      });
     }
   }
   if (html.includes('data-dcoratto-mobile-client-optimized')) return html;
@@ -1039,7 +1112,10 @@ async function findHtmlVersionByDataShareSlug(shareSlug) {
     .order('created_at', { ascending: false })
     .limit(1);
   if (error) {
-    console.warn('Nao foi possivel buscar HTML por data.shareSlug.', error);
+    logNormalizedServerError(normalizeExternalServiceError(error), {
+      endpoint: 'document_html_versions',
+      action: 'find_by_data_share_slug',
+    });
     return '';
   }
   return resolveHtmlVersion(data?.[0] || null);
@@ -1122,7 +1198,10 @@ async function ensureHtmlBucket() {
         public: true,
         fileSizeLimit: 52_428_800,
         allowedMimeTypes: ['text/html'],
-      }).catch((error) => console.warn('Nao foi possivel atualizar o bucket HTML.', error));
+      }).catch((error) => logNormalizedServerError(normalizeExternalServiceError(error), {
+        endpoint: 'supabase-storage-html',
+        action: 'update_bucket',
+      }));
     }
     return;
   }
@@ -1151,8 +1230,9 @@ async function uploadHtmlSnapshotToStorage(storagePath, html) {
     const publicUrl = publicData?.publicUrl || '';
     return { publicUrl };
   } catch (error) {
-    console.warn('Link persistido no banco, mas o espelho no Storage falhou.', error);
-    return { publicUrl: '', warning: String(error?.message || error) };
+    const normalized = normalizeExternalServiceError(error);
+    logNormalizedServerError(normalized, { endpoint: 'supabase-storage-html', payloadBytes: Buffer.byteLength(String(html || ''), 'utf8') });
+    return { publicUrl: '', warning: normalized.message, error: normalized.code, retryable: normalized.retryable };
   }
 }
 
@@ -1264,6 +1344,7 @@ async function hasAuditEvent(eventId) {
 
 async function persistAuditLog({ projectId, actor, action, draft, preview, settings, eventId, createdAt }) {
   if (!eventId) return;
+  const includeSnapshot = shouldStoreAuditSnapshot(action);
   const { error } = await supabaseServer
     .from('editor_audit_logs')
     .insert({
@@ -1275,15 +1356,24 @@ async function persistAuditLog({ projectId, actor, action, draft, preview, setti
         draft: draft ? { updatedAt: draft.updatedAt || null } : null,
         preview: preview ? { environments: Array.isArray(preview.environments) ? preview.environments.length : 0 } : null,
         settingsChanged: Boolean(settings),
-        snapshot: {
+        snapshot: includeSnapshot ? {
           draft: draft || null,
           preview: preview || null,
           settings: settings || null,
-        },
+        } : null,
+        snapshotOmitted: !includeSnapshot,
       },
       created_at: createdAt || new Date().toISOString(),
     });
   if (error && error.code !== '23505') throw error;
+}
+
+function shouldStoreAuditSnapshot(action = '') {
+  const normalized = String(action || '').toLowerCase();
+  return normalized === 'save_as_draft'
+    || normalized === 'generate_project_initial'
+    || normalized === 'project_restored'
+    || normalized === 'portfolio_history_restore';
 }
 
 function protectAgainstImplicitContentLoss({ existingProject, action, draft, preview }) {
@@ -2661,7 +2751,11 @@ async function nextHtmlVersionNumber(projectId) {
     .limit(1);
 
   if (error) {
-    console.warn('Nao foi possivel consultar versoes HTML. Usando versao 1.', error);
+    logNormalizedServerError(normalizeExternalServiceError(error), {
+      endpoint: 'document_html_versions',
+      action: 'next_version_number',
+      projectId,
+    });
     return 1;
   }
   return (data?.[0]?.version_number ?? 0) + 1;
@@ -2754,6 +2848,89 @@ function sendJson(response, status, payload) {
     'Cache-Control': 'no-store',
   });
   response.end(JSON.stringify(payload));
+}
+
+function sendErrorJson(response, error, context = {}) {
+  const normalized = normalizeExternalServiceError(error);
+  const status = context.status || (normalized.retryable ? 503 : 500);
+  logNormalizedServerError(normalized, context);
+  sendJson(response, status, {
+    ok: false,
+    error: normalized.code,
+    message: normalized.message,
+    retryable: normalized.retryable,
+  });
+}
+
+function sendSupabaseUnavailable(response, message, retryable = true) {
+  sendJson(response, 503, {
+    ok: false,
+    error: retryable ? 'supabase_unavailable' : 'supabase_not_configured',
+    message,
+    retryable,
+  });
+}
+
+function normalizeExternalServiceError(error) {
+  const rawMessage = String(
+    error?.message
+    || error?.error_description
+    || error?.error
+    || error
+    || ''
+  );
+  const rawCode = String(error?.code || error?.status || error?.name || '').trim();
+  const haystack = `${rawCode} ${rawMessage}`.toLowerCase();
+  const looksLikeHtml = /<!doctype html|<html[\s>]|<\/html>|cloudflare|supabase\.co|connection timed out|error code 522|522:|524:|gateway timeout|bad gateway|service unavailable|supabase_request_timeout|aborterror|networkerror|fetch failed|econnreset|etimedout|enotfound|socket hang up/i
+    .test(haystack);
+
+  if (looksLikeHtml) {
+    return {
+      code: 'supabase_unavailable',
+      message: 'Supabase temporariamente indisponivel. Seus dados locais foram preservados e a sincronizacao sera tentada novamente.',
+      retryable: true,
+    };
+  }
+
+  const message = publicErrorMessage(rawMessage);
+  return {
+    code: rawCode && !rawCode.includes('<') ? rawCode : 'server_error',
+    message: message || 'Erro interno ao processar a solicitacao.',
+    retryable: false,
+  };
+}
+
+function publicErrorMessage(message = '') {
+  const raw = String(message || '').trim();
+  if (!raw) return '';
+  if (/<!doctype html|<html[\s>]|<\/html>/i.test(raw)) return 'Erro interno ao processar a solicitacao.';
+  return raw
+    .replace(/https?:\/\/[^\s"'<>]+/g, '[url]')
+    .replace(/(service[_-]?role|apikey|authorization|bearer)\s*[:=]\s*[^\s"'<>]+/ig, '$1=[redacted]')
+    .slice(0, 360);
+}
+
+function approximateJsonBytes(value) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value || {}), 'utf8');
+  } catch {
+    return 0;
+  }
+}
+
+function logNormalizedServerError(normalized, context = {}) {
+  const entry = {
+    endpoint: context.endpoint || '',
+    action: context.action || '',
+    projectId: context.projectId || '',
+    actorEmail: normalizeEmail(context.actorEmail || ''),
+    errorCode: normalized.code,
+    retryable: normalized.retryable,
+    durationMs: Number(context.durationMs || 0),
+    payloadBytes: Number(context.payloadBytes || 0),
+  };
+  if (normalized.retryable) console.warn('supabase_operation_failed', entry);
+  else console.error('server_operation_failed', entry);
 }
 
 function normalizeEmail(value) {

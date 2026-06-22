@@ -146,25 +146,30 @@ export async function loadLocalDraftSnapshot(projectId, userEmail) {
 export async function enqueueMutation(mutation) {
   const now = new Date().toISOString();
   const actorEmail = normalizeEmail(mutation.userEmail || mutation.actor?.email || '');
+  const id = mutation.id || mutation.eventId || crypto.randomUUID();
+  const eventId = mutation.eventId || mutation.id || crypto.randomUUID();
+  const existing = await getRecord(MUTATIONS_STORE, id).catch(() => null);
   const record = {
-    id: mutation.id || mutation.eventId || crypto.randomUUID(),
-    eventId: mutation.eventId || mutation.id || crypto.randomUUID(),
-    projectId: mutation.projectId || '',
+    id,
+    eventId,
+    projectId: mutation.projectId || existing?.projectId || '',
     userEmail: actorEmail,
-    actor: mutation.actor || null,
-    action: mutation.action || 'editor_sync',
-    payload: mutation.payload || null,
-    draft: mutation.draft || null,
-    preview: mutation.preview || null,
-    settings: mutation.settings || null,
-    settingsMutation: mutation.settingsMutation || null,
+    actor: mutation.actor || existing?.actor || null,
+    action: mutation.action || existing?.action || 'editor_sync',
+    payload: mutation.payload || existing?.payload || null,
+    draft: mutation.draft || existing?.draft || null,
+    preview: mutation.preview || existing?.preview || null,
+    settings: mutation.settings || existing?.settings || null,
+    settingsMutation: mutation.settingsMutation || existing?.settingsMutation || null,
     saveHtml: Boolean(mutation.saveHtml),
-    assetIds: Array.isArray(mutation.assetIds) ? mutation.assetIds : [],
-    createdAt: mutation.createdAt || now,
+    assetIds: Array.isArray(mutation.assetIds) ? mutation.assetIds : existing?.assetIds || [],
+    createdAt: mutation.createdAt || existing?.createdAt || now,
     updatedAt: now,
-    retryCount: Number(mutation.retryCount || 0),
-    status: mutation.status || 'pending',
-    lastError: mutation.lastError || '',
+    retryCount: Number(mutation.retryCount ?? existing?.retryCount ?? 0),
+    nextRetryAt: mutation.nextRetryAt || existing?.nextRetryAt || '',
+    status: mutation.status || existing?.status || 'pending',
+    lastError: mutation.lastError || existing?.lastError || '',
+    lastErrorCode: mutation.lastErrorCode || existing?.lastErrorCode || '',
   };
   await putRecord(MUTATIONS_STORE, record);
   return record;
@@ -174,10 +179,16 @@ export const saveLocalMutation = enqueueMutation;
 
 export async function listPendingMutations(userEmail = '') {
   const email = normalizeEmail(userEmail);
+  const now = Date.now();
   const records = await getAllRecords(MUTATIONS_STORE);
   return records
     .filter(record => record.status !== 'synced')
     .filter(record => !email || normalizeEmail(record.userEmail || record.actor?.email || '') === email)
+    .filter(record => {
+      if (!record.nextRetryAt) return true;
+      const retryTime = Date.parse(record.nextRetryAt);
+      return !Number.isFinite(retryTime) || retryTime <= now;
+    })
     .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
 }
 
@@ -197,11 +208,16 @@ export async function markMutationFailed(id, error) {
   if (!id) return;
   const record = await getRecord(MUTATIONS_STORE, id);
   if (!record) return;
+  const retryCount = Number(record.retryCount || 0) + 1;
+  const nextRetryMs = Math.min(60_000, 1000 * (2 ** Math.min(retryCount, 6)));
+  const retryAt = new Date(Date.now() + nextRetryMs).toISOString();
   await putRecord(MUTATIONS_STORE, {
     ...record,
     status: 'pending',
-    retryCount: Number(record.retryCount || 0) + 1,
+    retryCount,
+    nextRetryAt: retryAt,
     lastError: String(error?.message || error || ''),
+    lastErrorCode: String(error?.code || error?.error || ''),
     updatedAt: new Date().toISOString(),
   });
 }

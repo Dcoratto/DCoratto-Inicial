@@ -30,11 +30,11 @@ function App() {
   const autosaveTimerRef = useRef(null);
   const pendingAutosaveRef = useRef(null);
   const actor = useMemo(() => ({
-    email: currentUser?.email || PRIMARY_ACCOUNT_EMAIL,
-    name: currentUser?.name || "D'Coratto Inovacao",
-    role: currentUser?.role || 'owner',
+    email: currentUser?.email || '',
+    name: currentUser?.name || '',
+    role: currentUser?.role || 'team',
     primaryAccountEmail: PRIMARY_ACCOUNT_EMAIL,
-    isPrimary: (currentUser?.email || PRIMARY_ACCOUNT_EMAIL) === PRIMARY_ACCOUNT_EMAIL,
+    isPrimary: currentUser?.email === PRIMARY_ACCOUNT_EMAIL,
   }), [currentUser]);
 
   // Versao do sistema: altere para forcar atualizacao do iframe em producao.
@@ -42,7 +42,7 @@ function App() {
   const editorUrl = `./editor_projeto_inicial.html?v=${SYSTEM_VERSION}`;
 
   useEffect(() => {
-    if (!isLogged) return undefined;
+    if (!isLogged || !actor.email) return undefined;
     let cancelled = false;
     setIsBootstrapping(true);
 
@@ -145,7 +145,7 @@ function App() {
   }, [isLogged, actor.email]);
 
   useEffect(() => {
-    if (!isLogged) return undefined;
+    if (!isLogged || !actor.email) return undefined;
 
     async function handleMessage(event) {
       if (event.origin !== window.location.origin) return;
@@ -439,14 +439,14 @@ function App() {
 
   useEffect(() => {
     if (isLogged && !isBootstrapping) sendStateToEditor();
-  }, [isLogged, isBootstrapping, remoteDocument?.projectId, remoteDocument?.status]);
+  }, [isLogged, isBootstrapping, actor.email, remoteDocument?.projectId, remoteDocument?.status]);
 
   useEffect(() => {
     if (isLogged && !isBootstrapping) sendSessionAndSettingsToEditor();
-  }, [isLogged, isBootstrapping, remoteSettings]);
+  }, [isLogged, isBootstrapping, actor.email, remoteSettings]);
 
   useEffect(() => {
-    if (!isLogged) return undefined;
+    if (!isLogged || !actor.email) return undefined;
 
     const requestEditorFlush = (action) => {
       iframeRef.current?.contentWindow?.postMessage({
@@ -477,7 +477,7 @@ function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [isLogged]);
+  }, [isLogged, actor.email]);
 
   if (!isLogged) {
     return <Login onLoginSuccess={(user) => {
@@ -486,7 +486,7 @@ function App() {
     }} />;
   }
 
-  if (isBootstrapping) {
+  if (!currentUser || isBootstrapping) {
     return (
       <div className="app-loading">
         <div>

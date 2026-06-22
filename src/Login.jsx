@@ -37,14 +37,14 @@ export function Login({ onLoginSuccess }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-      const result = await response.json().catch(() => ({}));
+      const result = await readApiPayload(response);
       if (response.ok && result?.user?.email) {
         onLoginSuccess(result.user);
         return;
       }
       if (!response.ok || result?.error) {
         setIsSubmitting(false);
-        alert(result?.error || 'Credenciais incorretas.');
+        alert(result?.message || result?.error || 'Credenciais incorretas.');
         return;
       }
     } catch (error) {
@@ -118,4 +118,24 @@ export function Login({ onLoginSuccess }) {
       </div>
     </div>
   );
+}
+
+async function readApiPayload(response) {
+  const text = await response.text().catch(() => '');
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      error: looksLikeHtmlError(text)
+        ? 'Supabase temporariamente indisponivel. Tente novamente em alguns instantes.'
+        : text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 240),
+    };
+  }
+}
+
+function looksLikeHtmlError(value = '') {
+  return /<!doctype html|<html[\s>]|<\/html>|cloudflare|connection timed out|error code 522|supabase\.co/i
+    .test(String(value || ''));
 }

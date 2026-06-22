@@ -10,6 +10,16 @@ const PROJECT_ID_KEY = 'dcoratto.active.project.id.v1';
 
 let queueFlushPromise = null;
 
+class ApiRequestError extends Error {
+  constructor({ message, code = 'server_error', retryable = false, status = 0 } = {}) {
+    super(message || 'Nao foi possivel completar a solicitacao.');
+    this.name = 'ApiRequestError';
+    this.code = code;
+    this.retryable = Boolean(retryable);
+    this.status = status;
+  }
+}
+
 export function getActiveProjectId(actor = null) {
   const existing = localStorage.getItem(activeProjectIdKey(actor));
   if (existing) return existing;
@@ -95,8 +105,9 @@ export async function persistEditorEvent({ id = '', eventId = '', action, actor,
       return result;
     } catch (error) {
       console.warn('Persistencia do link pelo servidor indisponivel. Evento mantido na fila local para reenvio.', error);
+      await markMutationFailed(payload.id, normalizeRequestError(error));
       await enqueue(payload);
-      return { source: 'server-error', projectId: getActiveProjectId(actor), error: String(error?.message || error), queued: true };
+      return { source: 'server-error', projectId: getActiveProjectId(actor), error: cleanApiErrorMessage(error), retryable: isRetryableRequestError(error), queued: true };
     }
   }
 
@@ -109,11 +120,12 @@ export async function persistEditorEvent({ id = '', eventId = '', action, actor,
       return result;
     } catch (error) {
       console.warn('Persistencia pelo servidor indisponivel. Evento mantido na fila local para reenvio.', error);
+      await markMutationFailed(payload.id, normalizeRequestError(error));
     }
   }
 
   await enqueue(payload);
-  return { source: 'local-queue', projectId: getActiveProjectId(actor), error: 'server_unavailable' };
+  return { source: 'local-queue', projectId: getActiveProjectId(actor), error: 'server_unavailable', retryable: true, queued: true };
 }
 
 export async function loadLatestEditorState(actor, projectId = '') {
@@ -124,21 +136,14 @@ export async function loadLatestEditorState(actor, projectId = '') {
   const response = await fetch(`/api/editor-state/latest?${params.toString()}`, {
     cache: 'no-store',
   });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({}));
-    throw new Error(result?.error || 'Nao foi possivel carregar o rascunho remoto.');
-  }
-  const result = await response.json();
+  const result = await readApiResponse(response, 'Nao foi possivel carregar o rascunho remoto.');
   if (result?.projectId) setActiveProjectId(result.projectId, actor);
   return result;
 }
 
 export async function loadRemoteEditorSettings() {
   const response = await fetch('/api/editor-settings', { cache: 'no-store' });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result?.error || 'Nao foi possivel carregar configuracoes compartilhadas.');
-  }
+  const result = await readApiResponse(response, 'Nao foi possivel carregar configuracoes compartilhadas.');
   return result.settings || null;
 }
 
@@ -148,10 +153,7 @@ export async function saveRemoteEditorSettings(settings, actor, settingsMutation
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ settings, actor, settingsMutation }),
   });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result?.error || 'Nao foi possivel salvar configuracoes compartilhadas.');
-  }
+  const result = await readApiResponse(response, 'Nao foi possivel salvar configuracoes compartilhadas.');
   return result.settings || settings || null;
 }
 
@@ -171,10 +173,7 @@ async function persistEditorEventWithServer(event) {
       createdAt: event.createdAt,
     }),
   });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result?.error || 'Servidor recusou a persistencia do editor.');
-  }
+  const result = await readApiResponse(response, 'Servidor recusou a persistencia do editor.');
   return {
     source: result.source || 'server',
     projectId: result.projectId || getActiveProjectId(event.actor),
@@ -190,6 +189,7 @@ export async function flushOfflineQueue() {
 }
 
 async function flushOfflineQueueNow() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
   const queue = await readOfflineQueue();
   if (!queue.length) return;
 
@@ -201,8 +201,10 @@ async function flushOfflineQueueNow() {
       if (result?.projectId) setActiveProjectId(result.projectId, event.actor);
       await markMutationSynced(event.id);
     } catch (error) {
-      await markMutationFailed(event.id, error);
+      const normalizedError = normalizeRequestError(error);
+      await markMutationFailed(event.id, normalizedError);
       console.warn('Falha ao reenviar evento persistente', error);
+      if (normalizedError.retryable) break;
     }
   }
 }
@@ -221,10 +223,14 @@ async function publishClientHtmlWithServer(event) {
       createdAt: event.createdAt,
     }),
   });
-  const result = await response.json().catch(() => ({}));
-
-  if (!response.ok || !result?.publicUrl) {
-    throw new Error(result?.error || 'Nao foi possivel gerar o link persistente do cliente.');
+  const result = await readApiResponse(response, 'Nao foi possivel gerar o link persistente do cliente.');
+  if (!result?.publicUrl) {
+    throw new ApiRequestError({
+      message: result?.message || result?.error || 'Nao foi possivel gerar o link persistente do cliente.',
+      code: result?.error || 'client_link_error',
+      retryable: Boolean(result?.retryable),
+      status: response.status,
+    });
   }
 
   return {
@@ -239,6 +245,66 @@ async function publishClientHtmlWithServer(event) {
       },
     },
   };
+}
+
+async function readApiResponse(response, fallbackMessage) {
+  const text = await response.text().catch(() => '');
+  const result = parseApiPayload(text);
+  if (!response.ok || result?.ok === false) {
+    throw new ApiRequestError({
+      message: result?.message || cleanApiErrorMessage(result?.error || text || fallbackMessage),
+      code: result?.error || (looksLikeHtmlError(text) ? 'supabase_unavailable' : 'server_error'),
+      retryable: Boolean(result?.retryable || looksLikeHtmlError(text)),
+      status: response.status,
+    });
+  }
+  return result || {};
+}
+
+function parseApiPayload(text = '') {
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return looksLikeHtmlError(text)
+      ? {
+          ok: false,
+          error: 'supabase_unavailable',
+          message: 'Supabase temporariamente indisponivel. Seus dados locais foram preservados e a sincronizacao sera tentada novamente.',
+          retryable: true,
+        }
+      : { ok: false, error: 'server_error', message: cleanApiErrorMessage(text), retryable: false };
+  }
+}
+
+function looksLikeHtmlError(value = '') {
+  return /<!doctype html|<html[\s>]|<\/html>|cloudflare|connection timed out|error code 522|supabase\.co|gateway timeout|service unavailable/i
+    .test(String(value || ''));
+}
+
+function cleanApiErrorMessage(error) {
+  const raw = String(error?.message || error || '').trim();
+  if (!raw) return 'Nao foi possivel completar a solicitacao agora.';
+  if (looksLikeHtmlError(raw)) {
+    return 'Supabase temporariamente indisponivel. Seus dados locais foram preservados e a sincronizacao sera tentada novamente.';
+  }
+  return raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 280);
+}
+
+function isRetryableRequestError(error) {
+  if (error?.retryable) return true;
+  const raw = String(error?.message || error || '').toLowerCase();
+  return looksLikeHtmlError(raw)
+    || /failed to fetch|networkerror|load failed|offline|timeout|aborterror|connection/i.test(raw);
+}
+
+function normalizeRequestError(error) {
+  if (error instanceof ApiRequestError) return error;
+  return new ApiRequestError({
+    message: cleanApiErrorMessage(error),
+    code: isRetryableRequestError(error) ? 'supabase_unavailable' : 'server_error',
+    retryable: isRetryableRequestError(error),
+  });
 }
 
 async function enqueue(event) {

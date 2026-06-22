@@ -571,6 +571,7 @@ const BOA_VISTA_COLORS = [];
 const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
 const CONFIG_STORAGE_KEY = 'dcoratto.editor.settings.v1';
 const BUILDER_STORAGE_KEY = 'dcoratto.builder.document.v1';
+const EMPLOYEES_CACHE_KEY = 'dcoratto.employees.cache.v1';
 const LOCAL_DRAFT_PROJECT_ID = '__local_draft__';
 const DEFAULT_LOGO = 'https://dcorattopremium-5am4gqhj.manus.space/manus-storage/logo-transparent_c8b8c4c4.png';
 const DEFAULT_MATERIAL_OPTIONS = {
@@ -596,7 +597,7 @@ let pdfGenerationPending = false;
 let pdfGenerationTimeoutTimer = null;
 let pdfPreparedFallbackWindow = null;
 let editingMaterialOption = null;
-let editorActor = { email: 'dcorattoinovacao@gmail.com', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: true };
+let editorActor = { email: '', name: '', role: 'team', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: false };
 let clientHistoryItems = [];
 let projectHistoryItems = [];
 let historyFolder = 'active';
@@ -829,13 +830,17 @@ function saveEditorSettings(settingsMutation = null) {
 
 async function persistSettingsDirectly(settings, settingsMutation = null) {
   try {
-    await fetch('/api/editor-settings', {
+    const response = await fetch('/api/editor-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ settings, settingsMutation, actor: editorActor }),
     });
+    const result = await readApiPayload(response);
+    if (!response.ok || result?.ok === false) {
+      throw new Error(result?.message || result?.error || 'Nao foi possivel salvar configuracoes compartilhadas agora.');
+    }
   } catch (error) {
-    console.warn('Nao foi possivel salvar configuracoes compartilhadas agora.', error);
+    console.warn('Nao foi possivel salvar configuracoes compartilhadas agora.', cleanApiErrorMessage(error));
   }
 }
 
@@ -991,8 +996,8 @@ async function loadFilteredCatalogFromServer() {
   if (catalogFilters.search) params.set('search', catalogFilters.search);
   params.set('limit', '250');
   const response = await fetch(`/api/catalog-materials?${params.toString()}`, { cache: 'no-store' });
-  if (!response.ok) throw new Error('Nao foi possivel filtrar catalogo no servidor.');
-  const result = await response.json();
+  const result = await readApiPayload(response);
+  if (!response.ok) throw new Error(result?.message || result?.error || 'Nao foi possivel filtrar catalogo no servidor.');
   catalogVisibleItems = Array.isArray(result.items) ? result.items.map(normalizeCatalogItem) : [];
 }
 
@@ -1360,13 +1365,31 @@ async function loadEmployees() {
     const params = new URLSearchParams();
     if (editorActor?.email) params.set('actor', editorActor.email);
     const response = await fetch(`/api/app-users?${params.toString()}`, { cache: 'no-store' });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result?.error || 'Não foi possível carregar funcionários.');
+    const result = await readApiPayload(response);
+    if (!response.ok) throw new Error(result?.message || result?.error || 'Não foi possível carregar funcionários.');
     employeeItems = Array.isArray(result.users) ? result.users : [];
+    safeSetLocalStorage(EMPLOYEES_CACHE_KEY, JSON.stringify({ users: employeeItems, loadedAt: new Date().toISOString() }));
     renderEmployeeList();
     if (status) status.textContent = 'Cadastre vendedores e projetistas para acessarem o sistema.';
   } catch (error) {
-    if (status) status.textContent = `Erro ao carregar funcionários: ${error.message}`;
+    const cached = loadCachedEmployees();
+    if (cached.length) {
+      employeeItems = cached;
+      renderEmployeeList();
+      if (status) status.textContent = 'Não foi possível carregar funcionários agora. Exibindo última lista carregada.';
+      return;
+    }
+    if (list) list.innerHTML = '<div class="history-empty">Funcionários indisponíveis no momento.</div>';
+    if (status) status.textContent = 'Não foi possível carregar funcionários agora. Tente novamente em alguns instantes.';
+  }
+}
+
+function loadCachedEmployees() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(EMPLOYEES_CACHE_KEY) || 'null');
+    return Array.isArray(cached?.users) ? cached.users : [];
+  } catch {
+    return [];
   }
 }
 
@@ -1449,13 +1472,13 @@ async function saveEmployee() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result?.error || 'Não foi possível salvar funcionário.');
+    const result = await readApiPayload(response);
+    if (!response.ok) throw new Error(result?.message || result?.error || 'Não foi possível salvar funcionário.');
     cancelEmployeeEdit();
     await loadEmployees();
     if (status) status.textContent = 'Funcionário salvo.';
   } catch (error) {
-    if (status) status.textContent = String(error?.message || error);
+    if (status) status.textContent = cleanApiErrorMessage(error);
   } finally {
     if (button) button.disabled = false;
   }
@@ -1472,13 +1495,13 @@ async function deleteEmployee(email) {
     params.set('actor', editorActor?.email || '');
     params.set('email', email);
     const response = await fetch(`/api/app-users?${params.toString()}`, { method: 'DELETE' });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result?.error || 'Não foi possível excluir funcionário.');
+    const result = await readApiPayload(response);
+    if (!response.ok) throw new Error(result?.message || result?.error || 'Não foi possível excluir funcionário.');
     if (editingEmployeeEmail === email) cancelEmployeeEdit();
     await loadEmployees();
     if (status) status.textContent = 'Funcionário excluído.';
   } catch (error) {
-    if (status) status.textContent = String(error?.message || error);
+    if (status) status.textContent = cleanApiErrorMessage(error);
   }
 }
 
@@ -1517,13 +1540,12 @@ async function loadClientHistory() {
     const params = new URLSearchParams();
     if (editorActor?.email) params.set('actor', editorActor.email);
     const response = await fetch(`/api/client-history?${params.toString()}`, { cache: 'no-store' });
-    if (!response.ok) throw new Error('Não foi possível carregar histórico');
-    
-    const result = await response.json();
+    const result = await readApiPayload(response);
+    if (!response.ok) throw new Error(result?.message || result?.error || 'Não foi possível carregar histórico');
     clientHistoryItems = result.history || [];
     renderClientHistory();
   } catch (error) {
-    historyList.innerHTML = `<div class="history-empty">Erro ao carregar histórico: ${escapeHTML(error.message)}</div>`;
+    historyList.innerHTML = `<div class="history-empty">Erro ao carregar histórico: ${escapeHTML(cleanApiErrorMessage(error))}</div>`;
   }
 }
 
@@ -1536,8 +1558,8 @@ async function loadProjectHistory(folder = 'active') {
     params.set('folder', folder);
     if (canAdminRestoreProjects()) params.set('includeDeleted', 'true');
     const response = await fetch(`/api/projects?${params.toString()}`, { cache: 'no-store' });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result?.error || 'Não foi possível carregar projetos');
+    const result = await readApiPayload(response);
+    if (!response.ok) throw new Error(result?.message || result?.error || 'Não foi possível carregar projetos');
     projectHistoryItems = result.projects || [];
     const localDraft = localDraftHistoryItem();
     const localDraftProjectId = localDraft?.projectId || currentProjectId || '';
@@ -1552,7 +1574,7 @@ async function loadProjectHistory(folder = 'active') {
       renderClientHistory();
       return;
     }
-    historyList.innerHTML = `<div class="history-empty">Erro ao carregar projetos: ${escapeHTML(error.message)}</div>`;
+    historyList.innerHTML = `<div class="history-empty">Erro ao carregar projetos: ${escapeHTML(cleanApiErrorMessage(error))}</div>`;
   }
 }
 
@@ -1730,13 +1752,13 @@ async function restoreProjectFromHistory(projectId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId, actor: editorActor }),
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result?.error || 'Não foi possível restaurar o projeto.');
+    const result = await readApiPayload(response);
+    if (!response.ok) throw new Error(result?.message || result?.error || 'Não foi possível restaurar o projeto.');
     alert(`Projeto restaurado com ${result.environments || 0} ambiente(s).`);
     window.parent?.postMessage({ type: 'dcoratto:load-project', projectId }, window.location.origin);
     closeClientHistory();
   } catch (error) {
-    if (historyList) historyList.innerHTML = `<div class="history-empty">Erro ao restaurar projeto: ${escapeHTML(String(error?.message || error))}</div>`;
+    if (historyList) historyList.innerHTML = `<div class="history-empty">Erro ao restaurar projeto: ${escapeHTML(cleanApiErrorMessage(error))}</div>`;
   }
 }
 
@@ -3777,13 +3799,13 @@ async function markProjectSold() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId: currentProjectId, status: 'sold', actor: editorActor }),
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result?.error || 'Não foi possível marcar como vendido.');
+    const result = await readApiPayload(response);
+    if (!response.ok) throw new Error(result?.message || result?.error || 'Não foi possível marcar como vendido.');
     projectStatus = 'sold';
     updateSoldLockUi();
     alert('Projeto marcado como vendido. Ele ficará disponível na pasta Vendidos em somente leitura.');
   } catch (error) {
-    alert(String(error?.message || error));
+    alert(cleanApiErrorMessage(error));
   }
 }
 
@@ -3844,6 +3866,35 @@ function safeRemoveLocalStorage(key) {
   } catch (error) {
     console.warn('Nao foi possivel limpar o cache local do projeto.', error);
   }
+}
+
+async function readApiPayload(response) {
+  const text = await response.text().catch(() => '');
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      error: looksLikeHtmlApiError(text) ? 'supabase_unavailable' : 'server_error',
+      message: cleanApiErrorMessage(text),
+      retryable: looksLikeHtmlApiError(text),
+    };
+  }
+}
+
+function looksLikeHtmlApiError(value = '') {
+  return /<!doctype html|<html[\s>]|<\/html>|cloudflare|connection timed out|error code 522|supabase\.co|gateway timeout|service unavailable/i
+    .test(String(value || ''));
+}
+
+function cleanApiErrorMessage(value = '') {
+  const raw = String(value?.message || value || '').trim();
+  if (!raw) return 'Nao foi possivel completar a solicitacao agora.';
+  if (looksLikeHtmlApiError(raw)) {
+    return 'Supabase temporariamente indisponivel. Seus dados locais foram preservados e a sincronizacao sera tentada novamente.';
+  }
+  return raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 260);
 }
 
 function showClientLink(url) {
