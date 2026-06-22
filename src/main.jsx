@@ -518,17 +518,21 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 const PORTFOLIO_STORAGE_KEY = 'dcoratto.portfolio.document.v1';
 const BUILDER_STORAGE_KEY = 'dcoratto.builder.document.v1';
-const PAGE_PRESET = 'DCORATTO_CANONICAL_1440x1020';
+const SHARED_PAGE_CONFIG = globalThis.DCORATTO_PAGE_CONFIG || {};
+const PAGE_PRESET = SHARED_PAGE_CONFIG.preset || 'DCORATTO_CANONICAL_1440x1020';
 const CANONICAL_PAGE = Object.freeze({
   preset: PAGE_PRESET,
-  width: 1440,
-  height: 1020,
-  coordinateSystemVersion: 2,
-  unit: 'px',
+  width: Number(SHARED_PAGE_CONFIG.width || 1440),
+  height: Number(SHARED_PAGE_CONFIG.height || 1020),
+  safeMarginX: Number(SHARED_PAGE_CONFIG.safeMarginX || 54),
+  safeMarginTop: Number(SHARED_PAGE_CONFIG.safeMarginTop || 42),
+  safeMarginBottom: Number(SHARED_PAGE_CONFIG.safeMarginBottom || 58),
+  frameWidth: Number(SHARED_PAGE_CONFIG.frameWidth || 1332),
+  frameHeight: Number(SHARED_PAGE_CONFIG.frameHeight || 720),
+  coordinateSystemVersion: Number(SHARED_PAGE_CONFIG.coordinateSystemVersion || 2),
+  unit: SHARED_PAGE_CONFIG.unit || 'px',
 });
 const PDF_VIEWPORT = { width: CANONICAL_PAGE.width, height: CANONICAL_PAGE.height };
-const PDF_PAGE_MARGIN = 36;
-const PDF_MAX_PAGE_WIDTH = 3200;
 
 async function generatePortfolioPdf({ preview, fileName } = {}) {
   if (!preview || !Array.isArray(preview.environments) || !preview.environments.length) {
@@ -566,7 +570,17 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
 
     const doc = frame.contentDocument;
     const win = frame.contentWindow;
-    const sections = Array.from(doc.querySelectorAll('#document > section'))
+    const layoutValidation = win?.__DCORATTO_VALIDATE_PDF_LAYOUT__?.({ mark: true });
+    if (layoutValidation && !layoutValidation.valid) {
+      const details = layoutValidation.pages
+        .filter(page => page.issues?.length)
+        .slice(0, 3)
+        .map(page => `${page.label}: ${page.issues[0]}`)
+        .join(' | ');
+      throw new Error(`Existem elementos fora da area segura do PDF. Ajuste-os no editor antes de exportar.${details ? ` ${details}` : ''}`);
+    }
+
+    const sections = Array.from(doc.querySelectorAll('#document .document-page'))
       .filter(section => section.getBoundingClientRect().width && section.getBoundingClientRect().height);
     const captureTargets = createPdfCaptureTargets(sections);
 
@@ -585,9 +599,8 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
         const captureElement = preparedTarget.element || section;
         captureElement.scrollIntoView?.({ block: 'start' });
         await waitForAnimationFrame(win);
-        const rect = captureElement.getBoundingClientRect();
-        const pageWidth = preparedTarget.pageWidth || PDF_VIEWPORT.width;
-        const sectionHeight = Math.max(1, Math.ceil(rect.height || PDF_VIEWPORT.height), Math.ceil(captureElement.scrollHeight || 0));
+        const pageWidth = PDF_VIEWPORT.width;
+        const pageHeight = PDF_VIEWPORT.height;
         const canvas = await renderCanvas(captureElement, {
           backgroundColor: '#080807',
           scale: 2,
@@ -596,11 +609,14 @@ async function generatePortfolioPdf({ preview, fileName } = {}) {
           logging: false,
           imageTimeout: 20000,
           windowWidth: pageWidth,
-          windowHeight: Math.max(PDF_VIEWPORT.height, sectionHeight),
+          windowHeight: pageHeight,
+          width: pageWidth,
+          height: pageHeight,
+          scrollX: 0,
+          scrollY: 0,
         });
 
-        const pageHeight = Math.max(1, Math.round((canvas.height / canvas.width) * pageWidth));
-        const orientation = pageWidth >= pageHeight ? 'landscape' : 'portrait';
+        const orientation = 'landscape';
         if (!pdf) {
           pdf = new PdfDocument({
             orientation,
@@ -748,7 +764,8 @@ function preparePdfSectionForCapture(section, options = {}) {
 
   section.style.width = `${PDF_VIEWPORT.width}px`;
   section.style.minHeight = `${PDF_VIEWPORT.height}px`;
-  section.style.overflow = 'visible';
+  section.style.height = `${PDF_VIEWPORT.height}px`;
+  section.style.overflow = 'hidden';
 
   return {
     pageWidth: PDF_VIEWPORT.width,
@@ -906,7 +923,7 @@ function loadPdfFrame(frame, src) {
 async function waitForPdfDocumentReady(frame) {
   const doc = frame.contentDocument;
   if (!doc) throw new Error('Nao foi possivel acessar o documento do PDF.');
-  await waitForCondition(() => doc.body?.dataset.pdfReady === 'true' && doc.querySelector('#document > section'), 15000);
+  await waitForCondition(() => doc.body?.dataset.pdfReady === 'true' && doc.querySelector('#document .document-page'), 15000);
   await waitForPdfAssets(doc);
   frame.contentWindow?.updatePageAnnotationGeometry?.();
   await waitForAnimationFrame(frame.contentWindow);

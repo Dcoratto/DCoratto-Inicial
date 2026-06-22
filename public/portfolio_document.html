@@ -25,6 +25,10 @@
         --canonical-page-height: 1020px;
         --canonical-frame-width: 1332;
         --canonical-frame-height: 720;
+        --page-safe-x: 54px;
+        --page-safe-top: 42px;
+        --page-safe-bottom: 58px;
+        --document-page-scale: 1;
       }
 
       body.client-view {
@@ -2426,6 +2430,309 @@
         object-position: center center !important;
         background: #080807;
       }
+
+      /* The browser only scales this fixed sheet. Its internal layout never reflows. */
+      #document {
+        width: 100%;
+        overflow: hidden;
+      }
+
+      .document-page-viewport {
+        position: relative;
+        width: 100%;
+        height: var(--canonical-page-height);
+        margin: 0 auto;
+        overflow: hidden;
+        border-bottom: 1px solid var(--line);
+        background: var(--bg);
+      }
+
+      .document-page {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        width: var(--canonical-page-width) !important;
+        min-width: var(--canonical-page-width) !important;
+        max-width: var(--canonical-page-width) !important;
+        height: var(--canonical-page-height) !important;
+        min-height: var(--canonical-page-height) !important;
+        max-height: var(--canonical-page-height) !important;
+        margin: 0;
+        overflow: hidden !important;
+        transform: translateX(-50%) scale(var(--document-page-scale));
+        transform-origin: top center;
+        box-sizing: border-box;
+      }
+
+      body.pdf-export .document-page.cover,
+      .document-page.cover {
+        padding: 72px 80px !important;
+      }
+
+      body.client-view .document-page.cover::before,
+      .document-page.cover::before {
+        height: 98px !important;
+        margin-bottom: 58px !important;
+      }
+
+      body.client-view .document-page.cover .cover-kicker,
+      .document-page.cover .cover-kicker {
+        margin-bottom: 38px !important;
+        font-size: 12px !important;
+        line-height: normal !important;
+        letter-spacing: .34em !important;
+      }
+
+      body.client-view .document-page.cover .cover-stats,
+      .document-page.cover .cover-stats {
+        grid-template-columns: repeat(2, minmax(112px, 1fr)) !important;
+        margin-top: 68px !important;
+      }
+
+      body.client-view .document-page.cover .cover-stat,
+      .document-page.cover .cover-stat {
+        padding: 10px 48px !important;
+      }
+
+      body.pdf-export .document-page.environment,
+      .document-page.environment {
+        padding: var(--page-safe-top) 60px var(--page-safe-bottom) !important;
+      }
+
+      body.client-view .document-page .section-heading,
+      .document-page .section-heading {
+        grid-template-columns: 32px minmax(240px, auto) 1fr !important;
+        gap: 28px !important;
+        margin-bottom: 42px !important;
+      }
+
+      body.client-view .document-page .section-heading h2,
+      .document-page .section-heading h2 {
+        line-height: 1 !important;
+        overflow-wrap: normal !important;
+      }
+
+      body.client-view .document-page .section-line,
+      .document-page .section-line {
+        grid-column: auto !important;
+      }
+
+      body.client-view .document-page .portfolio-layout,
+      .document-page .portfolio-layout {
+        grid-template-columns: minmax(0, 1fr) 274px !important;
+        gap: 28px !important;
+      }
+
+      body.client-view .document-page .photo-mural,
+      .document-page .photo-mural {
+        grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+        grid-auto-rows: 156px !important;
+        gap: 5px !important;
+        min-height: 604px !important;
+      }
+
+      body.client-view .document-page .tile-full,
+      .document-page .tile-full { grid-column: span 12 !important; grid-row: span 4 !important; }
+      body.client-view .document-page .tile-half,
+      .document-page .tile-half { grid-column: span 6 !important; grid-row: span 4 !important; }
+      body.client-view .document-page .tile-third,
+      .document-page .tile-third { grid-column: span 4 !important; grid-row: span 3 !important; }
+      body.client-view .document-page .tile-wide,
+      .document-page .tile-wide { grid-column: span 8 !important; grid-row: span 3 !important; }
+      body.client-view .document-page .tile-small,
+      .document-page .tile-small { grid-column: span 4 !important; grid-row: span 3 !important; }
+      body.client-view .document-page .tile-hero,
+      .document-page .tile-hero { grid-column: span 8 !important; grid-row: span 4 !important; }
+      body.client-view .document-page .tile-tall,
+      .document-page .tile-tall { grid-column: span 4 !important; grid-row: span 4 !important; }
+
+      body.client-view .document-page .photo-card,
+      .document-page .photo-card {
+        min-height: 0 !important;
+        aspect-ratio: auto !important;
+      }
+
+      body.client-view .document-page .info-panel,
+      .document-page .info-panel {
+        min-height: 604px !important;
+        padding: 42px 30px !important;
+      }
+
+      .document-page.environment-page {
+        padding: var(--page-safe-top) var(--page-safe-x) var(--page-safe-bottom) !important;
+      }
+
+      .document-page .page-content-header {
+        display: flex;
+        height: 200px;
+        min-height: 200px;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        overflow: visible;
+      }
+
+      .document-page .page-fixed-title {
+        width: 100%;
+        margin: 0 0 8px;
+      }
+
+      .document-page .page-fixed-title strong {
+        font-size: 54px;
+        line-height: .95;
+      }
+
+      .document-page .page-fixed-title span {
+        margin-top: 3px;
+        font-size: 46px;
+        line-height: 1;
+      }
+
+      .document-page.environment-page .cover-kicker {
+        margin: 0 0 7px !important;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .document-page .page-description {
+        width: min(920px, 100%);
+        max-width: 920px;
+        max-height: 58px;
+        margin: 0 auto;
+        overflow: visible;
+        font-size: 16px;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+
+      .document-page .page-frames,
+      body.client-view .document-page .page-frames,
+      body.pdf-export .document-page .page-frames {
+        display: block !important;
+        width: 1332px !important;
+        min-width: 1332px !important;
+        max-width: 1332px !important;
+        height: 720px !important;
+        min-height: 720px !important;
+        max-height: 720px !important;
+        margin: 0 !important;
+        aspect-ratio: auto !important;
+        overflow: visible;
+      }
+
+      .document-page .page-annotation-text,
+      .document-page .doc-annotation-text {
+        white-space: normal;
+        overflow: visible;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .document-page .doc-annotation-layer {
+        width: 100%;
+        height: 100%;
+      }
+
+      .document-page .photo-card img,
+      .document-page .doc-photo-frame img,
+      .document-page .page-detail-frame img,
+      .document-page .page-free-element.type-image img {
+        object-fit: contain !important;
+        object-position: center center !important;
+        background: var(--bg);
+      }
+
+      .document-page .page-annotation-text {
+        min-width: 120px;
+        max-width: 260px;
+        font-size: var(--text-size, 15px);
+      }
+
+      body.client-view .document-page .page-annotation-line,
+      body.client-view .document-page .page-annotation-arrow-head,
+      body.client-view .document-page .page-annotation-text,
+      body.client-view .document-page .doc-annotation-layer,
+      body.client-view .document-page .doc-annotation-text {
+        display: block !important;
+      }
+
+      body.client-view .document-page .mobile-frame-flow {
+        display: none !important;
+      }
+
+      .document-page.editable .mural-tools {
+        position: absolute;
+        z-index: 90;
+        top: 8px;
+        left: var(--page-safe-x);
+        right: var(--page-safe-x);
+        justify-content: center !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        pointer-events: auto;
+      }
+
+      .document-page-viewport .pdf-safe-warning {
+        position: absolute;
+        z-index: 120;
+        top: 10px;
+        left: 50%;
+        width: min(720px, calc(100% - 24px));
+        padding: 9px 14px;
+        border: 1px solid rgba(255, 106, 85, .72);
+        background: rgba(54, 12, 8, .95);
+        color: #fff4ef;
+        font-size: 12px;
+        line-height: 1.4;
+        text-align: center;
+        transform: translateX(-50%);
+        pointer-events: none;
+      }
+
+      .document-page .pdf-overflow-element {
+        outline: 2px solid var(--danger) !important;
+        outline-offset: 3px;
+      }
+
+      body.pdf-export #document {
+        width: var(--canonical-page-width);
+        overflow: visible;
+      }
+
+      body.pdf-export .document-page-viewport {
+        width: var(--canonical-page-width);
+        height: var(--canonical-page-height) !important;
+        overflow: visible;
+        border: 0;
+        break-after: page;
+        page-break-after: always;
+      }
+
+      body.pdf-export .document-page {
+        left: 0;
+        overflow: hidden !important;
+        transform: none !important;
+      }
+
+      body.pdf-export .pdf-safe-warning,
+      body.pdf-export .pdf-overflow-element {
+        outline: 0 !important;
+      }
+
+      @media print {
+        #document > .document-page-viewport {
+          width: 1440px !important;
+          height: 1020px !important;
+          overflow: visible !important;
+          break-after: page;
+          page-break-after: always;
+        }
+
+        #document .document-page {
+          left: 0 !important;
+          transform: none !important;
+        }
+      }
     </style>
   </head>
   <body>
@@ -2455,6 +2762,7 @@
       <img alt="" />
     </div>
 
+    <script src="/document_page_config.js?v=3"></script>
     <script>
       const fallbackImage = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800">
@@ -2473,16 +2781,20 @@
       `);
 
       const storageKey = 'dcoratto.portfolio.document.v1';
+      const SHARED_PAGE_CONFIG = window.DCORATTO_PAGE_CONFIG || {};
       const CANONICAL_PAGE = Object.freeze({
-        preset: 'DCORATTO_CANONICAL_1440x1020',
-        width: 1440,
-        height: 1020,
-        coordinateSystemVersion: 2,
-        unit: 'px',
+        preset: SHARED_PAGE_CONFIG.preset || 'DCORATTO_CANONICAL_1440x1020',
+        width: Number(SHARED_PAGE_CONFIG.width || 1440),
+        height: Number(SHARED_PAGE_CONFIG.height || 1020),
+        safeMarginX: Number(SHARED_PAGE_CONFIG.safeMarginX || 54),
+        safeMarginTop: Number(SHARED_PAGE_CONFIG.safeMarginTop || 42),
+        safeMarginBottom: Number(SHARED_PAGE_CONFIG.safeMarginBottom || 58),
+        coordinateSystemVersion: Number(SHARED_PAGE_CONFIG.coordinateSystemVersion || 2),
+        unit: SHARED_PAGE_CONFIG.unit || 'px',
       });
       const CANONICAL_FRAME = Object.freeze({
-        width: 1332,
-        height: 720,
+        width: Number(SHARED_PAGE_CONFIG.frameWidth || 1332),
+        height: Number(SHARED_PAGE_CONFIG.frameHeight || 720),
         coordinateSystemVersion: 2,
         unit: 'percent',
       });
@@ -2493,6 +2805,14 @@
       const isClientView = Boolean(window.__DCORATTO_CLIENT_VIEW__) && !isEditablePreview && !isPdfExport;
       const DEFAULT_FRAME_SIZE = 120;
       const MIN_FRAME_SIZE = 40;
+
+      document.documentElement.style.setProperty('--canonical-page-width', `${CANONICAL_PAGE.width}px`);
+      document.documentElement.style.setProperty('--canonical-page-height', `${CANONICAL_PAGE.height}px`);
+      document.documentElement.style.setProperty('--canonical-frame-width', String(CANONICAL_FRAME.width));
+      document.documentElement.style.setProperty('--canonical-frame-height', String(CANONICAL_FRAME.height));
+      document.documentElement.style.setProperty('--page-safe-x', `${CANONICAL_PAGE.safeMarginX}px`);
+      document.documentElement.style.setProperty('--page-safe-top', `${CANONICAL_PAGE.safeMarginTop}px`);
+      document.documentElement.style.setProperty('--page-safe-bottom', `${CANONICAL_PAGE.safeMarginBottom}px`);
       
       // Aplicar classe para desabilitar seleção em client view
       if (isClientView) {
@@ -2564,6 +2884,7 @@
       const redoStack = [];
       let isApplyingHistory = false;
       let lastHistorySnapshot = '';
+      let documentPageRefreshFrame = 0;
       const annotationDefaultsKey = 'dcoratto.page.annotation.defaults.v1';
       let pageAnnotationDefaults = loadPageAnnotationDefaults();
 
@@ -2582,7 +2903,7 @@
         if (event.target === lightbox || event.target.tagName === 'BUTTON') closeLightbox();
       });
 
-      window.addEventListener('resize', updatePageAnnotationGeometry);
+      window.addEventListener('resize', scheduleDocumentPageRefresh);
 
       let lastClickTime = 0;
       let lastClickTarget = null;
@@ -2888,7 +3209,126 @@
         `;
 
         bindDocumentEvents();
+        refreshDocumentPageLayout();
       }
+
+      function wrapDocumentPage(sectionMarkup) {
+        return `<div class="document-page-viewport">${sectionMarkup}</div>`;
+      }
+
+      function scheduleDocumentPageRefresh() {
+        if (documentPageRefreshFrame) window.cancelAnimationFrame(documentPageRefreshFrame);
+        documentPageRefreshFrame = window.requestAnimationFrame(() => {
+          documentPageRefreshFrame = 0;
+          refreshDocumentPageLayout();
+        });
+      }
+
+      function refreshDocumentPageLayout() {
+        fitCanonicalPageText();
+        updateDocumentPageScale();
+        updatePageAnnotationGeometry();
+        validatePdfLayout({ mark: true });
+      }
+
+      function updateDocumentPageScale() {
+        const availableWidth = Math.max(1, document.documentElement.clientWidth || window.innerWidth || CANONICAL_PAGE.width);
+        const scale = isPdfExport ? 1 : Math.min(1, availableWidth / CANONICAL_PAGE.width);
+        document.documentElement.style.setProperty('--document-page-scale', String(scale));
+        document.querySelectorAll('.document-page-viewport').forEach((viewport) => {
+          viewport.style.height = `${CANONICAL_PAGE.height * scale}px`;
+        });
+      }
+
+      function fitCanonicalPageText() {
+        document.querySelectorAll('[data-pdf-fit-text]').forEach((element) => {
+          const maxFont = Number(element.dataset.pdfMaxFont || 54);
+          const minFont = Number(element.dataset.pdfMinFont || 20);
+          const maxHeight = Number(element.dataset.pdfMaxHeight || 0);
+          element.style.fontSize = `${maxFont}px`;
+          let fontSize = maxFont;
+          while (fontSize > minFont && (
+            element.scrollWidth > element.clientWidth + 1
+            || (maxHeight > 0 && element.scrollHeight > maxHeight + 1)
+          )) {
+            fontSize -= 1;
+            element.style.fontSize = `${fontSize}px`;
+          }
+        });
+      }
+
+      function validatePdfLayout({ mark = false } = {}) {
+        const pages = Array.from(document.querySelectorAll('[data-document-page]')).map((page, pageIndex) => {
+          page.querySelectorAll('.pdf-overflow-element').forEach(element => element.classList.remove('pdf-overflow-element'));
+          page.closest('.document-page-viewport')?.querySelector('.pdf-safe-warning')?.remove();
+
+          const pageRect = page.getBoundingClientRect();
+          const scale = pageRect.width / CANONICAL_PAGE.width || 1;
+          const safeRect = {
+            left: pageRect.left + (CANONICAL_PAGE.safeMarginX * scale),
+            right: pageRect.right - (CANONICAL_PAGE.safeMarginX * scale),
+            top: pageRect.top + (CANONICAL_PAGE.safeMarginTop * scale),
+            bottom: pageRect.bottom - (CANONICAL_PAGE.safeMarginBottom * scale),
+          };
+          const candidates = Array.from(page.querySelectorAll([
+            '[data-pdf-bounds]',
+            '[data-pdf-fit-text]',
+            '.section-heading',
+            '.page-frames',
+            '.page-annotation-text',
+            '.page-detail-frame',
+            '.page-free-element',
+            '.doc-annotation-text',
+            '.doc-photo-frame',
+            '.portfolio-layout',
+            '.info-panel',
+          ].join(',')));
+          const issues = [];
+
+          candidates.forEach((element) => {
+            const style = window.getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden') return;
+            const rect = element.getBoundingClientRect();
+            if (!rect.width && !rect.height) return;
+            const outside = rect.left < safeRect.left - 1
+              || rect.right > safeRect.right + 1
+              || rect.top < safeRect.top - 1
+              || rect.bottom > safeRect.bottom + 1;
+            const fitMaxHeight = Number(element.dataset.pdfMaxHeight || 0);
+            const clipsText = element.matches('.page-description, .info-panel')
+              ? (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1)
+              : (element.matches('[data-pdf-fit-text]') && fitMaxHeight > 0 && element.scrollHeight > fitMaxHeight + 1);
+            if (!outside && !clipsText) return;
+            const label = element.dataset.pdfBounds
+              || (element.matches('.page-annotation-text, .doc-annotation-text') ? 'Texto de seta' : '')
+              || (element.matches('.page-detail-frame') ? 'Moldura de detalhe' : '')
+              || (element.matches('.page-free-element') ? 'Elemento livre' : '')
+              || (element.matches('.doc-photo-frame') ? 'Moldura de imagem' : '')
+              || 'Conteudo';
+            if (!issues.includes(`${label} ultrapassa a area segura`)) issues.push(`${label} ultrapassa a area segura`);
+            if (mark && isEditablePreview) element.classList.add('pdf-overflow-element');
+          });
+
+          const result = {
+            index: pageIndex,
+            label: page.dataset.pageLabel || `Pagina ${pageIndex + 1}`,
+            issues,
+          };
+          page.dataset.pdfValid = issues.length ? 'false' : 'true';
+
+          if (mark && isEditablePreview && issues.length) {
+            const warning = document.createElement('div');
+            warning.className = 'pdf-safe-warning';
+            warning.textContent = `${result.label}: ha conteudo fora da area segura do PDF. Reposicione ou reduza o elemento antes de exportar.`;
+            page.closest('.document-page-viewport')?.appendChild(warning);
+          }
+          return result;
+        });
+
+        return { valid: pages.every(page => !page.issues.length), pages };
+      }
+
+      window.__DCORATTO_VALIDATE_PDF_LAYOUT__ = validatePdfLayout;
 
       function renderLogo() {
         const logo = document.getElementById('documentLogo');
@@ -2927,6 +3367,11 @@
         if (shouldAutoPrintPdf) {
           waitForPdfExportAssets().then(() => {
             window.setTimeout(() => {
+              const validation = validatePdfLayout({ mark: false });
+              if (!validation.valid) {
+                window.alert('Existem elementos fora da area segura do PDF. Ajuste o projeto no editor antes de exportar.');
+                return;
+              }
               window.focus();
               window.print();
             }, 350);
@@ -2958,11 +3403,11 @@
           return total + normalizePhotos(environment.photos).length + pagePhotos;
         }, 0);
 
-        return `
-          <section class="cover">
-            <div>
+        return wrapDocumentPage(`
+          <section class="document-page cover" data-document-page data-page-label="Capa">
+            <div data-pdf-bounds="Conteudo da capa">
               <div class="cover-kicker">${escapeHTML(documentData.projectType)} - ${escapeHTML(documentData.year)}</div>
-              <h1>${escapeHTML(documentData.client.name || 'CLIENTE MODELO')}</h1>
+              <h1 data-pdf-fit-text data-pdf-max-font="112" data-pdf-min-font="42" data-pdf-max-height="220">${escapeHTML(documentData.client.name || 'CLIENTE MODELO')}</h1>
               <div class="cover-address">${escapeHTML(documentData.client.address || '')}</div>
               <div class="cover-brand">${escapeHTML(documentData.branding?.companyName || "D'Coratto Sob Medida")}</div>
               <div class="cover-stats">
@@ -2977,7 +3422,7 @@
               </div>
             </div>
           </section>
-        `;
+        `);
       }
 
       function bindDocumentEvents() {
@@ -5469,11 +5914,11 @@
       function renderEnvironment(environment, index) {
         const photos = normalizePhotos(environment.photos);
         const layout = normalizeMuralLayout(environment.layout, photos.length);
-        return `
-          <section class="environment" id="${slug(environment.title)}">
+        const overviewPage = wrapDocumentPage(`
+          <section class="document-page environment ${isEditablePreview ? 'editable' : ''}" data-document-page data-page-label="${escapeAttribute(environment.title)}" id="${slug(environment.title)}">
             <div class="section-heading">
               <span class="section-number">${escapeHTML(environment.number || String(index + 1).padStart(2, '0'))}</span>
-              <h2>${escapeHTML(environment.title)}</h2>
+              <h2 data-pdf-fit-text data-pdf-max-font="72" data-pdf-min-font="34" data-pdf-max-height="90">${escapeHTML(environment.title)}</h2>
               <span class="section-line"></span>
             </div>
             ${isEditablePreview ? `<div class="mural-tools">
@@ -5521,24 +5966,26 @@
               </aside>
             </div>
           </section>
-          ${(environment.pages || []).map((page, pageIndex) => renderEnvironmentPage(environment, page, index, pageIndex)).join('')}
-        `;
+        `);
+        return `${overviewPage}${(environment.pages || []).map((page, pageIndex) => renderEnvironmentPage(environment, page, index, pageIndex)).join('')}`;
       }
 
       function renderEnvironmentPage(environment, page, environmentIndex, pageIndex) {
         const pageNumber = page.number || `${String(environmentIndex + 1).padStart(2, '0')}.${String(pageIndex + 1).padStart(2, '0')}`;
         const frames = normalizeFrames(page);
         const mobileFlow = isClientView ? renderMobileFrameFlow(environment, page, frames, environmentIndex, pageIndex) : '';
-        return `
-          <section class="environment-page ${isEditablePreview ? 'editable' : ''} ${mobileFlow ? 'has-mobile-flow' : ''}" id="${slug(environment.title)}-${slug(page.title || `pagina-${pageIndex + 1}`)}">
-            <div class="page-fixed-title">
-              <strong>${escapeHTML(documentData.projectType || 'Projeto Inicial')}</strong>
-              <span>${escapeHTML(environment.title)}</span>
+        return wrapDocumentPage(`
+          <section class="document-page environment-page ${isEditablePreview ? 'editable' : ''} ${mobileFlow ? 'has-mobile-flow' : ''}" data-document-page data-page-label="${escapeAttribute(`${environment.title} - ${page.title || `Pagina ${pageIndex + 1}`}`)}" id="${slug(environment.title)}-${slug(page.title || `pagina-${pageIndex + 1}`)}">
+            <div class="page-content-header" data-pdf-bounds="Cabecalho da pagina">
+              <div class="page-fixed-title">
+                <strong data-pdf-fit-text data-pdf-max-font="54" data-pdf-min-font="30" data-pdf-max-height="54">${escapeHTML(documentData.projectType || 'Projeto Inicial')}</strong>
+                <span data-pdf-fit-text data-pdf-max-font="46" data-pdf-min-font="24" data-pdf-max-height="48">${escapeHTML(environment.title)}</span>
+              </div>
+              <div class="cover-kicker" style="color:#8f7044;text-align:center">${escapeHTML(pageNumber)} · ${escapeHTML(page.title || `Página ${pageIndex + 1}`)}</div>
+              ${page.description ? `<p class="page-description" data-pdf-bounds="Descricao da pagina">${escapeHTML(page.description)}</p>` : ''}
             </div>
-            <div class="cover-kicker" style="color:#8f7044;text-align:center;margin-bottom:10px">${escapeHTML(pageNumber)} · ${escapeHTML(page.title || `Página ${pageIndex + 1}`)}</div>
-            ${page.description ? `<p class="page-description">${escapeHTML(page.description)}</p>` : ''}
             ${isEditablePreview ? `
-              <div class="mural-tools" style="justify-content:center;margin:0 0 24px;padding-left:0">
+              <div class="mural-tools">
                 <button type="button" class="photo-upload" data-add-frame data-environment-index="${environmentIndex}" data-page-index="${pageIndex}">Adicionar moldura</button>
                 <button type="button" class="photo-upload" data-page-arrow-button data-environment-index="${environmentIndex}" data-page-index="${pageIndex}">Seta para texto</button>
                 <button type="button" class="photo-upload" data-page-detail-button data-environment-index="${environmentIndex}" data-page-index="${pageIndex}">Seta com imagem</button>
@@ -5553,7 +6000,7 @@
             </div>
             ${mobileFlow}
           </section>
-        `;
+        `);
       }
 
       function renderMobileFrameFlow(environment, page, frames, environmentIndex, pageIndex) {
@@ -6351,6 +6798,7 @@
         safePersistDocument();
         rememberDocumentHistory();
         postPortfolioSync(action);
+        scheduleDocumentPageRefresh();
       }
 
       function safePersistDocument() {
