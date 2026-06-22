@@ -43,6 +43,9 @@ export function Login({ onLoginSuccess }) {
         return;
       }
       if (!response.ok || result?.error) {
+        if (shouldUseLocalLoginFallback(response, result)) {
+          throw new Error(result?.message || result?.error || 'Login remoto indisponivel.');
+        }
         setIsSubmitting(false);
         alert(result?.message || result?.error || 'Credenciais incorretas.');
         return;
@@ -126,11 +129,14 @@ async function readApiPayload(response) {
   try {
     return JSON.parse(text);
   } catch {
+    const retryable = looksLikeHtmlError(text);
     return {
       ok: false,
-      error: looksLikeHtmlError(text)
+      error: retryable ? 'supabase_unavailable' : 'server_error',
+      message: retryable
         ? 'Supabase temporariamente indisponivel. Tente novamente em alguns instantes.'
         : text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 240),
+      retryable,
     };
   }
 }
@@ -138,4 +144,10 @@ async function readApiPayload(response) {
 function looksLikeHtmlError(value = '') {
   return /<!doctype html|<html[\s>]|<\/html>|cloudflare|connection timed out|error code 522|supabase\.co/i
     .test(String(value || ''));
+}
+
+function shouldUseLocalLoginFallback(response, result = {}) {
+  return Boolean(result?.retryable)
+    || result?.error === 'supabase_unavailable'
+    || Number(response?.status || 0) >= 500;
 }

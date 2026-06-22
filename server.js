@@ -217,6 +217,7 @@ async function handleLoginRequest(request, response) {
       sendJson(response, 400, { error: 'Informe email e senha.' });
       return;
     }
+    const fallbackUser = findRuntimeLoginUser(email, password);
 
     if (supabaseServer) {
       try {
@@ -229,6 +230,10 @@ async function handleLoginRequest(request, response) {
           return;
         }
         if (!error) {
+          if (fallbackUser) {
+            sendJson(response, 200, { ok: true, source: 'local', user: normalizeAppUser(fallbackUser) });
+            return;
+          }
           sendJson(response, 401, { error: 'Credenciais incorretas.' });
           return;
         }
@@ -241,7 +246,6 @@ async function handleLoginRequest(request, response) {
       }
     }
 
-    const fallbackUser = runtimeLoginUsers.find((user) => user.email === email && user.password === password && user.active !== false);
     if (!fallbackUser) {
       sendJson(response, 401, { error: 'Credenciais incorretas.' });
       return;
@@ -251,6 +255,15 @@ async function handleLoginRequest(request, response) {
   } catch (error) {
     sendErrorJson(response, error, { endpoint: '/api/login', durationMs: Date.now() - startedAt });
   }
+}
+
+function findRuntimeLoginUser(email, password) {
+  const normalizedEmail = normalizeEmail(email);
+  return runtimeLoginUsers.find((user) => (
+    normalizeEmail(user.email) === normalizedEmail
+    && user.password === password
+    && user.active !== false
+  )) || null;
 }
 
 async function handleAppUsersGet(url, response) {
