@@ -27,6 +27,19 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   || '';
 const primaryAccountEmail = 'dcorattoinovacao@gmail.com';
 const defaultFactories = ['VITTA', 'BOA VISTA'];
+const defaultMaterialOptions = {
+  tampon: ['15mm', '25mm', '15 e 25mm', '6mm', '15 e 6mm'],
+  porta: ['LISA', 'CAVA 45°', 'PASSANTE', 'FRISO', 'ROMEU E JULIETA', 'AMERICANA', 'ESPELHO'],
+  puxador: ['CAVA 45°', 'GARD 256mm', 'PASSANTE', 'LISA PASSANTE', 'LISA PASSANTE COM FRISO', 'EMBUTIDO', 'PUXADOR J', 'PUXADOR L'],
+  corredica: ['Telescópica', 'Invisível', 'Slow Motion', 'Toque', 'Push Open'],
+};
+const defaultObservations = [
+  'Apenas Marcenaria considerado no Projeto',
+  'Apenas Marcenaria e Metalons considerados no Projeto',
+  'Leds não inclusos',
+  'Considerar cavas para instalação de LEDS',
+  'Eletrodomésticos não inclusos',
+];
 const localLoginUsers = [
   { email: primaryAccountEmail, password: 'sob_medida', name: "D'Coratto Inovacao", role: 'owner' },
   { email: 'rafael@dcoratto.com.br', password: 'Dcoratto@Rafael26', name: 'Rafael', role: 'team' },
@@ -34,6 +47,10 @@ const localLoginUsers = [
   { email: 'vinicius@dcoratto.com.br', password: 'Dcoratto@Vinicius26', name: 'Vinicius', role: 'team' },
 ];
 const runtimeLoginUsers = localLoginUsers.map(user => ({ ...user }));
+let lastKnownEditorSettings = null;
+let seedCatalogFallback = null;
+const lastKnownProjectLists = new Map();
+const lastKnownClientHistory = new Map();
 let supabaseUnavailableUntil = 0;
 const supabaseServer = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey, {
@@ -115,6 +132,11 @@ const mimeTypes = {
 
 createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+
+  if (request.method === 'GET' && url.pathname === '/api/connection-diagnostics') {
+    await handleConnectionDiagnosticsRequest(url, response);
+    return;
+  }
 
   if (request.method === 'POST' && url.pathname === '/api/login') {
     await handleLoginRequest(request, response);
@@ -224,6 +246,20 @@ createServer(async (request, response) => {
   console.log(`D'coratto editor listening on port ${port}`);
 });
 
+async function handleConnectionDiagnosticsRequest(url, response) {
+  const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+  if (!isAdminEmail(actorEmail)) {
+    sendJson(response, 403, { ok: false, error: 'forbidden', message: 'Diagnostico disponivel apenas para a conta principal.' });
+    return;
+  }
+
+  sendJson(response, 200, {
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    supabase: await safeSupabaseDiagnostics(),
+  });
+}
+
 async function handleLoginRequest(request, response) {
   const startedAt = Date.now();
   try {
@@ -240,6 +276,7 @@ async function handleLoginRequest(request, response) {
       return;
     }
 
+    let retryableLoginError = null;
     if (supabaseServer) {
       try {
         const { data, error } = await supabaseServer.rpc('verify_app_login', {
@@ -262,13 +299,34 @@ async function handleLoginRequest(request, response) {
           sendJson(response, 401, { error: 'Credenciais incorretas.' });
           return;
         }
+        retryableLoginError = normalizeExternalServiceError(error);
       } catch (error) {
-        logNormalizedServerError(normalizeExternalServiceError(error), {
+        retryableLoginError = normalizeExternalServiceError(error);
+        logNormalizedServerError(retryableLoginError, {
           endpoint: '/api/login',
           actorEmail: email,
           durationMs: Date.now() - startedAt,
         });
       }
+    } else {
+      retryableLoginError = {
+        code: 'supabase_not_configured',
+        message: 'Validacao remota de login indisponivel no momento.',
+        retryable: true,
+      };
+    }
+
+    if (retryableLoginError) {
+      const status = retryableLoginError.retryable ? 503 : 500;
+      sendJson(response, status, {
+        ok: false,
+        error: retryableLoginError.code || 'login_validation_error',
+        message: retryableLoginError.retryable
+          ? 'Nao foi possivel validar este login no Supabase agora. Tente novamente em alguns instantes.'
+          : 'Nao foi possivel validar este login por uma falha interna do servidor.',
+        retryable: Boolean(retryableLoginError.retryable),
+      });
+      return;
     }
 
     sendJson(response, 401, { error: 'Credenciais incorretas.' });
@@ -769,17 +827,24 @@ async function handleEditorSettingsGet(response) {
   const startedAt = Date.now();
   try {
     if (!supabaseServer) {
-      sendSupabaseUnavailable(response, 'Supabase indisponivel para carregar configuracoes. Usando cache local quando disponivel.');
+      sendEditorSettingsFallback(response, 'Supabase indisponivel para carregar configuracoes. Exibindo base local de emergencia.');
       return;
     }
 
     const settings = await loadSharedEditorSettings();
+    lastKnownEditorSettings = settings;
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
       settings,
     });
   } catch (error) {
+    const normalized = normalizeExternalServiceError(error);
+    if (normalized.retryable) {
+      logNormalizedServerError(normalized, { endpoint: '/api/editor-settings', durationMs: Date.now() - startedAt });
+      sendEditorSettingsFallback(response, 'Supabase temporariamente indisponivel. Exibindo configuracoes locais/cacheadas.');
+      return;
+    }
     sendErrorJson(response, error, { endpoint: '/api/editor-settings', durationMs: Date.now() - startedAt });
   }
 }
@@ -788,18 +853,11 @@ async function handleCatalogMaterialsGet(url, response) {
   const startedAt = Date.now();
   try {
     if (!supabaseServer) {
-      sendSupabaseUnavailable(response, 'Supabase indisponivel para carregar catalogos. Tente novamente em alguns instantes.');
+      sendCatalogFallback(response, filtersFromCatalogUrl(url), 'Supabase indisponivel para carregar catalogos. Exibindo catalogo local de emergencia.');
       return;
     }
 
-    const filters = {
-      category: String(url.searchParams.get('category') || '').trim(),
-      factory: String(url.searchParams.get('factory') || '').trim(),
-      line: String(url.searchParams.get('line') || '').trim(),
-      quality: String(url.searchParams.get('quality') || '').trim(),
-      search: String(url.searchParams.get('search') || '').trim(),
-      limit: Math.min(500, Math.max(25, Number(url.searchParams.get('limit') || 250))),
-    };
+    const filters = filtersFromCatalogUrl(url);
 
     let query = supabaseServer
       .from('catalog_materials')
@@ -830,6 +888,10 @@ async function handleCatalogMaterialsGet(url, response) {
     } catch (settingsError) {
       console.warn('Catalogo filtrado carregado sem merge do payload de configuracoes.', settingsError);
     }
+    lastKnownEditorSettings = {
+      ...(lastKnownEditorSettings || {}),
+      catalogItems: mergeCatalogItemsPayload(lastKnownEditorSettings?.catalogItems || [], items),
+    };
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
@@ -837,8 +899,221 @@ async function handleCatalogMaterialsGet(url, response) {
       items,
     });
   } catch (error) {
+    const normalized = normalizeExternalServiceError(error);
+    if (normalized.retryable) {
+      logNormalizedServerError(normalized, { endpoint: '/api/catalog-materials', durationMs: Date.now() - startedAt });
+      sendCatalogFallback(response, filtersFromCatalogUrl(url), 'Supabase temporariamente indisponivel. Exibindo catalogo local/cacheado.');
+      return;
+    }
     sendErrorJson(response, error, { endpoint: '/api/catalog-materials', durationMs: Date.now() - startedAt });
   }
+}
+
+function filtersFromCatalogUrl(url) {
+  return {
+    category: String(url.searchParams.get('category') || '').trim(),
+    factory: String(url.searchParams.get('factory') || '').trim(),
+    line: String(url.searchParams.get('line') || '').trim(),
+    quality: String(url.searchParams.get('quality') || '').trim(),
+    search: String(url.searchParams.get('search') || '').trim(),
+    limit: Math.min(500, Math.max(25, Number(url.searchParams.get('limit') || 250))),
+  };
+}
+
+function sendEditorSettingsFallback(response, message) {
+  const settings = fallbackEditorSettings();
+  sendJson(response, 200, {
+    ok: true,
+    source: lastKnownEditorSettings ? 'memory-cache' : 'local-fallback',
+    stale: true,
+    retryable: true,
+    warning: 'supabase_unavailable',
+    message,
+    settings,
+  });
+}
+
+function sendCatalogFallback(response, filters, message) {
+  const settings = fallbackEditorSettings();
+  const items = (settings.catalogItems || [])
+    .filter(item => catalogItemMatchesFiltersPayload(item, filters))
+    .slice(0, filters.limit);
+  sendJson(response, 200, {
+    ok: true,
+    source: lastKnownEditorSettings?.catalogItems?.length ? 'memory-cache' : 'local-fallback',
+    stale: true,
+    retryable: true,
+    warning: 'supabase_unavailable',
+    message,
+    filters,
+    items,
+  });
+}
+
+function fallbackEditorSettings() {
+  const seedItems = loadSeedCatalogFallback();
+  const settings = lastKnownEditorSettings || {};
+  const catalogItems = mergeCatalogItemsPayload(seedItems, settings.catalogItems || [], { preferIncoming: true });
+  return normalizeEditorSettingsPayload({
+    ...settings,
+    catalogItems,
+    factories: normalizeFactoriesPayload(settings.factories || defaultFactories, catalogItems),
+    materialOptions: mergeMaterialOptionsPayload(defaultMaterialOptions, settings.materialOptions || {}),
+    observations: settings.observations?.length ? settings.observations : defaultObservations,
+  });
+}
+
+function loadSeedCatalogFallback() {
+  if (seedCatalogFallback) return seedCatalogFallback;
+  const seedPath = resolve('supabase', 'seed.sql');
+  if (!existsSync(seedPath)) {
+    seedCatalogFallback = [];
+    return seedCatalogFallback;
+  }
+
+  try {
+    const seedSql = readFileSync(seedPath, 'utf8');
+    const items = [
+      ...parseSeedCatalogMaterials(seedSql),
+      ...parseSeedBoaVistaColors(seedSql),
+    ];
+    seedCatalogFallback = mergeCatalogItemsPayload([], items);
+  } catch (error) {
+    console.warn('Nao foi possivel carregar catalogo local de emergencia.', normalizeExternalServiceError(error).message);
+    seedCatalogFallback = [];
+  }
+  return seedCatalogFallback;
+}
+
+function parseSeedCatalogMaterials(seedSql = '') {
+  const match = String(seedSql).match(/insert\s+into\s+public\.catalog_materials\s*\(\s*group_key,\s*name,\s*code,\s*brand,\s*hex,\s*sort_order\s*\)\s*values\s*([\s\S]*?)\s*on\s+conflict/i);
+  if (!match?.[1]) return [];
+  return parseSqlTuples(match[1]).map((tuple) => {
+    const [groupKey, name, code, brand, hex, sortOrder] = tuple;
+    return seedCatalogItem({
+      groupKey,
+      name,
+      code,
+      manufacturer: brand || '',
+      line: '',
+      quality: '',
+      hex,
+      textureUrl: '',
+      sortOrder,
+      source: 'seed',
+    });
+  }).filter(Boolean);
+}
+
+function parseSeedBoaVistaColors(seedSql = '') {
+  const match = String(seedSql).match(/with\s+boa_vista_colors\s*\([^)]*\)\s+as\s*\(\s*values\s*([\s\S]*?)\s*\)\s*insert\s+into\s+public\.catalog_materials/i);
+  if (!match?.[1]) return [];
+  return parseSqlTuples(match[1]).map((tuple) => {
+    const [sortOrder, line, name, quality, hex, textureUrl] = tuple;
+    return seedCatalogItem({
+      groupKey: 'boa_vista_cores',
+      name,
+      code: '',
+      manufacturer: 'BOA VISTA',
+      line,
+      quality,
+      hex,
+      textureUrl,
+      sortOrder,
+      source: 'seed:boa-vista',
+    });
+  }).filter(Boolean);
+}
+
+function seedCatalogItem({ groupKey, name, code, manufacturer, line, quality, hex, textureUrl, sortOrder, source }) {
+  if (!groupKey || !name) return null;
+  const type = settingsTypeFromCatalogGroup(groupKey);
+  if (!type) return null;
+  const catalogKey = stableCatalogKey({
+    category: type,
+    factory: manufacturer,
+    line,
+    quality,
+    name,
+  });
+  return normalizeCatalogItemsPayload([{
+    id: catalogKey,
+    catalogKey,
+    catalog_key: catalogKey,
+    type,
+    category: groupKey,
+    factory: manufacturer || '',
+    manufacturer: manufacturer || '',
+    line: line || '',
+    name,
+    code: code || catalogKey.toUpperCase(),
+    quality: quality || '',
+    materialType: quality || '',
+    hex: hex || '#b8976a',
+    textureUrl: textureUrl || '',
+    imageUrl: textureUrl || '',
+    publicUrl: '',
+    sort_order: Number(sortOrder) || 0,
+    source,
+  }])[0] || null;
+}
+
+function parseSqlTuples(valuesBlock = '') {
+  const tuples = [];
+  let tuple = null;
+  let token = '';
+  let inString = false;
+  const pushToken = () => {
+    if (!tuple) return;
+    const value = token.trim();
+    tuple.push(sqlValue(value));
+    token = '';
+  };
+
+  for (let index = 0; index < valuesBlock.length; index += 1) {
+    const char = valuesBlock[index];
+    const next = valuesBlock[index + 1];
+    if (inString) {
+      if (char === "'" && next === "'") {
+        token += "'";
+        index += 1;
+      } else if (char === "'") {
+        inString = false;
+      } else {
+        token += char;
+      }
+      continue;
+    }
+    if (char === "'") {
+      inString = true;
+      continue;
+    }
+    if (char === '(') {
+      tuple = [];
+      token = '';
+      continue;
+    }
+    if (char === ',' && tuple) {
+      pushToken();
+      continue;
+    }
+    if (char === ')' && tuple) {
+      pushToken();
+      tuples.push(tuple);
+      tuple = null;
+      token = '';
+      continue;
+    }
+    if (tuple) token += char;
+  }
+  return tuples;
+}
+
+function sqlValue(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw || /^null$/i.test(raw)) return '';
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  return raw;
 }
 
 function catalogItemMatchesFiltersPayload(item = {}, filters = {}) {
@@ -882,6 +1157,7 @@ async function handleEditorSettingsPost(request, response) {
 
     body = await readJsonBody(request);
     const settings = await saveSharedEditorSettings(body.settings || {}, body.actor || null, body.settingsMutation || null);
+    lastKnownEditorSettings = settings;
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
@@ -901,9 +1177,10 @@ async function handleEditorSettingsPost(request, response) {
 async function handleClientHistoryRequest(url, response) {
   const startedAt = Date.now();
   const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+  const cacheKey = actorEmail || 'anonymous';
   try {
     if (!supabaseServer) {
-      sendSupabaseUnavailable(response, 'Supabase indisponivel para carregar historico de clientes. Tente novamente em alguns instantes.');
+      sendClientHistoryFallback(response, cacheKey, 'Supabase indisponivel para carregar historico de clientes.');
       return;
     }
 
@@ -941,12 +1218,23 @@ async function handleClientHistoryRequest(url, response) {
       };
     });
 
+    lastKnownClientHistory.set(cacheKey, history);
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
       history,
     });
   } catch (error) {
+    const normalized = normalizeExternalServiceError(error);
+    if (normalized.retryable) {
+      logNormalizedServerError(normalized, {
+        endpoint: '/api/client-history',
+        actorEmail,
+        durationMs: Date.now() - startedAt,
+      });
+      sendClientHistoryFallback(response, cacheKey, 'Supabase temporariamente indisponivel. Exibindo ultimo historico carregado quando disponivel.');
+      return;
+    }
     sendErrorJson(response, error, {
       endpoint: '/api/client-history',
       actorEmail,
@@ -958,13 +1246,14 @@ async function handleClientHistoryRequest(url, response) {
 async function handleProjectsRequest(url, response) {
   const startedAt = Date.now();
   const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+  const folder = String(url.searchParams.get('folder') || 'active').trim();
+  const cacheKey = `${actorEmail || 'anonymous'}:${folder}:${url.searchParams.get('includeDeleted') === 'true' && isAdminEmail(actorEmail) ? 'with-deleted' : 'visible'}`;
   try {
     if (!supabaseServer) {
-      sendSupabaseUnavailable(response, 'Supabase indisponivel para carregar projetos. Usando rascunhos locais quando disponivel.');
+      sendProjectsFallback(response, cacheKey, 'Supabase indisponivel para carregar projetos. Usando cache local quando disponivel.');
       return;
     }
 
-    const folder = String(url.searchParams.get('folder') || 'active').trim();
     let query = supabaseServer
       .from('document_projects')
       .select('id, title, client_name, contract_number, address, status, is_draft, draft_saved_at, updated_at, created_by, assigned_to_email, last_editor_name, last_editor_email, deleted_at, deleted_by, deleted_reason, deleted_for_users')
@@ -1006,14 +1295,51 @@ async function handleProjectsRequest(url, response) {
         designerName: project.last_editor_name || designerNameFromEmail(project.assigned_to_email || project.created_by || project.last_editor_email),
       }));
 
+    lastKnownProjectLists.set(cacheKey, projects);
     sendJson(response, 200, { ok: true, source: 'server-supabase', projects });
   } catch (error) {
+    const normalized = normalizeExternalServiceError(error);
+    if (normalized.retryable) {
+      logNormalizedServerError(normalized, {
+        endpoint: '/api/projects',
+        actorEmail,
+        durationMs: Date.now() - startedAt,
+      });
+      sendProjectsFallback(response, cacheKey, 'Supabase temporariamente indisponivel. Exibindo ultimos projetos carregados quando disponivel.');
+      return;
+    }
     sendErrorJson(response, error, {
       endpoint: '/api/projects',
       actorEmail,
       durationMs: Date.now() - startedAt,
     });
   }
+}
+
+function sendClientHistoryFallback(response, cacheKey, message) {
+  const history = lastKnownClientHistory.get(cacheKey) || [];
+  sendJson(response, 200, {
+    ok: true,
+    source: history.length ? 'memory-cache' : 'local-fallback',
+    stale: true,
+    retryable: true,
+    warning: 'supabase_unavailable',
+    message,
+    history,
+  });
+}
+
+function sendProjectsFallback(response, cacheKey, message) {
+  const projects = lastKnownProjectLists.get(cacheKey) || [];
+  sendJson(response, 200, {
+    ok: true,
+    source: projects.length ? 'memory-cache' : 'local-fallback',
+    stale: true,
+    retryable: true,
+    warning: 'supabase_unavailable',
+    message,
+    projects,
+  });
 }
 
 async function handleClientHtmlRequest(url, response) {
@@ -2944,6 +3270,60 @@ function sendSupabaseUnavailable(response, message, retryable = true) {
   });
 }
 
+async function safeSupabaseDiagnostics() {
+  const hostname = safeSupabaseHostname();
+  const projectRef = hostname && hostname.endsWith('.supabase.co')
+    ? hostname.split('.')[0]
+    : '';
+  const circuitRemainingMs = Math.max(0, supabaseUnavailableUntil - Date.now());
+  return {
+    configured: Boolean(supabaseUrl && supabaseServiceKey),
+    host: hostname,
+    projectRef,
+    serviceRoleConfigured: Boolean(supabaseServiceKey),
+    circuitOpen: circuitRemainingMs > 0,
+    circuitRemainingMs,
+    timeoutMs: supabaseRequestTimeoutMs,
+    cooldownMs: supabaseCircuitCooldownMs,
+    restProbe: await probeSupabaseRest(hostname),
+  };
+}
+
+function safeSupabaseHostname() {
+  try {
+    return supabaseUrl ? new URL(supabaseUrl).hostname : '';
+  } catch {
+    return '';
+  }
+}
+
+async function probeSupabaseRest(hostname) {
+  if (!hostname) return { ok: false, status: 0, error: 'missing_host' };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('diagnostic_timeout')), 1800);
+  try {
+    const response = await fetch(`https://${hostname}/rest/v1/`, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+    return {
+      ok: response.status === 401 || response.ok,
+      status: response.status,
+      reachable: response.status > 0 && response.status < 500,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      reachable: false,
+      error: normalizeExternalServiceError(error).code,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function normalizeExternalServiceError(error) {
   const rawMessage = String(
     error?.message
@@ -2954,6 +3334,16 @@ function normalizeExternalServiceError(error) {
   );
   const rawCode = String(error?.code || error?.status || error?.name || '').trim();
   const haystack = `${rawCode} ${rawMessage}`.toLowerCase();
+  const looksLikeMissingSupabaseSchema = /pgrst20[25]|schema cache|could not find the table|could not find the function|relation .* does not exist|function .* does not exist/i
+    .test(haystack);
+  if (looksLikeMissingSupabaseSchema) {
+    return {
+      code: 'supabase_schema_unavailable',
+      message: 'Banco DCoratto indisponivel ou configurado sem as tabelas esperadas. Seus dados locais foram preservados.',
+      retryable: true,
+    };
+  }
+
   const looksLikeHtml = /<!doctype html|<html[\s>]|<\/html>|cloudflare|supabase\.co|connection timed out|error code 522|522:|524:|gateway timeout|bad gateway|service unavailable|supabase_request_timeout|supabase_circuit_open|supabase_unavailable|aborterror|networkerror|fetch failed|econnreset|etimedout|enotfound|socket hang up/i
     .test(haystack);
 

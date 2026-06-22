@@ -30,6 +30,7 @@ export function Login({ onLoginSuccess }) {
   async function handleLogin(event) {
     event.preventDefault();
     setIsSubmitting(true);
+    let retryableLoginMessage = '';
 
     try {
       const response = await fetch('/api/login', {
@@ -44,6 +45,7 @@ export function Login({ onLoginSuccess }) {
       }
       if (!response.ok || result?.error) {
         if (shouldUseLocalLoginFallback(response, result)) {
+          retryableLoginMessage = result?.message || 'Nao foi possivel validar este login no Supabase agora. Tente novamente em alguns instantes.';
           throw new Error(result?.message || result?.error || 'Login remoto indisponivel.');
         }
         setIsSubmitting(false);
@@ -51,6 +53,9 @@ export function Login({ onLoginSuccess }) {
         return;
       }
     } catch (error) {
+      if (!retryableLoginMessage) {
+        retryableLoginMessage = 'Nao foi possivel validar este login no Supabase agora. Tente novamente em alguns instantes.';
+      }
       console.warn('Login remoto indisponivel, usando validacao local.', error);
     }
 
@@ -62,7 +67,7 @@ export function Login({ onLoginSuccess }) {
     }
 
     setIsSubmitting(false);
-    alert('Credenciais incorretas.');
+    alert(retryableLoginMessage || 'Credenciais incorretas.');
   }
 
   return (
