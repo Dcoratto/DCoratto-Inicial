@@ -994,7 +994,7 @@ async function loadFilteredCatalogFromServer() {
   if (catalogFilters.line) params.set('line', catalogFilters.line);
   if (catalogFilters.quality) params.set('quality', catalogFilters.quality);
   if (catalogFilters.search) params.set('search', catalogFilters.search);
-  params.set('limit', '250');
+  params.set('limit', '120');
   const response = await fetch(`/api/catalog-materials?${params.toString()}`, { cache: 'no-store' });
   const result = await readApiPayload(response);
   if (!response.ok) throw new Error(result?.message || result?.error || 'Nao foi possivel filtrar catalogo no servidor.');

@@ -55,7 +55,7 @@ export async function uploadEnvironmentPhoto({ projectId, environmentId, file, p
         convertedToWebp: Boolean(optimized?.converted),
       },
     })
-    .select('*')
+    .select('id, project_id, environment_id, position, title, caption, image_url, storage_bucket, storage_path, width, height, mime_type, file_size')
     .single();
 
   if (error) throw error;
@@ -114,7 +114,7 @@ export async function saveHtmlVersion({ projectId, html, title = 'Portfolio HTML
         publicUrl: publicUrl.publicUrl,
       },
     })
-    .select('*')
+    .select('id, project_id, version_number, title, storage_bucket, storage_path, is_current, data, created_at')
     .single();
 
   if (error) throw error;
@@ -180,7 +180,7 @@ export async function loadProjectDocumentPayload(projectId) {
 
   const { data, error } = await supabase
     .from('project_document_payload')
-    .select('*')
+    .select('id, title, client_name, contract_number, address, status, is_draft, draft_saved_at, updated_at, data')
     .eq('id', projectId)
     .single();
 

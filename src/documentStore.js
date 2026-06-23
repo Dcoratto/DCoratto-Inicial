@@ -47,7 +47,7 @@ export async function loadProject(projectId, fallbackDocument) {
 
   const { data: project, error: projectError } = await supabase
     .from('document_projects')
-    .select('*')
+    .select('id, client_name, contract_number, factory, address, project_code, data, updated_at')
     .eq('id', projectId)
     .single();
 
@@ -58,7 +58,7 @@ export async function loadProject(projectId, fallbackDocument) {
 
   const { data: environments, error: environmentsError } = await supabase
     .from('document_environments')
-    .select('*')
+    .select('id, name, subtitle, image_data, image_url, colors, tamponamentos, portas, puxadores, notes, free_note, position')
     .eq('project_id', projectId)
     .order('position');
 

@@ -51,6 +51,16 @@ let lastKnownEditorSettings = null;
 let seedCatalogFallback = null;
 const lastKnownProjectLists = new Map();
 const lastKnownClientHistory = new Map();
+const serverQueryCache = new Map();
+const cacheTtl = {
+  appUsers: 5 * 60 * 1000,
+  editorSettings: 5 * 60 * 1000,
+  catalog: 5 * 60 * 1000,
+  projects: 45 * 1000,
+  clientHistory: 60 * 1000,
+  latestProjectMeta: 20 * 1000,
+  clientHtml: 10 * 60 * 1000,
+};
 let supabaseUnavailableUntil = 0;
 const supabaseServer = supabaseUrl && supabaseServiceKey
   ? createClient(supabaseUrl, supabaseServiceKey, {
@@ -120,6 +130,45 @@ async function withSupabaseOperationTimeout(operation) {
     throw error;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+function getCacheEntry(key) {
+  const entry = serverQueryCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    serverQueryCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setCacheEntry(key, value, ttlMs) {
+  if (!key || !ttlMs) return value;
+  serverQueryCache.set(key, {
+    value,
+    expiresAt: Date.now() + ttlMs,
+  });
+  return value;
+}
+
+async function cachedQuery(key, ttlMs, loader) {
+  const cached = getCacheEntry(key);
+  if (cached !== null) return { value: cached, cacheHit: true };
+  const value = await loader();
+  setCacheEntry(key, value, ttlMs);
+  return { value, cacheHit: false };
+}
+
+function clearCacheByPrefix(...prefixes) {
+  if (!prefixes.length) {
+    serverQueryCache.clear();
+    return;
+  }
+  for (const key of [...serverQueryCache.keys()]) {
+    if (prefixes.some(prefix => key.startsWith(prefix))) {
+      serverQueryCache.delete(key);
+    }
   }
 }
 
@@ -396,18 +445,21 @@ async function handleAppUsersGet(url, response) {
       return;
     }
 
-    const { data, error } = await withSupabaseOperationTimeout(() => supabaseServer
-      .from('app_users')
-      .select('email, display_name, role, active, created_at, updated_at')
-      .eq('active', true)
-      .order('display_name', { ascending: true })
-      .order('email', { ascending: true }));
-    if (error) throw error;
+    const { value: data, cacheHit } = await cachedQuery('app-users:active', cacheTtl.appUsers, async () => {
+      const { data, error } = await withSupabaseOperationTimeout(() => supabaseServer
+        .from('app_users')
+        .select('email, display_name, role, active, created_at, updated_at')
+        .eq('active', true)
+        .order('display_name', { ascending: true })
+        .order('email', { ascending: true }));
+      if (error) throw error;
+      return data || [];
+    });
     cacheRuntimeUserMetadata(data || []);
 
     sendJson(response, 200, {
       ok: true,
-      source: 'supabase',
+      source: cacheHit ? 'server-cache' : 'supabase',
       users: mergePublicAppUsers(data || [], runtimeLoginUsers),
     });
   } catch (error) {
@@ -472,6 +524,7 @@ async function handleAppUsersUpsert(request, response) {
       user_password: password,
     }));
     if (error) throw error;
+    clearCacheByPrefix('app-users:');
     sendJson(response, 200, { ok: true, source: 'supabase', user: publicAppUser(data?.user || data) });
   } catch (error) {
     const normalized = normalizeExternalServiceError(error);
@@ -528,6 +581,7 @@ async function handleAppUsersDelete(url, response) {
       .update({ active: false })
       .eq('email', email));
     if (error) throw error;
+    clearCacheByPrefix('app-users:');
     sendJson(response, 200, { ok: true, source: 'supabase', email });
   } catch (error) {
     const normalized = normalizeExternalServiceError(error);
@@ -617,6 +671,14 @@ async function handleClientLinkRequest(request, response) {
     const storageResult = dbResult.deduped
       ? { publicUrl: dbResult.storagePublicUrl || '', warning: '' }
       : await uploadHtmlSnapshotToStorage(finalStoragePath, html);
+    clearCacheByPrefix(
+      'projects:',
+      'client-history:',
+      'project-summaries:',
+      'latest-project-meta:',
+      `project-snapshot:${projectId}`,
+      `client-html:${projectId}:`
+    );
 
     sendJson(response, 200, {
       ok: true,
@@ -675,6 +737,13 @@ async function handleEditorEventRequest(request, response) {
       eventId: body.eventId,
       createdAt: body.createdAt,
     }));
+    clearCacheByPrefix(
+      'projects:',
+      'client-history:',
+      'project-summaries:',
+      'latest-project-meta:',
+      `project-snapshot:${projectId}`
+    );
 
     sendJson(response, 200, {
       ok: true,
@@ -705,39 +774,21 @@ async function handleLatestEditorStateRequest(url, response) {
 
     let project = null;
     if (requestedProjectId) {
-      const { data, error } = await withSupabaseOperationTimeout(() => supabaseServer
-        .from('document_projects')
-        .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_at, deleted_for_users')
-        .eq('id', requestedProjectId)
-        .maybeSingle());
-      if (error) throw error;
-      project = data || null;
+      project = await loadProjectSnapshotForRead(requestedProjectId);
       if (project && !canAccessPrivateProject(project, actorEmail)) {
         sendJson(response, 403, { error: 'forbidden_project_access' });
         return;
       }
     } else {
-      let query = supabaseServer
-        .from('document_projects')
-        .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_at, deleted_for_users')
-        .eq('document_type', 'projeto_inicial')
-        .neq('status', 'sold')
-        .is('deleted_at', null)
-        .order('updated_at', { ascending: false })
-        .limit(24);
-      if (!isAdminEmail(actorEmail)) {
-        query = query.or(privateProjectAccessOr(actorEmail));
-      }
-      const { data: projects, error: projectError } = await withSupabaseOperationTimeout(() => query);
-      if (projectError) throw projectError;
-      project = (projects || [])
-        .filter(item => !isDeletedForUser(item, actorEmail))
-        .find(item => hasPersistableContent(item?.data?.draft, item?.data?.preview)) || null;
+      project = await loadLatestProjectSnapshotForActor(actorEmail);
     }
 
     let settings = null;
     try {
-      settings = await withSupabaseOperationTimeout(() => loadSharedEditorSettings());
+      const settingsResult = await cachedQuery('editor-settings:default', cacheTtl.editorSettings, () => (
+        withSupabaseOperationTimeout(() => loadSharedEditorSettings())
+      ));
+      settings = settingsResult.value;
     } catch (settingsError) {
       console.warn('Nao foi possivel carregar configuracoes remotas.', settingsError);
     }
@@ -806,6 +857,13 @@ async function handleProjectStatusRequest(request, response) {
       })
       .eq('id', projectId);
     if (error) throw error;
+    clearCacheByPrefix(
+      'projects:',
+      'client-history:',
+      'project-summaries:',
+      'latest-project-meta:',
+      `project-snapshot:${projectId}`
+    );
     sendJson(response, 200, { ok: true, projectId, status });
   } catch (error) {
     sendErrorJson(response, error, {
@@ -840,6 +898,13 @@ async function handleProjectRestoreRequest(request, response) {
     }
 
     const restored = await restoreBestProjectSnapshot({ projectId, actor: body.actor || null });
+    clearCacheByPrefix(
+      'projects:',
+      'client-history:',
+      'project-summaries:',
+      'latest-project-meta:',
+      `project-snapshot:${projectId}`
+    );
     sendJson(response, 200, {
       ok: true,
       source: restored.source,
@@ -865,11 +930,13 @@ async function handleEditorSettingsGet(response) {
       return;
     }
 
-    const settings = await withSupabaseOperationTimeout(() => loadSharedEditorSettings());
+    const { value: settings, cacheHit } = await cachedQuery('editor-settings:default', cacheTtl.editorSettings, () => (
+      withSupabaseOperationTimeout(() => loadSharedEditorSettings())
+    ));
     lastKnownEditorSettings = settings;
     sendJson(response, 200, {
       ok: true,
-      source: 'server-supabase',
+      source: cacheHit ? 'server-cache' : 'server-supabase',
       settings,
     });
   } catch (error) {
@@ -892,10 +959,21 @@ async function handleCatalogMaterialsGet(url, response) {
     }
 
     const filters = filtersFromCatalogUrl(url);
+    const cacheKey = `catalog:${JSON.stringify(filters)}`;
+    const cached = getCacheEntry(cacheKey);
+    if (cached) {
+      sendJson(response, 200, {
+        ok: true,
+        source: 'server-cache',
+        filters,
+        items: cached,
+      });
+      return;
+    }
 
     let query = supabaseServer
       .from('catalog_materials')
-      .select('id,catalog_key,group_key,name,code,manufacturer,line_name,quality,material_type,category,hex,texture_url,image_url,storage_bucket,storage_path,public_url,mime_type,width,height,active,sort_order,created_by,updated_by,created_at,updated_at,data')
+      .select('id,catalog_key,group_key,name,code,manufacturer,line_name,quality,material_type,category,hex,texture_url,image_url,storage_bucket,storage_path,public_url,mime_type,width,height,active,sort_order,created_by,updated_by,created_at,updated_at')
       .eq('active', true)
       .is('deleted_at', null)
       .order('sort_order', { ascending: true })
@@ -915,17 +993,15 @@ async function handleCatalogMaterialsGet(url, response) {
     if (error) throw error;
     const tableItems = (data || []).map(catalogMaterialToSettingsItem).filter(Boolean);
     let items = tableItems;
-    try {
-      const settings = await withSupabaseOperationTimeout(() => loadSharedEditorSettings());
-      const payloadItems = (settings.catalogItems || []).filter(item => catalogItemMatchesFiltersPayload(item, filters));
+    if (lastKnownEditorSettings?.catalogItems?.length) {
+      const payloadItems = (lastKnownEditorSettings.catalogItems || []).filter(item => catalogItemMatchesFiltersPayload(item, filters));
       items = mergeCatalogItemsPayload(tableItems, payloadItems).slice(0, filters.limit);
-    } catch (settingsError) {
-      console.warn('Catalogo filtrado carregado sem merge do payload de configuracoes.', settingsError);
     }
     lastKnownEditorSettings = {
       ...(lastKnownEditorSettings || {}),
       catalogItems: mergeCatalogItemsPayload(lastKnownEditorSettings?.catalogItems || [], items),
     };
+    setCacheEntry(cacheKey, items, cacheTtl.catalog);
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
@@ -950,7 +1026,7 @@ function filtersFromCatalogUrl(url) {
     line: String(url.searchParams.get('line') || '').trim(),
     quality: String(url.searchParams.get('quality') || '').trim(),
     search: String(url.searchParams.get('search') || '').trim(),
-    limit: Math.min(500, Math.max(25, Number(url.searchParams.get('limit') || 250))),
+    limit: Math.min(150, Math.max(25, Number(url.searchParams.get('limit') || 120))),
   };
 }
 
@@ -1192,6 +1268,7 @@ async function handleEditorSettingsPost(request, response) {
     body = await readJsonBody(request);
     const settings = await saveSharedEditorSettings(body.settings || {}, body.actor || null, body.settingsMutation || null);
     lastKnownEditorSettings = settings;
+    clearCacheByPrefix('editor-settings:', 'catalog:');
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
@@ -1219,9 +1296,19 @@ async function handleClientHistoryRequest(url, response) {
     }
 
     const includeDeleted = url.searchParams.get('includeDeleted') === 'true' && isAdminEmail(actorEmail);
+    const includeDeletedKey = includeDeleted ? 'with-deleted' : 'visible';
+    const cached = getCacheEntry(`client-history:${cacheKey}:${includeDeletedKey}`);
+    if (cached) {
+      sendJson(response, 200, {
+        ok: true,
+        source: 'server-cache',
+        history: cached,
+      });
+      return;
+    }
     let query = supabaseServer
       .from('document_html_versions')
-      .select('id, title, share_slug, project_id, created_at, created_by, assigned_to_email, data, is_current, replacement_public_url')
+      .select('id, title, share_slug, project_id, created_at, created_by, assigned_to_email, is_current, replacement_public_url')
       .eq('shared_with_client', true)
       .order('created_at', { ascending: false })
       .limit(50);
@@ -1233,26 +1320,29 @@ async function handleClientHistoryRequest(url, response) {
     
     if (error) throw error;
 
+    const projectSummaries = await loadProjectSummariesForHistory(versions || []);
     const history = (versions || []).map((v) => {
-      const designerEmail = normalizeEmail(v.created_by || v.data?.createdBy || v.data?.actor?.email);
+      const projectSummary = projectSummaries.get(v.project_id) || {};
+      const designerEmail = normalizeEmail(v.created_by || projectSummary.last_editor_email || projectSummary.created_by || projectSummary.assigned_to_email);
       return {
         id: v.id,
         title: v.title,
-        clientName: v.data?.client?.name || 'Cliente',
-        contractNumber: v.data?.client?.contractNumber || '',
-        address: v.data?.client?.address || '',
+        clientName: projectSummary.client_name || clientNameFromHtmlTitle(v.title) || 'Cliente',
+        contractNumber: projectSummary.contract_number || '',
+        address: projectSummary.address || '',
         designerEmail,
         designerName: designerNameFromEmail(designerEmail),
         shareSlug: v.share_slug,
         projectId: v.project_id,
         createdAt: v.created_at,
-        publicUrl: v.data?.publicUrl || '',
+        publicUrl: clientLinkPath(v),
         isCurrent: v.is_current !== false,
         replacementPublicUrl: v.replacement_public_url || '',
       };
     });
 
     lastKnownClientHistory.set(cacheKey, history);
+    setCacheEntry(`client-history:${cacheKey}:${includeDeletedKey}`, history, cacheTtl.clientHistory);
     sendJson(response, 200, {
       ok: true,
       source: 'server-supabase',
@@ -1285,6 +1375,12 @@ async function handleProjectsRequest(url, response) {
   try {
     if (!supabaseServer) {
       sendProjectsFallback(response, cacheKey, 'Supabase indisponivel para carregar projetos. Usando cache local quando disponivel.');
+      return;
+    }
+
+    const cached = getCacheEntry(`projects:${cacheKey}`);
+    if (cached) {
+      sendJson(response, 200, { ok: true, source: 'server-cache', projects: cached });
       return;
     }
 
@@ -1330,6 +1426,7 @@ async function handleProjectsRequest(url, response) {
       }));
 
     lastKnownProjectLists.set(cacheKey, projects);
+    setCacheEntry(`projects:${cacheKey}`, projects, cacheTtl.projects);
     sendJson(response, 200, { ok: true, source: 'server-supabase', projects });
   } catch (error) {
     const normalized = normalizeExternalServiceError(error);
@@ -1374,6 +1471,33 @@ function sendProjectsFallback(response, cacheKey, message) {
     message,
     projects,
   });
+}
+
+async function loadProjectSummariesForHistory(versions = []) {
+  const projectIds = [...new Set((versions || []).map(version => safeId(version.project_id)).filter(Boolean))];
+  if (!projectIds.length) return new Map();
+  const cacheKey = `project-summaries:${projectIds.slice().sort().join(',')}`;
+  const { value: rows } = await cachedQuery(cacheKey, cacheTtl.clientHistory, async () => {
+    const { data, error } = await withSupabaseOperationTimeout(() => supabaseServer
+      .from('document_projects')
+      .select('id, client_name, contract_number, address, created_by, assigned_to_email, last_editor_email, last_editor_name')
+      .in('id', projectIds)
+      .limit(projectIds.length));
+    if (error) throw error;
+    return data || [];
+  });
+  return new Map((rows || []).map(row => [row.id, row]));
+}
+
+function clientLinkPath(version = {}) {
+  const projectId = safeId(version.project_id);
+  const slug = String(version.share_slug || '').trim();
+  if (!projectId || !slug) return '';
+  return `/cliente/${encodeURIComponent(projectId)}/${encodeURIComponent(slug)}`;
+}
+
+function clientNameFromHtmlTitle(title = '') {
+  return String(title || '').replace(/^Projeto Inicial\s*-\s*/i, '').trim();
 }
 
 async function handleClientHtmlRequest(url, response) {
@@ -1500,9 +1624,6 @@ async function loadClientHtml({ projectId, shareSlug }) {
     const storagePath = `${projectId}/cliente/${shareSlug}.html`;
     const byStoragePath = await findHtmlVersionByStoragePath(storagePath);
     if (byStoragePath) return byStoragePath;
-
-    const downloaded = await downloadHtmlFromStorage(storagePath);
-    if (downloaded) return downloaded;
   }
 
   const byShareSlug = await findHtmlVersionByShareSlug(shareSlug);
@@ -1517,18 +1638,18 @@ async function loadClientHtml({ projectId, shareSlug }) {
 async function findHtmlVersionByStoragePath(storagePath) {
   const { data, error } = await supabaseServer
     .from('document_html_versions')
-    .select('id, project_id, html_content, is_current, replacement_public_url, data')
+    .select('id, project_id, storage_path, share_slug, is_current, replacement_public_url')
     .eq('storage_path', storagePath)
     .eq('shared_with_client', true)
     .maybeSingle();
   if (error) throw error;
-  return resolveHtmlVersion(data);
+  return resolveHtmlVersion(data, storagePath);
 }
 
 async function findHtmlVersionByShareSlug(shareSlug) {
   const { data, error } = await supabaseServer
     .from('document_html_versions')
-    .select('id, project_id, html_content, is_current, replacement_public_url, data')
+    .select('id, project_id, storage_path, share_slug, is_current, replacement_public_url')
     .eq('share_slug', shareSlug)
     .eq('shared_with_client', true)
     .maybeSingle();
@@ -1539,7 +1660,7 @@ async function findHtmlVersionByShareSlug(shareSlug) {
 async function findHtmlVersionByDataShareSlug(shareSlug) {
   const { data, error } = await supabaseServer
     .from('document_html_versions')
-    .select('id, project_id, html_content, is_current, replacement_public_url, data')
+    .select('id, project_id, storage_path, share_slug, is_current, replacement_public_url')
     .filter('data->>shareSlug', 'eq', shareSlug)
     .eq('shared_with_client', true)
     .order('created_at', { ascending: false })
@@ -1554,11 +1675,15 @@ async function findHtmlVersionByDataShareSlug(shareSlug) {
   return resolveHtmlVersion(data?.[0] || null);
 }
 
-async function resolveHtmlVersion(version) {
+async function resolveHtmlVersion(version, preferredStoragePath = '') {
   if (!version) return '';
-  if (version.is_current !== false) return version.html_content || '';
+  if (version.is_current !== false) {
+    const storagePath = version.storage_path || preferredStoragePath;
+    const storedHtml = storagePath ? await downloadHtmlFromStorageCached(version.project_id, storagePath) : '';
+    if (storedHtml) return storedHtml;
+    return findHtmlContentById(version.id);
+  }
   const replacementUrl = version.replacement_public_url
-    || version.data?.replacementPublicUrl
     || await currentProjectPublicUrl(version.project_id);
   return obsoleteClientLinkHtml(replacementUrl);
 }
@@ -1567,14 +1692,26 @@ async function currentProjectPublicUrl(projectId) {
   if (!projectId) return '';
   const { data, error } = await supabaseServer
     .from('document_html_versions')
-    .select('data, replacement_public_url')
+    .select('project_id, share_slug, replacement_public_url')
     .eq('project_id', projectId)
     .eq('is_current', true)
     .eq('shared_with_client', true)
     .order('created_at', { ascending: false })
     .limit(1);
   if (error) return '';
-  return data?.[0]?.data?.publicUrl || data?.[0]?.replacement_public_url || '';
+  const current = data?.[0] || null;
+  return current?.replacement_public_url || clientLinkPath(current);
+}
+
+async function findHtmlContentById(versionId) {
+  if (!safeId(versionId)) return '';
+  const { data, error } = await supabaseServer
+    .from('document_html_versions')
+    .select('html_content')
+    .eq('id', versionId)
+    .maybeSingle();
+  if (error) return '';
+  return data?.html_content || '';
 }
 
 function obsoleteClientLinkHtml(replacementUrl = '') {
@@ -1609,6 +1746,15 @@ async function downloadHtmlFromStorage(storagePath) {
     .download(storagePath);
   if (error) return '';
   return data?.text ? data.text() : '';
+}
+
+async function downloadHtmlFromStorageCached(projectId, storagePath) {
+  const cacheKey = `client-html:${safeId(projectId) || 'unknown'}:${storagePath}`;
+  const cached = getCacheEntry(cacheKey);
+  if (cached) return cached;
+  const html = await downloadHtmlFromStorage(storagePath);
+  if (html) setCacheEntry(cacheKey, html, cacheTtl.clientHtml);
+  return html;
 }
 
 async function readJsonBody(request) {
@@ -1762,6 +1908,49 @@ async function loadProjectForWrite(projectId) {
     .maybeSingle();
   if (error) throw error;
   return data || null;
+}
+
+async function loadProjectSnapshotForRead(projectId) {
+  const safeProjectId = safeId(projectId);
+  if (!safeProjectId) return null;
+  const { value } = await cachedQuery(`project-snapshot:${safeProjectId}`, cacheTtl.latestProjectMeta, async () => {
+    const { data, error } = await withSupabaseOperationTimeout(() => supabaseServer
+      .from('document_projects')
+      .select('id, data, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_at, deleted_for_users')
+      .eq('id', safeProjectId)
+      .maybeSingle());
+    if (error) throw error;
+    return data || null;
+  });
+  return value;
+}
+
+async function loadLatestProjectSnapshotForActor(actorEmail) {
+  const cacheKey = `latest-project-meta:${normalizeEmail(actorEmail) || 'admin'}`;
+  const { value: projects } = await cachedQuery(cacheKey, cacheTtl.latestProjectMeta, async () => {
+    let query = supabaseServer
+      .from('document_projects')
+      .select('id, updated_at, status, owner_email, created_by, assigned_to_email, draft_owner_email, deleted_at, deleted_for_users')
+      .eq('document_type', 'projeto_inicial')
+      .neq('status', 'sold')
+      .is('deleted_at', null)
+      .order('updated_at', { ascending: false })
+      .limit(24);
+    if (!isAdminEmail(actorEmail)) {
+      query = query.or(privateProjectAccessOr(actorEmail));
+    }
+    const { data, error } = await withSupabaseOperationTimeout(() => query);
+    if (error) throw error;
+    return (data || []).filter(item => !isDeletedForUser(item, actorEmail));
+  });
+
+  for (const item of (projects || []).slice(0, 5)) {
+    const snapshot = await loadProjectSnapshotForRead(item.id);
+    if (hasPersistableContent(snapshot?.data?.draft, snapshot?.data?.preview)) {
+      return snapshot;
+    }
+  }
+  return null;
 }
 
 async function hasAuditEvent(eventId) {
@@ -1987,7 +2176,7 @@ async function findBestRestoreCandidate(projectId, currentProject) {
     .select('id, html_content, created_at')
     .eq('project_id', projectId)
     .order('created_at', { ascending: false })
-    .limit(50);
+    .limit(10);
   if (versionsError) throw versionsError;
   (versions || []).forEach((version) => {
     const preview = extractPreviewFromHtmlContent(version.html_content || '');
@@ -2266,15 +2455,31 @@ async function uploadDataUrlAsset({ dataUrl, folder, fileNameHint }) {
 }
 
 async function normalizeDataUrlAsset(parsed) {
-  if (parsed.mimeType === 'image/webp') return parsed;
-  const buffer = await sharp(parsed.buffer, { failOn: 'none' })
-    .rotate()
-    .webp({ quality: 82 })
-    .toBuffer();
-  return {
-    mimeType: 'image/webp',
-    buffer,
-  };
+  try {
+    const metadata = await sharp(parsed.buffer, { failOn: 'none' }).metadata();
+    const maxDimension = Math.max(Number(metadata.width || 0), Number(metadata.height || 0));
+    const alreadyEfficientWebp = parsed.mimeType === 'image/webp'
+      && maxDimension <= 1920
+      && parsed.buffer.length <= 1_200_000;
+    if (alreadyEfficientWebp) return parsed;
+    const buffer = await sharp(parsed.buffer, { failOn: 'none' })
+      .rotate()
+      .resize({
+        width: 1920,
+        height: 1920,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .webp({ quality: 80 })
+      .toBuffer();
+    return {
+      mimeType: 'image/webp',
+      buffer,
+    };
+  } catch (error) {
+    if (parsed.mimeType === 'image/webp') return parsed;
+    throw error;
+  }
 }
 
 function parseDataUrl(dataUrl) {
@@ -2622,7 +2827,7 @@ async function loadSettingsFromSharedCatalogTables() {
   const [materialsResult, optionsResult] = await Promise.all([
     supabaseServer
       .from('catalog_materials')
-      .select('id,catalog_key,group_key,name,code,manufacturer,line_name,quality,material_type,category,hex,texture_url,image_url,storage_bucket,storage_path,public_url,mime_type,width,height,active,sort_order,created_by,updated_by,created_at,updated_at,data')
+      .select('id,catalog_key,group_key,name,code,manufacturer,line_name,quality,material_type,category,hex,texture_url,image_url,storage_bucket,storage_path,public_url,mime_type,width,height,active,sort_order,created_by,updated_by,created_at,updated_at')
       .eq('active', true)
       .is('deleted_at', null)
       .order('sort_order', { ascending: true })
@@ -3075,7 +3280,7 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
   if (eventId) {
     const { data: existingVersion, error: existingError } = await supabaseServer
       .from('document_html_versions')
-      .select('id, project_id, storage_path, data')
+      .select('id, project_id, storage_path, share_slug')
       .filter('data->>eventId', 'eq', eventId)
       .eq('shared_with_client', true)
       .maybeSingle();
@@ -3083,10 +3288,10 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
     if (existingVersion?.id) {
       return {
         versionId: existingVersion.id,
-        publicUrl: existingVersion.data?.publicUrl || publicUrl,
+        publicUrl: clientLinkPath(existingVersion) || publicUrl,
         storagePath: existingVersion.storage_path || storagePath,
-        storagePublicUrl: existingVersion.data?.storagePublicUrl || '',
-        shareSlug: existingVersion.data?.shareSlug || '',
+        storagePublicUrl: '',
+        shareSlug: existingVersion.share_slug || '',
         deduped: true,
       };
     }
