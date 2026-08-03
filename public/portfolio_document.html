@@ -1542,6 +1542,17 @@
         min-height: 604px;
       }
 
+      .photo-mural.layout-single {
+        place-items: start center;
+      }
+
+      .photo-mural.layout-single .photo-card {
+        grid-column: 1 / -1 !important;
+        grid-row: 1 / -1 !important;
+        align-self: start;
+        justify-self: center;
+      }
+
       .tile-full { grid-column: span 12; grid-row: span 4; }
       .tile-half { grid-column: span 6; grid-row: span 4; }
       .tile-third { grid-column: span 4; grid-row: span 3; }
@@ -3248,10 +3259,33 @@
 
       function refreshDocumentPageLayout() {
         fitCanonicalPageText();
+        fitSingleCoverPhotos();
         updateDocumentPageScale();
         updatePageAnnotationGeometry();
         validatePdfLayout({ mark: true });
       }
+
+      function fitSingleCoverPhotos() {
+        document.querySelectorAll('.document-page .photo-mural.layout-single').forEach((mural) => {
+          const card = mural.querySelector('.photo-card');
+          const image = card?.querySelector('img');
+          if (!card || !image) return;
+          const nativeWidth = Number(image.dataset.nativeWidth || image.naturalWidth || 0);
+          const nativeHeight = Number(image.dataset.nativeHeight || image.naturalHeight || 0);
+          if (!nativeWidth || !nativeHeight) {
+            if (!image.complete) image.addEventListener('load', scheduleDocumentPageRefresh, { once: true });
+            return;
+          }
+          const maxWidth = Math.max(1, mural.clientWidth || mural.getBoundingClientRect().width);
+          const maxHeight = Math.max(1, mural.clientHeight || mural.getBoundingClientRect().height);
+          const scale = Math.min(maxWidth / nativeWidth, maxHeight / nativeHeight);
+          card.style.setProperty('width', `${Math.max(1, Math.round(nativeWidth * scale))}px`, 'important');
+          card.style.setProperty('height', `${Math.max(1, Math.round(nativeHeight * scale))}px`, 'important');
+          card.style.setProperty('min-height', '0', 'important');
+        });
+      }
+
+      window.__DCORATTO_FIT_COVER_PHOTOS__ = fitSingleCoverPhotos;
 
       function updateDocumentPageScale() {
         const availableWidth = Math.max(1, document.documentElement.clientWidth || window.innerWidth || CANONICAL_PAGE.width);
@@ -6123,7 +6157,7 @@
               <div class="photo-mural layout-${escapeAttribute(layout)}">
                 ${photos.map((photo, photoIndex) => `
                   <button class="photo-card ${tileClass(photoIndex, photos.length, layout)}" type="button" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" data-lightbox-src="${escapeAttribute(photo.src)}" data-lightbox-title="${escapeAttribute(photo.label)}">
-                    <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.label || environment.title || 'Foto')}" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" />
+                    <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.label || environment.title || 'Foto')}" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" data-native-width="${Number(photo.width || 0)}" data-native-height="${Number(photo.height || 0)}" />
                     ${photo.label ? `<span class="photo-label">${escapeHTML(photo.label)}</span>` : ''}
                   </button>
                 `).join('')}
@@ -6835,6 +6869,8 @@
           title: photo.label || '',
           src: photo.publicUrl || photo.src || fallbackImage,
           thumbSrc: photo.thumbPublicUrl || photo.thumbSrc || photo.publicUrl || photo.src || fallbackImage,
+          width: Number(photo.width || photo.asset?.width || photo.srcAsset?.width || 0),
+          height: Number(photo.height || photo.asset?.height || photo.srcAsset?.height || 0),
         }));
       }
 

@@ -595,6 +595,8 @@ let editingCatalogItemId = null;
 let editingFactoryName = '';
 let pdfGenerationPending = false;
 let pdfGenerationTimeoutTimer = null;
+let clientLinkGenerationPending = false;
+let clientLinkGenerationTimeoutTimer = null;
 let pdfPreparedFallbackWindow = null;
 let editingMaterialOption = null;
 let editorActor = { email: '', name: '', role: 'team', primaryAccountEmail: 'dcorattoinovacao@gmail.com', isPrimary: false };
@@ -642,6 +644,10 @@ function normalizeFactories(factories = [], catalogItems = []) {
 function normalizeEditorSettings(settings = {}) {
   return {
     logo: settings.logo || DEFAULT_LOGO,
+    logoThumb: settings.logoThumb || settings.logo || DEFAULT_LOGO,
+    logoAssetId: settings.logoAssetId || '',
+    logoAsset: settings.logoAsset || null,
+    logoThumbAsset: settings.logoThumbAsset || null,
     catalogItems: preferAdminCatalogItems((settings.catalogItems || []).map(normalizeCatalogItem).filter(item => item?.name)),
     factories: normalizeFactories(settings.factories, settings.catalogItems),
     materialOptions: normalizeMaterialOptions(settings.materialOptions),
@@ -1317,6 +1323,7 @@ async function handleLogoUpload(input) {
   editorSettings.logoAssetId = image.assetId;
   editorSettings.logoAsset = image.asset;
   editorSettings.logoThumb = image.thumbSrc;
+  editorSettings.logoThumbAsset = image.thumbAsset;
   saveEditorSettings();
   applyEditorSettings();
   syncPreviewDocument();
@@ -2220,6 +2227,8 @@ function normalizeCoverPhoto(photo = {}) {
     ...photo,
     src: photo.publicUrl || photo.src || DEFAULT_AMBIENTE_IMG,
     thumbSrc: photo.thumbPublicUrl || photo.thumbSrc || photo.publicUrl || photo.src || DEFAULT_AMBIENTE_IMG,
+    width: Number(photo.width || photo.asset?.width || 0),
+    height: Number(photo.height || photo.asset?.height || 0),
     label: photo.label || '',
   };
 }
@@ -2883,6 +2892,8 @@ function buildPreviewDocumentData() {
           thumbPublicUrl: photo.thumbPublicUrl || '',
           storagePath: photo.storagePath || '',
           thumbStoragePath: photo.thumbStoragePath || '',
+          width: Number(photo.width || photo.asset?.width || 0),
+          height: Number(photo.height || photo.asset?.height || 0),
         }));
       const layout = normalizeCoverLayout(amb.layout, coverPhotos.length);
       return {
@@ -2909,6 +2920,10 @@ function buildPreviewDocumentData() {
     year: new Date().getFullYear(),
     branding: {
       logo: editorSettings.logo || DEFAULT_LOGO,
+      logoThumb: editorSettings.logoThumb || editorSettings.logo || DEFAULT_LOGO,
+      logoAssetId: editorSettings.logoAssetId || '',
+      logoAsset: editorSettings.logoAsset || null,
+      logoThumbAsset: editorSettings.logoThumbAsset || null,
       companyName: "D'Coratto Sob Medida",
     },
     client: {
@@ -3345,6 +3360,86 @@ function renderEnvironmentPages(amb) {
   `;
 }
 
+function applyAssetPromotions(promotions = []) {
+  if (!Array.isArray(promotions) || !promotions.length) return;
+  let changed = false;
+  const roots = [AMBIENTES, editorSettings];
+  promotions.forEach((promotion) => {
+    roots.forEach(root => {
+      if (applyAssetPromotionRecursively(root, promotion)) changed = true;
+    });
+  });
+  if (!changed) return;
+  safeSetLocalStorage(CONFIG_STORAGE_KEY, JSON.stringify(editorSettings));
+  const draft = saveBuilderDraft();
+  const preview = buildPreviewDocumentData();
+  safeSetLocalStorage(PORTFOLIO_STORAGE_KEY, JSON.stringify(preview));
+  builderDraft = draft;
+  renderAmbientes();
+  applyEditorSettings();
+}
+
+function applyAssetPromotionRecursively(value, promotion) {
+  if (!value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) {
+    return value.reduce((changed, item) => applyAssetPromotionRecursively(item, promotion) || changed, false);
+  }
+  let changed = applyAssetPromotionToObject(value, promotion);
+  Object.entries(value).forEach(([key, child]) => {
+    if (/asset$/i.test(key)) return;
+    if (child && typeof child === 'object' && applyAssetPromotionRecursively(child, promotion)) changed = true;
+  });
+  return changed;
+}
+
+function applyAssetPromotionToObject(target, promotion = {}) {
+  const localAssetId = String(promotion.localAssetId || '');
+  const publicUrl = String(promotion.publicUrl || '');
+  if (!localAssetId || !publicUrl) return false;
+  const isThumbnail = promotion.variant === 'thumbnail';
+  const matchingIds = isThumbnail
+    ? [target.thumbAsset?.assetId, target.thumbAsset?.localAssetId, target.logoThumbAsset?.assetId, target.logoThumbAsset?.localAssetId]
+    : [target.assetId, target.logoAssetId, target.asset?.assetId, target.asset?.localAssetId, target.photoAsset?.assetId, target.photoAsset?.localAssetId, target.logoAsset?.assetId, target.logoAsset?.localAssetId];
+  if (!matchingIds.filter(Boolean).map(String).includes(localAssetId)) return false;
+
+  const assetPatch = {
+    assetId: localAssetId,
+    localAssetId,
+    publicUrl,
+    storageBucket: promotion.storageBucket || '',
+    storagePath: promotion.storagePath || '',
+    mimeType: promotion.mimeType || 'image/webp',
+    width: Number(promotion.width || 0),
+    height: Number(promotion.height || 0),
+    size: Number(promotion.size || 0),
+    syncStatus: 'synced',
+  };
+
+  if (isThumbnail) {
+    if ('thumbSrc' in target) target.thumbSrc = publicUrl;
+    if ('logoThumb' in target || target.logoThumbAsset) target.logoThumb = publicUrl;
+    target.thumbPublicUrl = publicUrl;
+    target.thumbStoragePath = promotion.storagePath || '';
+    if (target.logoThumbAsset) target.logoThumbAsset = { ...target.logoThumbAsset, ...assetPatch };
+    else target.thumbAsset = { ...(target.thumbAsset || {}), ...assetPatch };
+    return true;
+  }
+
+  if ('src' in target) target.src = publicUrl;
+  if ('photo' in target) target.photo = publicUrl;
+  if ('logo' in target || target.logoAssetId) target.logo = publicUrl;
+  if ('textureUrl' in target) target.textureUrl = publicUrl;
+  if ('imageUrl' in target) target.imageUrl = publicUrl;
+  if ('imageData' in target) target.imageData = publicUrl;
+  target.publicUrl = publicUrl;
+  target.storageBucket = promotion.storageBucket || '';
+  target.storagePath = promotion.storagePath || '';
+  if (target.photoAsset) target.photoAsset = { ...target.photoAsset, ...assetPatch };
+  else if (target.logoAsset || target.logoAssetId) target.logoAsset = { ...(target.logoAsset || {}), ...assetPatch };
+  else target.asset = { ...(target.asset || {}), ...assetPatch };
+  return true;
+}
+
 window.addEventListener('message', event => {
   if (event.origin !== window.location.origin) return;
   if (event.data?.type === 'dcoratto:force-local-flush') {
@@ -3360,6 +3455,10 @@ window.addEventListener('message', event => {
     if (!event.data.ok) alert(`Não foi possível carregar o projeto: ${event.data.error || 'erro desconhecido'}`);
     return;
   }
+  if (event.data?.type === 'dcoratto:asset-promotions') {
+    applyAssetPromotions(event.data.promotions || []);
+    return;
+  }
   if (event.data?.type === 'dcoratto:editor-state' && String(event.data?.action || '').startsWith('portfolio_')) {
     mergePreviewDocument(event.data.preview);
     const draft = saveBuilderDraft();
@@ -3367,6 +3466,10 @@ window.addEventListener('message', event => {
     return;
   }
   if (event.data?.type === 'dcoratto:client-link') {
+    clientLinkGenerationPending = false;
+    window.clearTimeout(clientLinkGenerationTimeoutTimer);
+    clientLinkGenerationTimeoutTimer = null;
+    setClientLinkButtonsBusy(false);
     const status = document.getElementById('previewStatus');
     if (event.data.ok && event.data.publicUrl) {
       currentProjectId = event.data.projectId || currentProjectId;
@@ -4074,6 +4177,7 @@ function fileNamePart(value) {
 }
 
 function publishClientHtml() {
+  if (clientLinkGenerationPending) return;
   if (isProjectSold()) {
     openHtmlPreview();
     const status = document.getElementById('previewStatus');
@@ -4085,10 +4189,27 @@ function publishClientHtml() {
     linkBox.hidden = true;
     linkBox.innerHTML = '';
   }
+  clientLinkGenerationPending = true;
+  setClientLinkButtonsBusy(true);
+  window.clearTimeout(clientLinkGenerationTimeoutTimer);
+  clientLinkGenerationTimeoutTimer = window.setTimeout(() => {
+    clientLinkGenerationPending = false;
+    clientLinkGenerationTimeoutTimer = null;
+    setClientLinkButtonsBusy(false);
+  }, 45000);
   syncPreviewDocument('generate_project_initial');
   openHtmlPreview();
   const status = document.getElementById('previewStatus');
   if (status) status.textContent = 'Gerando link persistente do cliente. Aguarde a confirmação do banco.';
+}
+
+function setClientLinkButtonsBusy(isBusy) {
+  ['publishClientBtn', 'previewPublishClientBtn'].forEach(id => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    button.disabled = Boolean(isBusy);
+    button.textContent = isBusy ? 'Gerando link...' : 'Gerar link para cliente';
+  });
 }
 
 function closePreview() {

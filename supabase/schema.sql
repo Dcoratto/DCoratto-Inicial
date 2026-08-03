@@ -322,6 +322,10 @@ $$;
 create index if not exists document_environments_project_idx on public.document_environments(project_id, position);
 create index if not exists environment_pages_environment_idx on public.environment_pages(environment_id, position);
 create index if not exists environment_photos_environment_idx on public.environment_photos(environment_id, position);
+create index if not exists document_html_versions_client_event_idx
+  on public.document_html_versions ((data ->> 'eventId'))
+  where shared_with_client = true
+    and (data ->> 'eventId') is not null;
 create index if not exists environment_photos_project_idx on public.environment_photos(project_id, position);
 create index if not exists environment_colors_environment_idx on public.environment_colors(environment_id, position);
 create index if not exists environment_materials_environment_idx on public.environment_materials(environment_id, group_key, position);

@@ -117,6 +117,14 @@ function App() {
   useEffect(() => {
     if (!isLogged || !actor.email) return undefined;
 
+    const postAssetPromotions = (promotions) => {
+      if (!Array.isArray(promotions) || !promotions.length) return;
+      iframeRef.current?.contentWindow?.postMessage({
+        type: 'dcoratto:asset-promotions',
+        promotions,
+      }, window.location.origin);
+    };
+
     async function handleMessage(event) {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type === 'dcoratto:pending-asset') {
@@ -291,6 +299,7 @@ function App() {
 
       if (settings || settingsMutation) {
         persistEditorEvent(payload).then((result) => {
+          postAssetPromotions(result?.assetPromotions);
           if (result?.projectId) {
             iframeRef.current?.contentWindow?.postMessage({
               type: 'dcoratto:project-meta',
@@ -308,6 +317,7 @@ function App() {
         window.clearTimeout(autosaveTimerRef.current);
         pendingAutosaveRef.current = null;
         persistEditorEvent(payload).then((result) => {
+          postAssetPromotions(result?.assetPromotions);
           if (result?.projectId) {
             iframeRef.current?.contentWindow?.postMessage({
               type: 'dcoratto:project-meta',
@@ -340,6 +350,7 @@ function App() {
           const queuedPayload = pendingAutosaveRef.current;
           pendingAutosaveRef.current = null;
           persistEditorEvent(queuedPayload).then((result) => {
+            postAssetPromotions(result?.assetPromotions);
             if (result?.projectId) {
               iframeRef.current?.contentWindow?.postMessage({
                 type: 'dcoratto:project-meta',
@@ -353,8 +364,11 @@ function App() {
         return;
       }
 
+      window.clearTimeout(autosaveTimerRef.current);
+      pendingAutosaveRef.current = null;
       persistEditorEvent(payload).then((result) => {
         if (action !== 'generate_project_initial') return;
+        postAssetPromotions(result?.assetPromotions);
         iframeRef.current?.contentWindow?.postMessage({
           type: 'dcoratto:client-link',
           ok: Boolean(result?.htmlVersion?.data?.publicUrl),
@@ -381,6 +395,36 @@ function App() {
       window.clearTimeout(autosaveTimerRef.current);
     };
   }, [isLogged, actor, remoteSettings]);
+
+  useEffect(() => {
+    if (!isLogged || !actor.email) return undefined;
+    const handleAssetPromotions = (event) => {
+      const promotions = event.detail?.promotions;
+      if (!Array.isArray(promotions) || !promotions.length) return;
+      iframeRef.current?.contentWindow?.postMessage({
+        type: 'dcoratto:asset-promotions',
+        promotions,
+      }, window.location.origin);
+    };
+    const handleClientLinkSynced = (event) => {
+      const result = event.detail || {};
+      iframeRef.current?.contentWindow?.postMessage({
+        type: 'dcoratto:client-link',
+        ok: Boolean(result?.htmlVersion?.data?.publicUrl),
+        projectId: result?.projectId || null,
+        publicUrl: result?.htmlVersion?.data?.publicUrl || '',
+        storagePath: result?.htmlVersion?.storage_path || '',
+        source: result?.source || 'background-sync',
+        error: result?.htmlVersion?.data?.storageError || '',
+      }, window.location.origin);
+    };
+    window.addEventListener('dcoratto:asset-promotions', handleAssetPromotions);
+    window.addEventListener('dcoratto:client-link-synced', handleClientLinkSynced);
+    return () => {
+      window.removeEventListener('dcoratto:asset-promotions', handleAssetPromotions);
+      window.removeEventListener('dcoratto:client-link-synced', handleClientLinkSynced);
+    };
+  }, [isLogged, actor.email]);
 
   function sendSessionAndSettingsToEditor() {
     iframeRef.current?.contentWindow?.postMessage({
@@ -895,6 +939,7 @@ async function waitForPdfDocumentReady(frame) {
   if (!doc) throw new Error('Nao foi possivel acessar o documento do PDF.');
   await waitForCondition(() => doc.body?.dataset.pdfReady === 'true' && doc.querySelector('#document .document-page'), 15000);
   await waitForPdfAssets(doc);
+  frame.contentWindow?.__DCORATTO_FIT_COVER_PHOTOS__?.();
   frame.contentWindow?.updatePageAnnotationGeometry?.();
   await waitForAnimationFrame(frame.contentWindow);
 }

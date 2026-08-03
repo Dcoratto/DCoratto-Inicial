@@ -18,6 +18,7 @@ const htmlBucket = process.env.SUPABASE_HTML_BUCKET || process.env.VITE_SUPABASE
 const photoBucket = process.env.SUPABASE_PHOTOS_BUCKET || process.env.VITE_SUPABASE_PHOTOS_BUCKET || 'dcoratto-photos';
 const clientMobileFirstVersion = '2026-06-08-mobile-contain-markers-v1';
 const supabaseRequestTimeoutMs = Math.min(4000, Math.max(1000, Number(process.env.SUPABASE_REQUEST_TIMEOUT_MS || 2500)));
+const supabaseStorageTimeoutMs = Math.min(30000, Math.max(5000, Number(process.env.SUPABASE_STORAGE_TIMEOUT_MS || 15000)));
 const supabaseCircuitCooldownMs = Math.max(5000, Number(process.env.SUPABASE_CIRCUIT_COOLDOWN_MS || 20000));
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -49,9 +50,13 @@ const localLoginUsers = [
 const runtimeLoginUsers = localLoginUsers.map(user => ({ ...user }));
 let lastKnownEditorSettings = null;
 let seedCatalogFallback = null;
+let htmlBucketReadyPromise = null;
 const lastKnownProjectLists = new Map();
 const lastKnownClientHistory = new Map();
 const serverQueryCache = new Map();
+const promotedAssetCache = new Map();
+const promotedAssetCacheTtlMs = 60 * 60 * 1000;
+const promotedAssetCacheMaxEntries = 800;
 const cacheTtl = {
   appUsers: 5 * 60 * 1000,
   editorSettings: 5 * 60 * 1000,
@@ -70,15 +75,11 @@ const supabaseServer = supabaseUrl && supabaseServiceKey
   : null;
 
 function fetchWithSupabaseTimeout(input, init = {}) {
-  if (Date.now() < supabaseUnavailableUntil) {
-    const circuitError = new Error('supabase_circuit_open');
-    circuitError.code = 'supabase_unavailable';
-    return Promise.reject(circuitError);
-  }
+  const isStorageRequest = isSupabaseStorageRequest(input);
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort(new Error('supabase_request_timeout'));
-  }, supabaseRequestTimeoutMs);
+  }, isStorageRequest ? supabaseStorageTimeoutMs : supabaseRequestTimeoutMs);
   if (init.signal) {
     if (init.signal.aborted) controller.abort(init.signal.reason);
     else init.signal.addEventListener('abort', () => controller.abort(init.signal.reason), { once: true });
@@ -87,20 +88,29 @@ function fetchWithSupabaseTimeout(input, init = {}) {
     ...init,
     signal: controller.signal,
   }).then((response) => {
-    if (response.status >= 500 || response.status === 408 || response.status === 429) {
+    if (!isStorageRequest && (response.status >= 500 || response.status === 408 || response.status === 429)) {
       supabaseUnavailableUntil = Date.now() + supabaseCircuitCooldownMs;
-    } else if (response.ok) {
+    } else if (!isStorageRequest && response.ok) {
       supabaseUnavailableUntil = 0;
     }
     return response;
   }).catch((error) => {
-    supabaseUnavailableUntil = Date.now() + supabaseCircuitCooldownMs;
+    if (!isStorageRequest) {
+      supabaseUnavailableUntil = Date.now() + supabaseCircuitCooldownMs;
+    }
     throw error;
   }).finally(() => clearTimeout(timer));
 }
 
-async function withSupabaseOperationTimeout(operation) {
-  if (Date.now() < supabaseUnavailableUntil) {
+function isSupabaseStorageRequest(input) {
+  const url = typeof input === 'string'
+    ? input
+    : String(input?.url || input || '');
+  return /\/storage\/v1\//i.test(url);
+}
+
+async function withSupabaseOperationTimeout(operation, options = {}) {
+  if (!options.bypassCircuit && Date.now() < supabaseUnavailableUntil) {
     const circuitError = new Error('supabase_circuit_open');
     circuitError.code = 'supabase_unavailable';
     throw circuitError;
@@ -622,7 +632,35 @@ async function handleClientLinkRequest(request, response) {
     body = await readJsonBody(request);
     const projectId = safeId(body.projectId) || crypto.randomUUID();
     const actorEmail = normalizeEmail(body.actor?.email);
-    const existingProject = await withSupabaseOperationTimeout(() => loadProjectForWrite(projectId));
+    const existingPublishedVersion = await withSupabaseOperationTimeout(
+      () => loadPublishedVersionByEventId(body.eventId, projectId),
+      { bypassCircuit: true }
+    );
+    if (existingPublishedVersion?.id) {
+      if (!canAccessPrivateHtmlVersion(existingPublishedVersion, actorEmail)) {
+        sendJson(response, 403, { error: 'forbidden_project_access' });
+        return;
+      }
+      const existingPath = clientLinkPath(existingPublishedVersion);
+      sendJson(response, 200, {
+        ok: true,
+        source: 'server-supabase-deduped',
+        projectId,
+        publicUrl: existingPath ? `${requestOrigin(request)}${existingPath}` : '',
+        storagePublicUrl: '',
+        storagePath: existingPublishedVersion.storage_path || '',
+        shareSlug: existingPublishedVersion.share_slug || '',
+        mobileFirst: true,
+        mobileLayoutVersion: clientMobileFirstVersion,
+        deduped: true,
+        assetPromotions: [],
+      });
+      return;
+    }
+    const existingProject = await withSupabaseOperationTimeout(
+      () => loadProjectForWrite(projectId),
+      { bypassCircuit: true }
+    );
     if (existingProject && !canAccessPrivateProject(existingProject, actorEmail)) {
       sendJson(response, 403, { error: 'forbidden_project_access' });
       return;
@@ -665,12 +703,13 @@ async function handleClientLinkRequest(request, response) {
       draft: promotedDocument.draft,
       eventId: body.eventId,
       createdAt: body.createdAt,
+      existingProject,
     });
     const finalPublicUrl = dbResult.publicUrl || clientUrl;
     const finalStoragePath = dbResult.storagePath || storagePath;
-    const storageResult = dbResult.deduped
-      ? { publicUrl: dbResult.storagePublicUrl || '', warning: '' }
-      : await uploadHtmlSnapshotToStorage(finalStoragePath, html);
+    if (!dbResult.deduped) {
+      void uploadHtmlSnapshotToStorage(finalStoragePath, html);
+    }
     clearCacheByPrefix(
       'projects:',
       'client-history:',
@@ -685,12 +724,13 @@ async function handleClientLinkRequest(request, response) {
       source: 'server-supabase',
       projectId,
       publicUrl: finalPublicUrl,
-      storagePublicUrl: storageResult.publicUrl || '',
+      storagePublicUrl: dbResult.storagePublicUrl || '',
       storagePath: finalStoragePath,
       shareSlug: dbResult.shareSlug || shareSlug,
       mobileFirst: true,
       mobileLayoutVersion: clientMobileFirstVersion,
-      storageWarning: storageResult.warning || '',
+      storageWarning: '',
+      assetPromotions: promotedDocument.assetPromotions || [],
     });
   } catch (error) {
     sendErrorJson(response, error, {
@@ -716,7 +756,7 @@ async function handleEditorEventRequest(request, response) {
     body = await readJsonBody(request);
     const projectId = safeId(body.projectId) || crypto.randomUUID();
     const actorEmail = normalizeEmail(body.actor?.email);
-    const existingProject = await loadProjectForWrite(projectId);
+    const existingProject = await withSupabaseOperationTimeout(() => loadProjectForWrite(projectId));
     if (existingProject && !canAccessPrivateProject(existingProject, actorEmail)) {
       sendJson(response, 403, { error: 'forbidden_project_access' });
       return;
@@ -726,7 +766,7 @@ async function handleEditorEventRequest(request, response) {
       draft: body.draft || null,
       preview: body.preview || null,
     });
-    await withSupabaseOperationTimeout(() => persistEditorState({
+    const persistenceResult = await persistEditorState({
       projectId,
       actor: body.actor,
       action: body.action,
@@ -736,7 +776,8 @@ async function handleEditorEventRequest(request, response) {
       settingsMutation: body.settingsMutation || null,
       eventId: body.eventId,
       createdAt: body.createdAt,
-    }));
+      existingProject,
+    });
     clearCacheByPrefix(
       'projects:',
       'client-history:',
@@ -749,6 +790,10 @@ async function handleEditorEventRequest(request, response) {
       ok: true,
       source: 'server-supabase',
       projectId,
+      assetPromotions: mergeAssetPromotionLists(
+        promotedDocument.assetPromotions,
+        persistenceResult?.assetPromotions
+      ),
     });
   } catch (error) {
     sendErrorJson(response, error, {
@@ -1496,6 +1541,20 @@ function clientLinkPath(version = {}) {
   return `/cliente/${encodeURIComponent(projectId)}/${encodeURIComponent(slug)}`;
 }
 
+async function loadPublishedVersionByEventId(eventId, projectId = '') {
+  const safeEventId = String(eventId || '').trim();
+  if (!safeEventId) return null;
+  let query = supabaseServer
+    .from('document_html_versions')
+    .select('id, project_id, storage_path, share_slug, owner_email, created_by, assigned_to_email, deleted_at, deleted_for_users')
+    .filter('data->>eventId', 'eq', safeEventId)
+    .eq('shared_with_client', true);
+  if (safeId(projectId)) query = query.eq('project_id', projectId);
+  const { data, error } = await query.limit(1).maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
 function clientNameFromHtmlTitle(title = '') {
   return String(title || '').replace(/^Projeto Inicial\s*-\s*/i, '').trim();
 }
@@ -1769,6 +1828,15 @@ async function readJsonBody(request) {
 }
 
 async function ensureHtmlBucket() {
+  if (htmlBucketReadyPromise) return htmlBucketReadyPromise;
+  htmlBucketReadyPromise = ensureHtmlBucketNow().catch((error) => {
+    htmlBucketReadyPromise = null;
+    throw error;
+  });
+  return htmlBucketReadyPromise;
+}
+
+async function ensureHtmlBucketNow() {
   const { data: buckets, error: listError } = await supabaseServer.storage.listBuckets();
   if (listError) throw listError;
   if (buckets?.some((bucket) => bucket.name === htmlBucket || bucket.id === htmlBucket)) {
@@ -1777,10 +1845,7 @@ async function ensureHtmlBucket() {
         public: true,
         fileSizeLimit: 52_428_800,
         allowedMimeTypes: ['text/html'],
-      }).catch((error) => logNormalizedServerError(normalizeExternalServiceError(error), {
-        endpoint: 'supabase-storage-html',
-        action: 'update_bucket',
-      }));
+      });
     }
     return;
   }
@@ -1815,22 +1880,24 @@ async function uploadHtmlSnapshotToStorage(storagePath, html) {
   }
 }
 
-async function persistEditorState({ projectId, actor, action, draft, preview, settings, settingsMutation, eventId, createdAt }) {
+async function persistEditorState({ projectId, actor, action, draft, preview, settings, settingsMutation, eventId, createdAt, existingProject = null }) {
+  let savedSettings = null;
   if (settings) {
-    await saveSharedEditorSettings(settings, actor, settingsMutation || null);
+    savedSettings = await saveSharedEditorSettings(settings, actor, settingsMutation || null);
   }
+  const settingsAssetPromotions = collectAssetPromotions(savedSettings);
 
-  if (!hasPersistableContent(draft, preview)) return;
+  if (!hasPersistableContent(draft, preview)) return { assetPromotions: settingsAssetPromotions };
 
-  const existingProject = await loadProjectForWrite(projectId);
+  existingProject ||= await loadProjectForWrite(projectId);
   if (existingProject?.status === 'sold') {
     throw new Error('Projeto vendido esta bloqueado para alteracoes.');
   }
 
-  if (await hasAuditEvent(eventId)) return;
+  if (eventId && existingProject?.data?.lastEventId === eventId) return { assetPromotions: settingsAssetPromotions };
   if (isStaleProjectEvent(existingProject, createdAt)) {
     await persistAuditLog({ projectId, actor, action, draft, preview, settings, eventId, createdAt });
-    return;
+    return { assetPromotions: settingsAssetPromotions };
   }
 
   const protectedDocument = protectAgainstImplicitContentLoss({
@@ -1890,6 +1957,7 @@ async function persistEditorState({ projectId, actor, action, draft, preview, se
     .upsert(projectPayload, { onConflict: 'id' });
   if (error) throw error;
   await persistAuditLog({ projectId, actor, action: persistenceAction, draft, preview, settings, eventId, createdAt });
+  return { assetPromotions: settingsAssetPromotions };
 }
 
 function isStaleProjectEvent(existingProject, createdAt) {
@@ -1951,17 +2019,6 @@ async function loadLatestProjectSnapshotForActor(actorEmail) {
     }
   }
   return null;
-}
-
-async function hasAuditEvent(eventId) {
-  if (!eventId) return false;
-  const { data: existing, error: readError } = await supabaseServer
-    .from('editor_audit_logs')
-    .select('id')
-    .eq('event_id', eventId)
-    .maybeSingle();
-  if (readError) throw readError;
-  return Boolean(existing?.id);
 }
 
 async function persistAuditLog({ projectId, actor, action, draft, preview, settings, eventId, createdAt }) {
@@ -2362,14 +2419,36 @@ async function saveSharedEditorSettings(incomingSettings, actor = null, settings
 
 async function promoteSettingsImagesToStorage(settings = {}) {
   const promoted = { ...settings };
-  if (String(promoted.logo || '').startsWith('data:image/')) {
-    const asset = await uploadDataUrlAsset({
-      dataUrl: promoted.logo,
-      folder: 'settings/logo',
-      fileNameHint: 'logo',
-    });
-    promoted.logo = asset.publicUrl || promoted.logo;
-    promoted.logoAsset = asset;
+  const context = {
+    normalizedAssets: new Map(),
+    uploadPromises: new Map(),
+    promotions: new Map(),
+  };
+  const [logoAsset, logoThumbAsset] = await Promise.all([
+    String(promoted.logo || '').startsWith('data:image/')
+      ? uploadDataUrlAsset({
+        dataUrl: promoted.logo,
+        folder: 'settings/logo',
+        fileNameHint: 'logo',
+        context,
+      })
+      : null,
+    String(promoted.logoThumb || '').startsWith('data:image/')
+      ? uploadDataUrlAsset({
+        dataUrl: promoted.logoThumb,
+        folder: 'settings/logo',
+        fileNameHint: 'logo-thumb',
+        context,
+      })
+      : null,
+  ]);
+  if (logoAsset) {
+    promoted.logo = logoAsset.publicUrl || promoted.logo;
+    promoted.logoAsset = mergePromotedAssetMetadata(promoted.logoAsset, logoAsset);
+  }
+  if (logoThumbAsset) {
+    promoted.logoThumb = logoThumbAsset.publicUrl || promoted.logoThumb;
+    promoted.logoThumbAsset = mergePromotedAssetMetadata(promoted.logoThumbAsset, logoThumbAsset);
   }
   promoted.catalogItems = await Promise.all((promoted.catalogItems || []).map(async (item) => {
     const textureUrl = catalogItemTextureUrlPayload(item);
@@ -2378,6 +2457,7 @@ async function promoteSettingsImagesToStorage(settings = {}) {
       dataUrl: textureUrl,
       folder: `catalog/${catalogItemGroup(item.type)}`,
       fileNameHint: item.name || item.id || 'material',
+      context,
     });
     return {
       ...item,
@@ -2392,78 +2472,284 @@ async function promoteSettingsImagesToStorage(settings = {}) {
       mime_type: asset.mimeType,
       size: asset.size,
       uploadedAt: asset.uploadedAt,
+      asset: mergePromotedAssetMetadata(
+        item.asset || (item.assetId ? { assetId: item.assetId, localAssetId: item.assetId } : {}),
+        asset
+      ),
     };
   }));
   return promoted;
 }
 
-async function promoteDocumentImages({ projectId, draft, preview }) {
+function mergePromotedAssetMetadata(existing = {}, promoted = {}) {
+  const current = existing && typeof existing === 'object' ? existing : {};
   return {
-    draft: await promoteImageDataUrls(draft, `projects/${projectId}/draft`),
-    preview: await promoteImageDataUrls(preview, `projects/${projectId}/preview`),
+    ...current,
+    ...promoted,
+    assetId: current.assetId || current.localAssetId || '',
+    localAssetId: current.localAssetId || current.assetId || '',
+    syncStatus: 'synced',
   };
 }
 
-async function promoteImageDataUrls(value, folder) {
+function collectAssetPromotions(value) {
+  const promotions = new Map();
+  const visit = (current) => {
+    if (!current || typeof current !== 'object') return;
+    if (Array.isArray(current)) {
+      current.forEach(visit);
+      return;
+    }
+    const localAssetId = String(current.localAssetId || current.assetId || '');
+    const publicUrl = String(current.publicUrl || '');
+    const storagePath = String(current.storagePath || current.storage_path || '');
+    if (localAssetId && publicUrl && storagePath && current.syncStatus === 'synced') {
+      const variant = current.variant === 'thumbnail' ? 'thumbnail' : 'main';
+      promotions.set(`${localAssetId}:${variant}`, {
+        localAssetId,
+        variant,
+        publicUrl,
+        storageBucket: current.storageBucket || '',
+        storagePath,
+        mimeType: current.mimeType || current.mime_type || 'image/webp',
+        width: Number(current.width || 0),
+        height: Number(current.height || 0),
+        size: Number(current.size || 0),
+      });
+    }
+    Object.values(current).forEach(visit);
+  };
+  visit(value);
+  return [...promotions.values()];
+}
+
+function mergeAssetPromotionLists(...lists) {
+  const merged = new Map();
+  lists.flat().filter(Boolean).forEach((promotion) => {
+    const localAssetId = String(promotion.localAssetId || '');
+    if (!localAssetId) return;
+    const variant = promotion.variant === 'thumbnail' ? 'thumbnail' : 'main';
+    merged.set(`${localAssetId}:${variant}`, { ...promotion, localAssetId, variant });
+  });
+  return [...merged.values()];
+}
+
+async function promoteDocumentImages({ projectId, draft, preview }) {
+  const folder = `projects/${projectId}/assets`;
+  const context = {
+    normalizedAssets: new Map(),
+    uploadPromises: new Map(),
+    promotions: new Map(),
+  };
+  const [promotedDraft, promotedPreview] = await Promise.all([
+    promoteImageDataUrls(draft, folder, context),
+    promoteImageDataUrls(preview, folder, context),
+  ]);
+  return {
+    draft: promotedDraft,
+    preview: promotedPreview,
+    assetPromotions: [...context.promotions.values()],
+  };
+}
+
+const promotableImageFields = new Set([
+  'src',
+  'thumbSrc',
+  'photo',
+  'logo',
+  'logoThumb',
+  'textureUrl',
+  'imageUrl',
+  'imageData',
+  'img',
+]);
+
+async function promoteImageDataUrls(value, folder, context) {
   if (!value || typeof value !== 'object') return value;
   if (Array.isArray(value)) {
-    return Promise.all(value.map(item => promoteImageDataUrls(item, folder)));
+    return Promise.all(value.map(item => promoteImageDataUrls(item, folder, context)));
   }
 
-  const imageFields = new Set(['src', 'photo', 'logo', 'textureUrl', 'imageUrl', 'imageData', 'img']);
-  const promoted = {};
-  for (const [key, fieldValue] of Object.entries(value)) {
-    if (typeof fieldValue === 'string' && imageFields.has(key) && fieldValue.startsWith('data:image/')) {
+  const entries = await Promise.all(Object.entries(value).map(async ([key, fieldValue]) => {
+    if (typeof fieldValue === 'string' && promotableImageFields.has(key) && fieldValue.startsWith('data:image/')) {
       const asset = await uploadDataUrlAsset({
         dataUrl: fieldValue,
         folder,
         fileNameHint: key,
+        context,
       });
-      promoted[key] = asset.publicUrl || fieldValue;
-      promoted[`${key}Asset`] = asset;
-    } else {
-      promoted[key] = await promoteImageDataUrls(fieldValue, folder);
+      recordAssetPromotion(context, value, key, asset);
+      return {
+        key,
+        value: asset.publicUrl || fieldValue,
+        asset,
+      };
     }
-  }
+    return {
+      key,
+      value: await promoteImageDataUrls(fieldValue, folder, context),
+      asset: null,
+    };
+  }));
+
+  const promoted = Object.fromEntries(entries.map(entry => [entry.key, entry.value]));
+  entries.filter(entry => entry.asset).forEach(({ key, asset }) => {
+    const metadataKey = imageAssetMetadataKey(value, key);
+    const existingMetadata = value[metadataKey] && typeof value[metadataKey] === 'object'
+      ? value[metadataKey]
+      : {};
+    promoted[metadataKey] = {
+      ...existingMetadata,
+      ...asset,
+      assetId: existingMetadata.assetId || existingMetadata.localAssetId || '',
+      localAssetId: existingMetadata.localAssetId || existingMetadata.assetId || '',
+      syncStatus: 'synced',
+    };
+  });
   return promoted;
 }
 
-async function uploadDataUrlAsset({ dataUrl, folder, fileNameHint }) {
-  const parsed = await normalizeDataUrlAsset(parseDataUrl(dataUrl));
+function imageAssetMetadataKey(owner = {}, field = '') {
+  if (/thumb/i.test(field)) {
+    if (owner.logoThumbAsset) return 'logoThumbAsset';
+    if (owner.thumbAsset) return 'thumbAsset';
+    return `${field}Asset`;
+  }
+  if (field === 'logo' || owner.logoAsset) return 'logoAsset';
+  if (owner.photoAsset) return 'photoAsset';
+  if (owner.asset) return 'asset';
+  return `${field}Asset`;
+}
+
+async function uploadDataUrlAsset({ dataUrl, folder, fileNameHint, context }) {
+  const rawHash = createHash('sha1').update(String(dataUrl || '')).digest('hex');
+  const rawCacheKey = `${photoBucket}:${folder}:raw:${rawHash}`;
+  const cachedRawAsset = getPromotedAssetCache(rawCacheKey);
+  if (cachedRawAsset) return cachedRawAsset;
+  let normalizedPromise = context?.normalizedAssets?.get(rawHash);
+  if (!normalizedPromise) {
+    normalizedPromise = normalizeDataUrlAsset(parseDataUrl(dataUrl));
+    context?.normalizedAssets?.set(rawHash, normalizedPromise);
+  }
+  const parsed = await normalizedPromise;
   const hash = createHash('sha256').update(parsed.buffer).digest('hex');
   const extension = extensionFromMime(parsed.mimeType);
-  const safeName = slugify(fileNameHint || 'asset') || 'asset';
-  const storagePath = `${folder}/${safeName}-${hash.slice(0, 24)}.${extension}`;
-  const { error } = await supabaseServer.storage
-    .from(photoBucket)
-    .upload(storagePath, parsed.buffer, {
-      cacheControl: '31536000',
-      contentType: parsed.mimeType,
-      upsert: true,
-    });
-  if (error) throw error;
-  const { data } = supabaseServer.storage.from(photoBucket).getPublicUrl(storagePath);
-  return {
-    id: hash,
-    storageBucket: photoBucket,
-    storagePath,
-    publicUrl: data?.publicUrl || '',
-    mimeType: parsed.mimeType,
-    size: parsed.buffer.length,
-    uploadedAt: new Date().toISOString(),
-  };
+  const storagePath = `${folder}/asset-${hash.slice(0, 32)}.${extension}`;
+  const cacheKey = `${photoBucket}:${storagePath}`;
+  const cachedAsset = getPromotedAssetCache(cacheKey);
+  if (cachedAsset) return cachedAsset;
+
+  let uploadPromise = context?.uploadPromises?.get(storagePath);
+  if (!uploadPromise) {
+    uploadPromise = (async () => {
+      const { error } = await supabaseServer.storage
+        .from(photoBucket)
+        .upload(storagePath, parsed.buffer, {
+          cacheControl: '31536000',
+          contentType: parsed.mimeType,
+          upsert: false,
+        });
+      if (error && !isStorageObjectAlreadyExists(error)) throw error;
+      const { data } = supabaseServer.storage.from(photoBucket).getPublicUrl(storagePath);
+      const asset = {
+        id: hash,
+        storageBucket: photoBucket,
+        storagePath,
+        publicUrl: data?.publicUrl || '',
+        mimeType: parsed.mimeType,
+        width: parsed.width || 0,
+        height: parsed.height || 0,
+        size: parsed.buffer.length,
+        uploadedAt: new Date().toISOString(),
+        fileNameHint: slugify(fileNameHint || 'asset') || 'asset',
+      };
+      setPromotedAssetCache(cacheKey, asset);
+      return asset;
+    })();
+    context?.uploadPromises?.set(storagePath, uploadPromise);
+  }
+  const asset = await uploadPromise;
+  setPromotedAssetCache(rawCacheKey, asset);
+  return asset;
+}
+
+function recordAssetPromotion(context, owner, field, asset) {
+  const localAssetId = localAssetIdForImageField(owner, field);
+  if (!localAssetId || !asset?.publicUrl) return;
+  const variant = /thumb/i.test(field) ? 'thumbnail' : 'main';
+  const key = `${localAssetId}:${variant}`;
+  context.promotions.set(key, {
+    localAssetId,
+    variant,
+    publicUrl: asset.publicUrl,
+    storageBucket: asset.storageBucket,
+    storagePath: asset.storagePath,
+    mimeType: asset.mimeType,
+    width: asset.width || 0,
+    height: asset.height || 0,
+    size: asset.size || 0,
+  });
+}
+
+function localAssetIdForImageField(owner = {}, field = '') {
+  const isThumbnail = /thumb/i.test(field);
+  if (isThumbnail) {
+    return owner.thumbAsset?.assetId
+      || owner.thumbAsset?.localAssetId
+      || owner.logoThumbAsset?.assetId
+      || owner.logoThumbAsset?.localAssetId
+      || (owner.logoAssetId ? `${owner.logoAssetId}-thumb` : '')
+      || (owner.assetId ? `${owner.assetId}-thumb` : '');
+  }
+  return owner.photoAsset?.assetId
+    || owner.photoAsset?.localAssetId
+    || owner.logoAsset?.assetId
+    || owner.logoAsset?.localAssetId
+    || owner.asset?.assetId
+    || owner.asset?.localAssetId
+    || owner.logoAssetId
+    || owner.assetId
+    || '';
+}
+
+function getPromotedAssetCache(key) {
+  const entry = promotedAssetCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    promotedAssetCache.delete(key);
+    return null;
+  }
+  return entry.asset;
+}
+
+function setPromotedAssetCache(key, asset) {
+  promotedAssetCache.set(key, {
+    asset,
+    expiresAt: Date.now() + promotedAssetCacheTtlMs,
+  });
+  if (promotedAssetCache.size <= promotedAssetCacheMaxEntries) return;
+  const overflow = promotedAssetCache.size - promotedAssetCacheMaxEntries;
+  [...promotedAssetCache.keys()].slice(0, overflow).forEach(cacheKey => promotedAssetCache.delete(cacheKey));
+}
+
+function isStorageObjectAlreadyExists(error) {
+  const code = String(error?.statusCode || error?.status || error?.code || '');
+  const message = String(error?.message || '').toLowerCase();
+  return code === '409' || message.includes('already exists') || message.includes('resource already exists');
 }
 
 async function normalizeDataUrlAsset(parsed) {
   try {
-    const metadata = await sharp(parsed.buffer, { failOn: 'none' }).metadata();
-    const maxDimension = Math.max(Number(metadata.width || 0), Number(metadata.height || 0));
+    const image = sharp(parsed.buffer, { failOn: 'none' }).rotate();
+    const metadata = await image.metadata();
+    const width = Number(metadata.width || 0);
+    const height = Number(metadata.height || 0);
+    const maxDimension = Math.max(width, height);
     const alreadyEfficientWebp = parsed.mimeType === 'image/webp'
       && maxDimension <= 1920
       && parsed.buffer.length <= 1_200_000;
-    if (alreadyEfficientWebp) return parsed;
-    const buffer = await sharp(parsed.buffer, { failOn: 'none' })
-      .rotate()
+    if (alreadyEfficientWebp) return { ...parsed, width, height };
+    const { data: buffer, info } = await image
       .resize({
         width: 1920,
         height: 1920,
@@ -2471,24 +2757,55 @@ async function normalizeDataUrlAsset(parsed) {
         withoutEnlargement: true,
       })
       .webp({ quality: 80 })
-      .toBuffer();
+      .toBuffer({ resolveWithObject: true });
     return {
       mimeType: 'image/webp',
       buffer,
+      width: Number(info.width || width || 0),
+      height: Number(info.height || height || 0),
     };
   } catch (error) {
-    if (parsed.mimeType === 'image/webp') return parsed;
-    throw error;
+    const invalidImageError = new Error('Imagem em data URL invalida ou corrompida.');
+    invalidImageError.code = 'invalid_image_data_url';
+    invalidImageError.cause = error;
+    throw invalidImageError;
   }
 }
 
 function parseDataUrl(dataUrl) {
-  const match = String(dataUrl || '').match(/^data:([^;,]+);base64,(.+)$/);
-  if (!match) throw new Error('Imagem em data URL invalida.');
-  return {
-    mimeType: match[1],
-    buffer: Buffer.from(match[2], 'base64'),
-  };
+  const value = String(dataUrl || '').trim();
+  const match = value.match(/^data:([^;,]+)((?:;[^,]*)?),(.*)$/s);
+  if (!match) {
+    const error = new Error('Imagem em data URL invalida.');
+    error.code = 'invalid_image_data_url';
+    throw error;
+  }
+  const mimeType = String(match[1] || '').trim().toLowerCase();
+  if (!mimeType.startsWith('image/')) {
+    const error = new Error('Imagem em data URL invalida.');
+    error.code = 'invalid_image_data_url';
+    throw error;
+  }
+  const parameters = String(match[2] || '').toLowerCase();
+  const payload = String(match[3] || '');
+  let buffer;
+  if (parameters.split(';').includes('base64')) {
+    let normalized = payload.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+    normalized += '='.repeat((4 - (normalized.length % 4)) % 4);
+    buffer = Buffer.from(normalized, 'base64');
+  } else {
+    try {
+      buffer = Buffer.from(decodeURIComponent(payload), 'utf8');
+    } catch {
+      buffer = Buffer.from(payload, 'utf8');
+    }
+  }
+  if (!buffer.length) {
+    const error = new Error('Imagem em data URL invalida.');
+    error.code = 'invalid_image_data_url';
+    throw error;
+  }
+  return { mimeType, buffer };
 }
 
 function extensionFromMime(mimeType = '') {
@@ -3243,19 +3560,32 @@ function canAccessPrivateProject(project, actorEmail) {
   ].map(normalizeEmail).includes(email) && !isDeletedForUser(project, email);
 }
 
+function canAccessPrivateHtmlVersion(version, actorEmail) {
+  const email = normalizeEmail(actorEmail);
+  if (isAdminEmail(email)) return true;
+  if (!email || !version || version.deleted_at) return false;
+  const deleted = Array.isArray(version.deleted_for_users) ? version.deleted_for_users : [];
+  if (deleted.map(normalizeEmail).includes(email)) return false;
+  return [
+    version.assigned_to_email,
+    version.created_by,
+    version.owner_email,
+  ].map(normalizeEmail).includes(email);
+}
+
 function isDeletedForUser(project, actorEmail) {
   if (isAdminEmail(actorEmail)) return false;
   const deleted = Array.isArray(project?.deleted_for_users) ? project.deleted_for_users : [];
   return deleted.map(normalizeEmail).includes(normalizeEmail(actorEmail));
 }
 
-async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt }) {
+async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storagePath, publicUrl, storagePublicUrl, html, preview, actor, draft, eventId, createdAt, existingProject = null }) {
   let client = preview.client || {};
   const actorEmail = normalizeEmail(actor?.email);
   let projectFactories = Array.isArray(client.manufacturers) && client.manufacturers.length
     ? client.manufacturers
     : (Array.isArray(draft?.fields?.factories) ? draft.fields.factories : []);
-  const existingProject = await loadProjectForWrite(projectId);
+  existingProject ||= await loadProjectForWrite(projectId);
   if (existingProject?.status === 'sold') {
     throw new Error('Projeto vendido esta bloqueado para alteracoes.');
   }
@@ -3276,26 +3606,6 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
     : (Array.isArray(draft?.fields?.factories) ? draft.fields.factories : projectFactories);
   const createdBy = normalizeEmail(existingProject?.created_by) || actorEmail;
   const assignedToEmail = normalizeEmail(existingProject?.assigned_to_email) || actorEmail;
-
-  if (eventId) {
-    const { data: existingVersion, error: existingError } = await supabaseServer
-      .from('document_html_versions')
-      .select('id, project_id, storage_path, share_slug')
-      .filter('data->>eventId', 'eq', eventId)
-      .eq('shared_with_client', true)
-      .maybeSingle();
-    if (existingError) throw existingError;
-    if (existingVersion?.id) {
-      return {
-        versionId: existingVersion.id,
-        publicUrl: clientLinkPath(existingVersion) || publicUrl,
-        storagePath: existingVersion.storage_path || storagePath,
-        storagePublicUrl: '',
-        shareSlug: existingVersion.share_slug || '',
-        deduped: true,
-      };
-    }
-  }
 
   const { error: projectError } = await supabaseServer
     .from('document_projects')
@@ -3367,7 +3677,8 @@ async function persistHtmlVersion({ projectId, versionNumber, shareSlug, storage
       })
       .eq('project_id', projectId)
       .neq('id', insertedVersion.id)
-      .eq('shared_with_client', true);
+      .eq('shared_with_client', true)
+      .eq('is_current', true);
     if (supersedeError) throw supersedeError;
 
     const { error: currentError } = await supabaseServer
@@ -3394,7 +3705,7 @@ async function nextHtmlVersionNumber(projectId) {
       action: 'next_version_number',
       projectId,
     });
-    return 1;
+    throw error;
   }
   return (data?.[0]?.version_number ?? 0) + 1;
 }

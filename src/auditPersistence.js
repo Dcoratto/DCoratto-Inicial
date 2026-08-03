@@ -4,11 +4,13 @@ import {
   markMutationFailed,
   markMutationSynced,
   saveLocalProjectSnapshot,
+  supersedePersistedProjectMutations,
 } from './offlinePersistence';
 
 const PROJECT_ID_KEY = 'dcoratto.active.project.id.v1';
 
 let queueFlushPromise = null;
+let queueFlushTimer = null;
 
 class ApiRequestError extends Error {
   constructor({ message, code = 'server_error', retryable = false, status = 0 } = {}) {
@@ -101,7 +103,13 @@ export async function persistEditorEvent({ id = '', eventId = '', action, actor,
       const result = await publishClientHtmlWithServer(payload);
       if (result?.projectId) setActiveProjectId(result.projectId, actor);
       await markMutationSynced(payload.id);
-      await flushOfflineQueue();
+      await supersedePersistedProjectMutations({
+        projectId: result?.projectId || projectId,
+        userEmail: actor?.email || '',
+        createdAt: payload.createdAt,
+        exceptId: payload.id,
+      }).catch(() => null);
+      scheduleOfflineQueueFlush();
       return result;
     } catch (error) {
       console.warn('Persistencia do link pelo servidor indisponivel. Evento mantido na fila local para reenvio.', error);
@@ -116,7 +124,13 @@ export async function persistEditorEvent({ id = '', eventId = '', action, actor,
       const result = await persistEditorEventWithServer(payload);
       if (result?.projectId) setActiveProjectId(result.projectId, actor);
       await markMutationSynced(payload.id);
-      await flushOfflineQueue();
+      await supersedePersistedProjectMutations({
+        projectId: result?.projectId || projectId,
+        userEmail: actor?.email || '',
+        createdAt: payload.createdAt,
+        exceptId: payload.id,
+      }).catch(() => null);
+      scheduleOfflineQueueFlush();
       return result;
     } catch (error) {
       console.warn('Persistencia pelo servidor indisponivel. Evento mantido na fila local para reenvio.', error);
@@ -177,6 +191,7 @@ async function persistEditorEventWithServer(event) {
   return {
     source: result.source || 'server',
     projectId: result.projectId || getActiveProjectId(event.actor),
+    assetPromotions: Array.isArray(result.assetPromotions) ? result.assetPromotions : [],
   };
 }
 
@@ -200,6 +215,7 @@ async function flushOfflineQueueNow() {
         : await persistEditorEventWithServer(event);
       if (result?.projectId) setActiveProjectId(result.projectId, event.actor);
       await markMutationSynced(event.id);
+      emitBackgroundPersistenceResult(event, result);
     } catch (error) {
       const normalizedError = normalizeRequestError(error);
       await markMutationFailed(event.id, normalizedError);
@@ -236,6 +252,7 @@ async function publishClientHtmlWithServer(event) {
   return {
     source: result.source || 'server',
     projectId: result.projectId || projectId,
+    assetPromotions: Array.isArray(result.assetPromotions) ? result.assetPromotions : [],
     htmlVersion: {
       storage_path: result.storagePath || '',
       data: {
@@ -245,6 +262,29 @@ async function publishClientHtmlWithServer(event) {
       },
     },
   };
+}
+
+function scheduleOfflineQueueFlush(delay = 1200) {
+  if (typeof window === 'undefined') return;
+  window.clearTimeout(queueFlushTimer);
+  queueFlushTimer = window.setTimeout(() => {
+    queueFlushTimer = null;
+    flushOfflineQueue().catch((error) => console.warn('Falha ao continuar sincronizacao da fila offline:', error));
+  }, delay);
+}
+
+function emitBackgroundPersistenceResult(event, result) {
+  if (typeof window === 'undefined') return;
+  if (Array.isArray(result?.assetPromotions) && result.assetPromotions.length) {
+    window.dispatchEvent(new CustomEvent('dcoratto:asset-promotions', {
+      detail: { promotions: result.assetPromotions, projectId: result.projectId || event.projectId || '' },
+    }));
+  }
+  if (event?.saveHtml && result?.htmlVersion?.data?.publicUrl) {
+    window.dispatchEvent(new CustomEvent('dcoratto:client-link-synced', {
+      detail: result,
+    }));
+  }
 }
 
 async function readApiResponse(response, fallbackMessage) {

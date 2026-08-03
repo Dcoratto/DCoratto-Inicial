@@ -181,9 +181,20 @@ export async function listPendingMutations(userEmail = '') {
   const email = normalizeEmail(userEmail);
   const now = Date.now();
   const records = await getAllRecords(MUTATIONS_STORE);
-  return records
-    .filter(record => record.status !== 'synced')
-    .filter(record => !email || normalizeEmail(record.userEmail || record.actor?.email || '') === email)
+  const pendingRecords = records
+    .filter(record => record.status === 'pending')
+    .filter(record => !email || normalizeEmail(record.userEmail || record.actor?.email || '') === email);
+  const { pending, superseded } = compactPendingMutations(pendingRecords);
+  if (superseded.length) {
+    const supersededAt = new Date().toISOString();
+    await putRecords(MUTATIONS_STORE, superseded.map(record => ({
+      ...record,
+      status: 'superseded',
+      supersededAt,
+      updatedAt: supersededAt,
+    }))).catch(() => null);
+  }
+  return pending
     .filter(record => {
       if (!record.nextRetryAt) return true;
       const retryTime = Date.parse(record.nextRetryAt);
@@ -209,17 +220,81 @@ export async function markMutationFailed(id, error) {
   const record = await getRecord(MUTATIONS_STORE, id);
   if (!record) return;
   const retryCount = Number(record.retryCount || 0) + 1;
+  const retryable = error?.retryable !== false;
   const nextRetryMs = Math.min(60_000, 1000 * (2 ** Math.min(retryCount, 6)));
   const retryAt = new Date(Date.now() + nextRetryMs).toISOString();
   await putRecord(MUTATIONS_STORE, {
     ...record,
-    status: 'pending',
+    status: retryable ? 'pending' : 'failed',
     retryCount,
-    nextRetryAt: retryAt,
+    nextRetryAt: retryable ? retryAt : '',
     lastError: String(error?.message || error || ''),
     lastErrorCode: String(error?.code || error?.error || ''),
     updatedAt: new Date().toISOString(),
   });
+}
+
+export async function supersedePersistedProjectMutations({ projectId = '', userEmail = '', createdAt = '', exceptId = '' } = {}) {
+  const normalizedProjectId = String(projectId || '');
+  const normalizedUserEmail = normalizeEmail(userEmail);
+  if (!normalizedProjectId) return;
+  const persistedAt = Date.parse(createdAt || '');
+  const records = await getAllRecords(MUTATIONS_STORE);
+  const supersededAt = new Date().toISOString();
+  const superseded = records
+    .filter(record => record.status === 'pending')
+    .filter(record => record.id !== exceptId)
+    .filter(record => String(record.projectId || '') === normalizedProjectId)
+    .filter(record => !normalizedUserEmail || normalizeEmail(record.userEmail || record.actor?.email || '') === normalizedUserEmail)
+    .filter(record => isCoalescibleMutation(record))
+    .filter(record => !Number.isFinite(persistedAt) || mutationTimestamp(record) <= persistedAt)
+    .map(record => ({
+      ...record,
+      status: 'superseded',
+      supersededAt,
+      updatedAt: supersededAt,
+    }));
+  await putRecords(MUTATIONS_STORE, superseded);
+}
+
+function compactPendingMutations(records = []) {
+  const latestCoalescibleByProject = new Map();
+  const retained = [];
+  const superseded = [];
+
+  for (const record of records) {
+    if (!isCoalescibleMutation(record)) {
+      retained.push(record);
+      continue;
+    }
+    const key = `${normalizeEmail(record.userEmail || record.actor?.email || '')}::${record.projectId || ''}`;
+    const previous = latestCoalescibleByProject.get(key);
+    if (!previous || mutationTimestamp(record) >= mutationTimestamp(previous)) {
+      if (previous) superseded.push(previous);
+      latestCoalescibleByProject.set(key, record);
+    } else {
+      superseded.push(record);
+    }
+  }
+
+  retained.push(...latestCoalescibleByProject.values());
+  return { pending: retained, superseded };
+}
+
+function isCoalescibleMutation(record = {}) {
+  if (record.saveHtml || record.settings || record.settingsMutation) return false;
+  return isCoalescibleMutationAction(record.action);
+}
+
+function isCoalescibleMutationAction(action = '') {
+  const normalized = String(action || '').toLowerCase();
+  if (!normalized) return true;
+  return !/generate_project_initial|save_as_draft|settings|sold|restore|delete|deleted|remove|removed|new_project|project_status/.test(normalized);
+}
+
+function mutationTimestamp(record = {}) {
+  const timestamp = Date.parse(record.createdAt || record.updatedAt || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 export async function savePendingAsset(asset) {
@@ -268,6 +343,19 @@ function normalizeEmail(value = '') {
 async function putRecord(storeName, value) {
   const db = await openDcorattoDb();
   return transactionRequest(db, storeName, 'readwrite', store => store.put(value));
+}
+
+async function putRecords(storeName, values = []) {
+  if (!values.length) return;
+  const db = await openDcorattoDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(storeName, 'readwrite');
+    const store = transaction.objectStore(storeName);
+    values.forEach(value => store.put(value));
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
 }
 
 async function getRecord(storeName, key) {
