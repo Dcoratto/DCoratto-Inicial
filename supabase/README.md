@@ -25,8 +25,11 @@ Este diretorio contem a estrutura persistente do construtor D'coratto.
 
 O `schema.sql` cria/configura:
 
-- `dcoratto-photos`: imagens dos ambientes.
+- `dcoratto-photos`: imagens e videos dos ambientes, com limite de 50 MiB por arquivo.
 - `dcoratto-html`: HTML final entregue ao cliente.
+- `knowledge-assets`: quando ja existir no projeto, a migration `202608030003_fix_knowledge_assets_upload_50mb.sql` preserva suas policies e visibilidade, amplia o limite para 50 MiB e libera os MIME types de video necessarios.
+
+No painel do Supabase, confirme tambem em **Storage > Settings** que o **Global file size limit** esta em pelo menos **50 MB**. O limite efetivo e o menor valor entre a configuracao global e a configuracao do bucket.
 
 ## Observacao de seguranca
 

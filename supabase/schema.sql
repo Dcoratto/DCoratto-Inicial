@@ -763,6 +763,42 @@ on conflict (id) do update set
   file_size_limit = excluded.file_size_limit,
   allowed_mime_types = excluded.allowed_mime_types;
 
+-- O upload assinado de arquivos da biblioteca usa o bucket knowledge-assets.
+-- Ele pode ser criado por outro modulo; por isso apenas atualizamos quando existir,
+-- sem alterar visibilidade, policies ou demais configuracoes do bucket.
+do $$
+declare
+  current_allowed_mime_types text[];
+begin
+  select allowed_mime_types
+    into current_allowed_mime_types
+  from storage.buckets
+  where id = 'knowledge-assets'
+  for update;
+
+  if found then
+    update storage.buckets
+    set
+      file_size_limit = 52428800,
+      allowed_mime_types = case
+        when current_allowed_mime_types is null then null
+        else (
+          select array_agg(distinct mime_type)
+          from unnest(
+            current_allowed_mime_types || array[
+              'video/mp4',
+              'video/webm',
+              'video/quicktime',
+              'video/x-m4v'
+            ]::text[]
+          ) as allowed(mime_type)
+        )
+      end
+    where id = 'knowledge-assets';
+  end if;
+end
+$$;
+
 alter table public.app_users enable row level security;
 
 drop policy if exists "Service role app users" on public.app_users;
