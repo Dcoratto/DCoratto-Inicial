@@ -1572,7 +1572,8 @@
         cursor: zoom-in;
       }
 
-      .photo-card img {
+      .photo-card img,
+      .photo-card video {
         width: 100%;
         height: 100%;
         min-height: inherit;
@@ -1582,7 +1583,8 @@
         transition: transform .75s cubic-bezier(.2, .7, .2, 1), filter .75s ease;
       }
 
-      .photo-card:hover img {
+      .photo-card:hover img,
+      .photo-card:hover video {
         transform: scale(1.045) translateY(-4px);
         filter: brightness(.9);
       }
@@ -2172,7 +2174,8 @@
           aspect-ratio: 4 / 5;
         }
 
-        body.client-view .photo-card img {
+        body.client-view .photo-card img,
+        body.client-view .photo-card video {
           min-height: 0;
         }
 
@@ -2812,6 +2815,7 @@
       `);
 
       const storageKey = 'dcoratto.portfolio.document.v1';
+      const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
       const SHARED_PAGE_CONFIG = window.DCORATTO_PAGE_CONFIG || {};
       const CANONICAL_PAGE = Object.freeze({
         preset: SHARED_PAGE_CONFIG.preset || 'DCORATTO_CANONICAL_1440x1020',
@@ -3077,6 +3081,7 @@
         }
 
         const normalized = {
+          projectId: raw.projectId || '',
           projectType: raw.projectType || 'Projeto Inicial',
           year: raw.year || new Date().getFullYear(),
           branding: {
@@ -3517,15 +3522,26 @@
             const environment = documentData.environments[Number(input.dataset.environmentIndex)];
             const files = Array.from(input.files || []);
             if (!environment || !files.length) return;
-            environment.photos = Array.isArray(environment.photos) ? environment.photos : [];
-            const shouldReplaceCover = environment.photos.length <= 1 && isDefaultEnvironmentPhoto(environment.photos[0]);
-            const photoStartIndex = shouldReplaceCover ? 0 : environment.photos.length;
-            const photos = await Promise.all(files.map((file, offset) => readPhoto(file, photoStartIndex + offset)));
-            if (shouldReplaceCover) environment.photos = photos;
-            else environment.photos.push(...photos);
-            environment.layout = suggestDefaultLayout(environment.photos.length);
-            persistAndRender();
-            input.value = '';
+            try {
+              environment.photos = Array.isArray(environment.photos) ? environment.photos : [];
+              const shouldReplaceCover = environment.photos.length <= 1 && isDefaultEnvironmentPhoto(environment.photos[0]);
+              const photoStartIndex = shouldReplaceCover ? 0 : environment.photos.length;
+              const photos = [];
+              for (const [offset, file] of files.entries()) {
+                try {
+                  photos.push(await readPhoto(file, photoStartIndex + offset));
+                } catch (error) {
+                  alert(`Nao foi possivel enviar "${file.name || 'arquivo'}": ${String(error?.message || error)}`);
+                }
+              }
+              if (!photos.length) return;
+              if (shouldReplaceCover) environment.photos = photos;
+              else environment.photos.push(...photos);
+              environment.layout = suggestDefaultLayout(environment.photos.length);
+              persistAndRender();
+            } finally {
+              input.value = '';
+            }
           });
         });
 
@@ -6150,12 +6166,17 @@
               </div>
               <label class="photo-upload">
                 Adicionar fotos
-                <input type="file" accept="image/*" multiple data-photo-input data-environment-index="${index}" />
+                <input type="file" accept="image/*,video/mp4,video/webm,video/quicktime,video/x-m4v" multiple data-photo-input data-environment-index="${index}" />
               </label>
             </div>` : ''}
             <div class="portfolio-layout">
               <div class="photo-mural layout-${escapeAttribute(layout)}">
-                ${photos.map((photo, photoIndex) => `
+                ${photos.map((photo, photoIndex) => isVideoMedia(photo) && !isPdfExport ? `
+                  <div class="photo-card ${tileClass(photoIndex, photos.length, layout)}">
+                    <video src="${escapeAttribute(photo.videoSrc)}" poster="${escapeAttribute(photo.src)}" controls playsinline preload="metadata"></video>
+                    ${photo.label ? `<span class="photo-label">${escapeHTML(photo.label)}</span>` : ''}
+                  </div>
+                ` : `
                   <button class="photo-card ${tileClass(photoIndex, photos.length, layout)}" type="button" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" data-lightbox-src="${escapeAttribute(photo.src)}" data-lightbox-title="${escapeAttribute(photo.label)}">
                     <img src="${escapeAttribute(photo.src)}" alt="${escapeAttribute(photo.label || environment.title || 'Foto')}" draggable="true" data-photo-src="${escapeAttribute(photo.src)}" data-native-width="${Number(photo.width || 0)}" data-native-height="${Number(photo.height || 0)}" />
                     ${photo.label ? `<span class="photo-label">${escapeHTML(photo.label)}</span>` : ''}
@@ -6861,6 +6882,12 @@
         `;
       }
 
+      function isVideoMedia(media = {}) {
+        return media.mediaType === 'video'
+          || String(media.mimeType || media.videoAsset?.mimeType || '').startsWith('video/')
+          || Boolean(media.videoSrc || media.videoPublicUrl || media.videoAsset?.publicUrl);
+      }
+
       function normalizePhotos(photos) {
         const list = photos && photos.length ? photos : [{ label: '', src: fallbackImage }];
         return list.map((photo) => ({
@@ -6871,6 +6898,9 @@
           thumbSrc: photo.thumbPublicUrl || photo.thumbSrc || photo.publicUrl || photo.src || fallbackImage,
           width: Number(photo.width || photo.asset?.width || photo.srcAsset?.width || 0),
           height: Number(photo.height || photo.asset?.height || photo.srcAsset?.height || 0),
+          mediaType: isVideoMedia(photo) ? 'video' : 'image',
+          mimeType: photo.mimeType || photo.videoAsset?.mimeType || photo.asset?.mimeType || '',
+          videoSrc: photo.videoSrc || photo.videoPublicUrl || photo.videoAsset?.publicUrl || '',
         }));
       }
 
@@ -6939,10 +6969,163 @@
       }
 
       async function readPhoto(file, index) {
+        if (!file) throw new Error('Arquivo nao identificado.');
+        if (Number(file.size || 0) > MAX_UPLOAD_BYTES) {
+          throw new Error(`O arquivo "${file.name || 'sem nome'}" ultrapassa o limite de 50 MB.`);
+        }
+        if (String(file.type || '').startsWith('video/')) {
+          return readVideo(file, index);
+        }
+        if (!String(file.type || '').startsWith('image/')) {
+          throw new Error(`O arquivo "${file.name || 'sem nome'}" nao e uma imagem ou video suportado.`);
+        }
         return {
           title: '',
           label: '',
           src: await fileToWebpDataUrl(file),
+        };
+      }
+
+      async function readVideo(file, index) {
+        const projectId = documentData.projectId || '';
+        const actorEmail = currentActorEmail();
+        if (!projectId || !actorEmail) {
+          throw new Error('A sessao ainda nao foi identificada. Feche e abra o preview e tente novamente.');
+        }
+        const assetId = crypto.randomUUID();
+        const poster = await createVideoPoster(file).catch(() => videoPosterFallback(file));
+        const params = new URLSearchParams({ projectId, assetId, actor: actorEmail });
+        const response = await fetch(`/api/project-assets?${params.toString()}`, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result?.ok === false || !result?.publicUrl) {
+          throw new Error(result?.message || result?.error || 'Nao foi possivel enviar o video.');
+        }
+        return {
+          title: '',
+          label: '',
+          src: poster.previewDataUrl,
+          thumbSrc: poster.previewDataUrl,
+          width: poster.width,
+          height: poster.height,
+          mediaType: 'video',
+          mimeType: result.mimeType || file.type || 'video/mp4',
+          size: Number(result.size || file.size || 0),
+          videoSrc: result.publicUrl,
+          videoPublicUrl: result.publicUrl,
+          videoAssetId: assetId,
+          videoAsset: {
+            assetId,
+            localAssetId: assetId,
+            publicUrl: result.publicUrl,
+            storageBucket: result.storageBucket || '',
+            storagePath: result.storagePath || '',
+            mimeType: result.mimeType || file.type || 'video/mp4',
+            size: Number(result.size || file.size || 0),
+            width: poster.width,
+            height: poster.height,
+            uploadedAt: result.uploadedAt || new Date().toISOString(),
+            syncStatus: 'synced',
+          },
+          assetId: `${assetId}-poster`,
+          asset: {
+            assetId: `${assetId}-poster`,
+            localAssetId: `${assetId}-poster`,
+            mimeType: 'image/webp',
+            width: poster.width,
+            height: poster.height,
+            size: poster.size,
+            syncStatus: 'pending',
+          },
+        };
+      }
+
+      function currentActorEmail() {
+        try {
+          return String(JSON.parse(sessionStorage.getItem('dcoratto.current.actor.v1') || 'null')?.email || '').trim().toLowerCase();
+        } catch {
+          return '';
+        }
+      }
+
+      function createVideoPoster(file) {
+        return new Promise((resolve, reject) => {
+          const objectUrl = URL.createObjectURL(file);
+          const video = document.createElement('video');
+          let settled = false;
+          const timeout = window.setTimeout(() => finish(new Error('Tempo excedido ao preparar a capa do video.')), 15000);
+          const cleanup = () => {
+            window.clearTimeout(timeout);
+            URL.revokeObjectURL(objectUrl);
+            video.removeAttribute('src');
+            video.load();
+          };
+          const finish = (error, value) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            if (error) reject(error);
+            else resolve(value);
+          };
+          const capture = () => {
+            try {
+              const sourceWidth = Number(video.videoWidth || 0);
+              const sourceHeight = Number(video.videoHeight || 0);
+              if (!sourceWidth || !sourceHeight) throw new Error('Video sem dimensoes validas.');
+              const maxSize = 1280;
+              const scale = Math.min(1, maxSize / Math.max(sourceWidth, sourceHeight));
+              const width = Math.max(1, Math.round(sourceWidth * scale));
+              const height = Math.max(1, Math.round(sourceHeight * scale));
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const context = canvas.getContext('2d');
+              if (!context) throw new Error('Canvas indisponivel.');
+              context.drawImage(video, 0, 0, width, height);
+              canvas.toBlob(async (blob) => {
+                if (!blob) {
+                  finish(new Error('Nao foi possivel criar a capa do video.'));
+                  return;
+                }
+                finish(null, {
+                  previewDataUrl: await readBlobAsDataURL(blob),
+                  width,
+                  height,
+                  size: blob.size,
+                });
+              }, 'image/webp', 0.8);
+            } catch (error) {
+              finish(error);
+            }
+          };
+          video.muted = true;
+          video.playsInline = true;
+          video.preload = 'auto';
+          video.addEventListener('error', () => finish(new Error('Formato de video nao suportado pelo navegador.')), { once: true });
+          video.addEventListener('loadeddata', () => {
+            const targetTime = Number.isFinite(video.duration) && video.duration > 1 ? Math.min(1, video.duration / 10) : 0;
+            if (targetTime > 0) {
+              video.addEventListener('seeked', capture, { once: true });
+              video.currentTime = targetTime;
+            } else {
+              capture();
+            }
+          }, { once: true });
+          video.src = objectUrl;
+        });
+      }
+
+      function videoPosterFallback(file) {
+        const label = String(file?.name || 'VIDEO').slice(0, 42).replace(/[<>&"']/g, '');
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#080807"/><circle cx="640" cy="310" r="86" fill="#b8976a"/><path d="M615 260 L690 310 L615 360 Z" fill="#080807"/><text x="640" y="455" text-anchor="middle" fill="#f7f2ea" font-family="Arial" font-size="30">${label}</text><text x="640" y="505" text-anchor="middle" fill="#b8976a" font-family="Arial" font-size="22">VIDEO</text></svg>`;
+        return {
+          previewDataUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+          width: 1280,
+          height: 720,
+          size: new Blob([svg]).size,
         };
       }
 

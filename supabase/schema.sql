@@ -756,7 +756,7 @@ from public.document_projects p;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values
-  ('dcoratto-photos', 'dcoratto-photos', true, 52428800, array['image/jpeg', 'image/png', 'image/webp', 'image/gif']),
+  ('dcoratto-photos', 'dcoratto-photos', true, 52428800, array['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v']),
   ('dcoratto-html', 'dcoratto-html', true, 10485760, array['text/html'])
 on conflict (id) do update set
   public = excluded.public,

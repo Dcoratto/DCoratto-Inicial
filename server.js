@@ -16,9 +16,20 @@ const publicRoot = resolve('public');
 const indexFile = join(root, 'index.html');
 const htmlBucket = process.env.SUPABASE_HTML_BUCKET || process.env.VITE_SUPABASE_HTML_BUCKET || 'dcoratto-html';
 const photoBucket = process.env.SUPABASE_PHOTOS_BUCKET || process.env.VITE_SUPABASE_PHOTOS_BUCKET || 'dcoratto-photos';
+const maxProjectAssetBytes = 50 * 1024 * 1024;
+const allowedProjectAssetMimeTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'video/x-m4v',
+]);
 const clientMobileFirstVersion = '2026-06-08-mobile-contain-markers-v1';
 const supabaseRequestTimeoutMs = Math.min(4000, Math.max(1000, Number(process.env.SUPABASE_REQUEST_TIMEOUT_MS || 2500)));
-const supabaseStorageTimeoutMs = Math.min(30000, Math.max(5000, Number(process.env.SUPABASE_STORAGE_TIMEOUT_MS || 15000)));
+const supabaseStorageTimeoutMs = Math.min(180000, Math.max(15000, Number(process.env.SUPABASE_STORAGE_TIMEOUT_MS || 120000)));
 const supabaseCircuitCooldownMs = Math.max(5000, Number(process.env.SUPABASE_CIRCUIT_COOLDOWN_MS || 20000));
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -51,6 +62,7 @@ const runtimeLoginUsers = localLoginUsers.map(user => ({ ...user }));
 let lastKnownEditorSettings = null;
 let seedCatalogFallback = null;
 let htmlBucketReadyPromise = null;
+let photoBucketReadyPromise = null;
 const lastKnownProjectLists = new Map();
 const lastKnownClientHistory = new Map();
 const serverQueryCache = new Map();
@@ -219,6 +231,10 @@ const mimeTypes = {
   '.jpeg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.webp': 'image/webp',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.m4v': 'video/x-m4v',
   '.ico': 'image/x-icon',
   '.pdf': 'application/pdf',
 };
@@ -258,6 +274,11 @@ createServer(async (request, response) => {
 
   if (request.method === 'POST' && url.pathname === '/api/editor-events') {
     await handleEditorEventRequest(request, response);
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/project-assets') {
+    await handleProjectAssetUploadRequest(request, url, response);
     return;
   }
 
@@ -802,6 +823,118 @@ async function handleEditorEventRequest(request, response) {
       projectId: body?.projectId,
       actorEmail: body?.actor?.email,
       payloadBytes: approximateJsonBytes(body),
+      durationMs: Date.now() - startedAt,
+    });
+  }
+}
+
+async function handleProjectAssetUploadRequest(request, url, response) {
+  const startedAt = Date.now();
+  const projectId = safeId(url.searchParams.get('projectId'));
+  const actorEmail = normalizeEmail(url.searchParams.get('actor'));
+  const assetId = safeId(url.searchParams.get('assetId')) || crypto.randomUUID();
+  const mimeType = String(request.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const declaredBytes = Number(request.headers['content-length'] || 0);
+
+  try {
+    if (!supabaseServer) {
+      sendSupabaseUnavailable(response, 'Supabase indisponivel para enviar o arquivo. Tente novamente quando a conexao estiver normalizada.');
+      return;
+    }
+    if (!projectId || !actorEmail) {
+      sendJson(response, 400, {
+        ok: false,
+        error: 'invalid_upload_context',
+        message: 'Projeto ou usuario nao identificado para o upload.',
+        retryable: false,
+      });
+      return;
+    }
+    if (!allowedProjectAssetMimeTypes.has(mimeType)) {
+      sendJson(response, 415, {
+        ok: false,
+        error: 'unsupported_media_type',
+        message: 'Formato nao suportado. Use imagem, MP4, WebM, MOV ou M4V.',
+        retryable: false,
+      });
+      return;
+    }
+    if (declaredBytes > maxProjectAssetBytes) {
+      sendJson(response, 413, {
+        ok: false,
+        error: 'file_too_large',
+        message: 'O tamanho maximo permitido por arquivo e 50 MB.',
+        retryable: false,
+      });
+      return;
+    }
+
+    const accessCacheKey = `project-asset-access:${projectId}:${actorEmail}`;
+    const cachedAccess = getCacheEntry(accessCacheKey);
+    if (cachedAccess !== true) {
+      const existingProject = await withSupabaseOperationTimeout(
+        () => loadProjectForWrite(projectId),
+        { bypassCircuit: true }
+      );
+      if (existingProject && !canAccessPrivateProject(existingProject, actorEmail)) {
+        sendJson(response, 403, { ok: false, error: 'forbidden_project_access', retryable: false });
+        return;
+      }
+      setCacheEntry(accessCacheKey, true, 60_000);
+    }
+
+    const buffer = await readBinaryBody(request, maxProjectAssetBytes);
+    if (!buffer.length) {
+      sendJson(response, 400, {
+        ok: false,
+        error: 'empty_upload',
+        message: 'O arquivo enviado esta vazio.',
+        retryable: false,
+      });
+      return;
+    }
+
+    await ensurePhotoBucket();
+    const hash = createHash('sha256').update(buffer).digest('hex');
+    const extension = extensionFromMime(mimeType);
+    const storagePath = `projects/${projectId}/assets/uploads/${assetId}-${hash.slice(0, 16)}.${extension}`;
+    const { error: uploadError } = await supabaseServer.storage
+      .from(photoBucket)
+      .upload(storagePath, buffer, {
+        cacheControl: '31536000',
+        contentType: mimeType,
+        upsert: false,
+      });
+    if (uploadError && !isStorageObjectAlreadyExists(uploadError)) throw uploadError;
+
+    const { data } = supabaseServer.storage.from(photoBucket).getPublicUrl(storagePath);
+    sendJson(response, 200, {
+      ok: true,
+      projectId,
+      assetId,
+      publicUrl: data?.publicUrl || '',
+      storageBucket: photoBucket,
+      storagePath,
+      mimeType,
+      size: buffer.length,
+      uploadedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    if (error?.code === 'file_too_large') {
+      sendJson(response, 413, {
+        ok: false,
+        error: 'file_too_large',
+        message: 'O tamanho maximo permitido por arquivo e 50 MB.',
+        retryable: false,
+      });
+      return;
+    }
+    sendErrorJson(response, error, {
+      endpoint: '/api/project-assets',
+      action: 'upload_project_asset',
+      projectId,
+      actorEmail,
+      payloadBytes: declaredBytes,
       durationMs: Date.now() - startedAt,
     });
   }
@@ -1827,6 +1960,21 @@ async function readJsonBody(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
 }
 
+async function readBinaryBody(request, maxBytes = maxProjectAssetBytes) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of request) {
+    total += chunk.length;
+    if (total > maxBytes) {
+      const error = new Error('O tamanho maximo permitido por arquivo e 50 MB.');
+      error.code = 'file_too_large';
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, total);
+}
+
 async function ensureHtmlBucket() {
   if (htmlBucketReadyPromise) return htmlBucketReadyPromise;
   htmlBucketReadyPromise = ensureHtmlBucketNow().catch((error) => {
@@ -1854,6 +2002,39 @@ async function ensureHtmlBucketNow() {
     public: true,
     fileSizeLimit: 52_428_800,
     allowedMimeTypes: ['text/html'],
+  });
+  if (error) throw error;
+}
+
+async function ensurePhotoBucket() {
+  if (photoBucketReadyPromise) return photoBucketReadyPromise;
+  photoBucketReadyPromise = ensurePhotoBucketNow().catch((error) => {
+    photoBucketReadyPromise = null;
+    throw error;
+  });
+  return photoBucketReadyPromise;
+}
+
+async function ensurePhotoBucketNow() {
+  const allowedMimeTypes = [...allowedProjectAssetMimeTypes];
+  const { data: buckets, error: listError } = await supabaseServer.storage.listBuckets();
+  if (listError) throw listError;
+  if (buckets?.some((bucket) => bucket.name === photoBucket || bucket.id === photoBucket)) {
+    if (typeof supabaseServer.storage.updateBucket === 'function') {
+      const { error } = await supabaseServer.storage.updateBucket(photoBucket, {
+        public: true,
+        fileSizeLimit: maxProjectAssetBytes,
+        allowedMimeTypes,
+      });
+      if (error) throw error;
+    }
+    return;
+  }
+
+  const { error } = await supabaseServer.storage.createBucket(photoBucket, {
+    public: true,
+    fileSizeLimit: maxProjectAssetBytes,
+    allowedMimeTypes,
   });
   if (error) throw error;
 }
@@ -2814,6 +2995,10 @@ function extensionFromMime(mimeType = '') {
     'image/png': 'png',
     'image/webp': 'webp',
     'image/gif': 'gif',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/quicktime': 'mov',
+    'video/x-m4v': 'm4v',
   }[mimeType] || 'bin';
 }
 

@@ -430,6 +430,7 @@ function App() {
     iframeRef.current?.contentWindow?.postMessage({
       type: 'dcoratto:session',
       actor,
+      projectId: getActiveProjectId(actor),
     }, window.location.origin);
     if (remoteSettings) {
       iframeRef.current?.contentWindow?.postMessage({
